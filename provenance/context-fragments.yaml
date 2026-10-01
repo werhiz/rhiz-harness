@@ -1,0 +1,34 @@
+source_repository: aider/aider + langchain-ai/langchain + openinterpreter/openinterpreter
+upstream_commit: 5dc9490bb35f9729ef2c95d00a19ccd30c26339c,aider polyglot; langchain context_editing.py:44-290; openinterpreter rust-v0.0.40
+license: Apache-2.0 (aider, openinterpreter/openinterpreter) + MIT (langchain-ai/langchain)
+strategy: derived
+upstream_paths:
+  - aider/repomap.py:1-680
+  - aider/coders/base_coder.py:600-770
+  - langchain-ai/langchain/libs/langchain_v1/langchain/agents/middleware/context_editing.py:44-290
+  - langchain-ai/langchain/libs/langchain_v1/langchain/agents/middleware/types.py
+  - openinterpreter/openinterpreter@5b07159c477920c159d8892d112b480e7307f257/codex-rs/core/src/context/ (the context-fragments taxonomy and marker discipline)
+rhiz_paths:
+  - src/context.ts
+  - test/context.test.ts
+  - docs/decisions/0010-context.md
+  - provenance/context-fragments.yaml
+purpose: ContextPack with measurable composition (included files, selected symbols, history, rules, architecture docs, skills); a deterministic composer that picks fragments by strategy; a LangChain-style ClearToolUsesEdit eviction; an OpenInterpreter-style marker discipline that allows fragments to be found and removed later.
+material_changes:
+  - Adapted LangChain `ClearToolUsesEdit` (token-threshold-triggered eviction) into a typed `ClearToolUsesEdit` discriminated-union member with `keepRecent` and `minTokens` knobs; the Rhiz version keeps the per-kind token cap shape but drops the trigger-eval async machinery because the kernel composer is deterministic offline.
+  - Adapted the OpenInterpreter `ContextualUserFragment` trait into a discriminated-union of six `ContextFragment` kinds (IncludedFile, SelectedSymbol, History, Rule, ArchitectureDoc, Skill); every fragment carries a stable `marker` field so consumers can find and remove it later (the OpenInterpreter marker discipline).
+  - Re-implemented Aider's PageRank-on-the-repo in spirit (not in code) as a per-strategy selector; v0.1 uses deterministic sort + strategy-specific limits because PageRank is a v0.2 PR that requires a tree-sitter corpus and a real repo.
+  - Added `ContextPackSchema` with a `superRefine` invariant: `totalTokens` must equal the sum of fragment tokenEstimates; markers must be unique and one-per-fragment. The schema rejects any pack that fails this consistency check.
+  - Added `classifyTaskClass(contract)` and `defaultStrategyForTaskClass(taskClass)` — defaults: scout→broad, review→balanced, ship→minimal, default→balanced.
+  - Added `validateContextBudget(pack, config)` returning a `ContextBudgetBreakdown` with `byKind`, `perKindBudget`, `total`, `totalBudget`, `withinBudget`, `overBudgetKinds`. No events are emitted; the breakdown is a pure data structure that consumers can record via `attempt.activity-observed`.
+  - All Zod schemas are portable and strict. The module imports nothing from DSH, Rhiz Protocol, or any concrete host/runtime. Verified by `scripts/check-portable-boundary.mjs`.
+  - Six error classes: ContextError, ContextConfigurationError, ContextBudgetExceededError, ContextValidationError. Each carries a stable `code` and a stable `name`.
+reviewed_at: 2026-08-20
+reviewed_by: openai:gpt-5.6-pro
+
+license_by_upstream:
+  aider/aider: Apache-2.0
+  langchain-ai/langchain: MIT (Copyright (c) LangChain, Inc.; notice carried in THIRD_PARTY_NOTICES.md)
+  openinterpreter/openinterpreter: Apache-2.0 (OpenAI Codex NOTICE carried in NOTICE)
+license_corrected_at: 2026-10-01
+license_correction: The original record classified the whole set as Apache-2.0. LangChain is MIT. Verified against each upstream LICENSE on 2026-10-01.

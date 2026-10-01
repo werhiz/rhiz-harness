@@ -1,0 +1,110 @@
+name: Kernel CI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Build and replay contracts
+    runs-on: ubuntu-latest
+    # The falsifiability gate re-proves every guard by deleting its enforcing
+    # code in a disposable derivative and requiring the named test to go red, so
+    # its cost grows with the guard count: 45 guards took 9m40s of a 10m budget
+    # on 2026-08-25 and the job was killed mid-gate, which reads as a failing
+    # check on work that is green. The ceiling is a backstop against a hung job,
+    # not a performance target; raise it rather than let it silently truncate
+    # the proof. If this is reached again, parallelize the guard proofs instead
+    # of raising it further.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Verify npm version
+        run: test "$(npm --version)" = "11.17.0"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate Kernel contracts
+        run: npm run check
+
+  dsh-keyless:
+    name: Real DSH SDK and product composition
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Verify npm version
+        run: test "$(npm --version)" = "11.17.0"
+
+      - name: Install Rhiz dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install pinned DSH integration packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/dsh-deps
+          printf '%s\n' '{"private":true,"type":"module"}' > .tmp/dsh-deps/package.json
+          npm install \
+            --prefix .tmp/dsh-deps \
+            --package-lock=false \
+            --save-exact \
+            --omit=optional \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            @deepseek-ai/cordis@4.0.4 \
+            @deepseek-ai/dsh-sdk-client@0.1.0-rc.8 \
+            @deepseek-ai/dsh-sdk-jsonrpc-demo@0.1.0-rc.8 \
+            @deepseek-ai/dsh-sdk-jsonrpc-server@0.1.0-rc.8 \
+            @deepseek-ai/dsh-agent-spine-demo@0.1.0-rc.8 \
+            @deepseek-ai/dsh-session-persistence-jsonl@0.1.0-rc.8 \
+            @deepseek-ai/dsh-llm-replay@0.1.0-rc.8 \
+            @deepseek-ai/dsh-subagent@0.1.0-rc.8 \
+            @deepseek-ai/dsh-subprocess@0.1.0-rc.8 \
+            @deepseek-ai/dsh-subagent-codex@0.1.0-rc.8 \
+            @deepseek-ai/dsh-subagent-claude-code@0.1.0-rc.8
+          rm -rf node_modules/@deepseek-ai
+          ln -s "$PWD/.tmp/dsh-deps/node_modules/@deepseek-ai" node_modules/@deepseek-ai
+
+      - name: Verify DSH runtime closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x .tmp/dsh-deps/node_modules/.bin/dsh-jsonrpc-agent
+          node --input-type=module -e \
+            "const sdk = await import('@deepseek-ai/dsh-sdk-client'); if (typeof sdk.DeepSeekHarness !== 'function') throw new Error('DeepSeekHarness export unavailable'); console.log('DSH SDK client import: PASS')"
+
+      - name: Compose dormant Codex and Claude worker routes
+        run: npm run smoke:dsh-products
+
+      - name: Run real DSH through Rhiz HostAdapter
+        env:
+          RHIZ_DSH_COMMAND: ./.tmp/dsh-deps/node_modules/.bin/dsh-jsonrpc-agent
+          RHIZ_DSH_ARGS_JSON: '["test/fixtures/dsh-keyless/cordis.yml"]'
+          RHIZ_DSH_PROVIDER: deepseek-official
+          RHIZ_DSH_MODEL: deepseek-v4-flash
+          DSH_SNAPSHOT_FILE: test/fixtures/dsh-keyless/session.jsonl
+          DSH_SNAPSHOT_OVERRIDE: test/fixtures/dsh-keyless/replay.override.json
+          DSH_SESSION_ROOT: .tmp/dsh-keyless-sessions
+        run: npm run smoke:dsh

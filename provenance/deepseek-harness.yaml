@@ -1,0 +1,61 @@
+source_repository: deepseek-ai/deepseek-harness
+upstream_commit: 141eb6fef83422698aef7a981029e843e8161534
+version: 0.1.0-rc.8
+license: MIT (repository LICENSE, Copyright (c) 2026 DeepSeek); npm packages dsh-sdk-client, dsh-subagent, dsh-subagent-claude-code, dsh-subagent-codex, dsh-subprocess, dsh-subprocess-local declare BSD-3-Clause; @deepseek-ai/cordis declares MIT
+strategy: backend
+upstream_paths:
+  - packages/sdk/client/src/api.ts
+  - packages/sdk/client/src/types.ts
+  - packages/sdk/client/README.md
+  - packages/sdk/protocol/README.md
+  - packages/examples/jsonrpc-demo/README.md
+  - packages/examples/jsonrpc-demo/package.json
+  - packages/examples/agent-spine-demo/README.md
+  - packages/test-support/llm-replay/README.md
+  - packages/test-support/llm-replay/src/index.ts
+  - examples/jsonrpc-agent/cordis.yml
+  - packages/subagent/README.md
+  - docs/subsystems/subagent.md
+  - packages/subagent/subagent/src/index.ts
+  - packages/subagent/subagent/src/types.ts
+  - packages/subagent/subagent-codex/README.md
+  - packages/subagent/subagent-codex/package.json
+  - packages/subagent/subagent-codex/src/index.ts
+  - packages/subagent/subagent-claude-code/README.md
+  - packages/subagent/subagent-claude-code/package.json
+  - packages/subagent/subagent-claude-code/src/index.ts
+rhiz_paths:
+  - adapters/dsh/index.ts
+  - adapters/dsh/smoke-proof.ts
+  - adapters/dsh/product-routes.ts
+  - adapters/dsh/product-runtime.ts
+  - adapters/dsh/products.ts
+  - scripts/dsh-smoke.mjs
+  - scripts/dsh-product-routes-smoke.mjs
+  - test/dsh-adapter.test.ts
+  - test/dsh-summary.test.ts
+  - test/dsh-smoke-proof.test.ts
+  - test/dsh-product-routes.test.ts
+  - test/dsh-product-runtime.test.ts
+  - test/fixtures/dsh-keyless/cordis.yml
+  - test/fixtures/dsh-keyless/session.jsonl
+  - test/fixtures/dsh-keyless/replay.override.json
+  - docs/decisions/0002-dsh-sdk-first-host-adapter.md
+  - docs/decisions/0004-dsh-product-worker-routes.md
+  - docs/DSH_PRODUCT_WORKER_ROUTES_V0.md
+  - .github/workflows/kernel.yml
+purpose: DSH execution backends for the portable Rhiz Host and Worker contracts, including direct named Codex and Claude Code routes.
+material_changes:
+  - Translate DSH SDK activity intervals and notifications into portable Rhiz WorkerProvider, WorkerObservation, and WorkerResult contracts.
+  - Expose only capabilities reachable through each public DSH boundary; DSH-internal tools, sandbox, filesystem, and process services remain unclaimed.
+  - Keep DSH imports outside the portable src/ kernel and load optional DSH dependencies at runtime.
+  - Compose the published JSON-RPC runtime with DSH's replay LLM for a keyless end-to-end CI smoke using exact rc.8 packages.
+  - Fail closed unless the real DSH worker finishes, emits observations, returns the expected replay proof, and advances Rhiz Board state to verifying without violations.
+  - Mount DSH's official Codex and Claude Code one-shot providers in one private Cordis context and invoke their named subagent routes directly without a coordinator-model turn.
+  - Publish Rhiz-owned worker identity and native authority metadata while keeping product authentication, native settings, and credential values private.
+  - Prove dormant product-provider composition in CI without optional native product payloads, credentials, or paid model calls.
+reviewed_at: 2026-08-20
+reviewed_by: openai:gpt-5.6-pro
+
+redistribution: none. Rhiz Harness consumes DSH as optional peer dependencies through adapters/dsh and vendors no DSH source.
+license_corrected_at: 2026-10-01

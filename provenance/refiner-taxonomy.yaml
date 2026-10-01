@@ -1,0 +1,27 @@
+source_repository: rhiz-harness/compound-engineering-plan
+upstream_commit: 2026-08-13
+license: Apache-2.0
+strategy: adapted
+upstream_paths:
+  - docs/COMPOUND_ENGINEERING_PLAN.md
+rhiz_paths:
+  - src/refiner.ts
+  - src/schemas.ts
+  - test/refiner.test.ts
+  - docs/decisions/0009-refiner.md
+  - provenance/refiner-taxonomy.yaml
+purpose: Failure and success taxonomies and the evidence-bound proposal/accept/reject/promote lifecycle. The taxonomies are taken verbatim from the Rhiz Compound Engineering Plan §6 (failure taxonomy) and §6 (success taxonomy). The lifecycle is Rhiz-native: Refiner proposes, a human verifies, a human promotes, every change is reversible per §22.
+material_changes:
+  - Mistyped nineteen failure entries and twelve success entries as readonly tuple literals, so consumers can iterate them without runtime allocation.
+  - Added RefinerProposalKind enum (14 kinds) covering the Compound Engineering Plan "permanent outputs" list (rule, guard, test, verifier, context strategy, routing policy, worker profile, tool, capability, documentation, benchmark, architecture decision, recovery behavior, lesson-fixture).
+  - Added RefinerProposalStatus (proposed, accepted, rejected, superseded, promoted) and the four transition events (refiner.proposed, refiner.accepted, refiner.rejected, refiner.promoted) to the portable HarnessEventSchema discriminated union.
+  - Added RefinerDraft with reversibleUntil timestamp required by §22 ("improvements must be reversible"); runProposalGuards enforces the timestamp is parseable.
+  - Added RefinerConfig with §22 toggles: forbidAuthorityWeakening, forbidRoutingOptimization, forbidBenchmarkAcceptanceWeakening, forbidConstitutionAmendments, forbidWorkerSelfCertification, requireReversibleUntil. All default to true.
+  - Added ten named guards (RefinerGuard) so consumers can match on the violation deterministically.
+  - Added analyzeClosedWork + analyzeClosedWorkFromEvents that scans Ledger events and emits a RefinerAnalysis (outcome + classifications + candidate proposal kinds). v0.1 uses deterministic scanning; v0.2 will add LLM-assisted heuristics behind the same RefinerConfig gate.
+  - Added recordProposal / acceptProposal / rejectProposal / promoteProposal primitives that drive the EventLedger interface. promoteProposal refuses to be invoked by an Agent (Constitution §22: humans retain authority over consequential policy).
+  - Added findProposalInLedger helper for projection; the consumer reads refiner.proposed events to reconstruct the proposal.
+  - Lexicon and toggle flags are Rhiz-native; no external source code is included. The Compound Engineering Plan is the only upstream document, and it is also Rhiz-authored.
+license: Apache-2.0
+reviewed_at: 2026-08-20
+reviewed_by: openai:gpt-5.6-pro

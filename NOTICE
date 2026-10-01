@@ -1,0 +1,18 @@
+Rhiz Harness
+Copyright 2026 The Rhiz Harness Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software derived from OpenAI Codex
+(https://github.com/openai/codex), as distributed in
+openinterpreter/openinterpreter at commit
+5b07159c477920c159d8892d112b480e7307f257, licensed under the Apache License,
+Version 2.0. That distribution carries the following notice:
+
+  OpenAI Codex
+  Copyright 2025 OpenAI
+
+The derived portions are the Guard policy oracle and circuit-breaker
+semantics in src/guard.ts and the ContextPack fragment and marker discipline in
+src/context.ts. See provenance/ and THIRD_PARTY_NOTICES.md for the exact
+upstream paths and material changes.

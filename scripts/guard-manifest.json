@@ -1,0 +1,390 @@
+{
+  "$comment": "Each entry names one safety guard, the exact code that enforces it, and the test that must go red when that code is removed. A guard with no falsifying test is not a guard, it is a comment that compiles.",
+  "guards": [
+    {
+      "id": "board/execution-actor-cannot-accept",
+      "why": "An execution actor accepting its own Work is the self-certification the Constitution separates completion from acceptance to prevent.",
+      "file": "src/board.ts",
+      "remove": "      if (executionActors.has(event.actor.id)) {\n        readiness.reasons.push(\"an execution actor cannot accept its own work\");\n        readiness.ready = false;\n      }\n",
+      "testFile": "dist/test/board.test.js"
+    },
+    {
+      "id": "board/acceptance-requires-passing-verification",
+      "why": "Acceptance without a qualifying verification is exactly the attempt.finished-means-accepted collapse Kernel 0.1 forbids.",
+      "file": "src/board.ts",
+      "remove": "  if (contractNeedsVerification && !qualifyingVerification) {\n    reasons.push(board.integration === null\n      ? \"required passing verification for the current contract revision is missing\"\n      : \"required passing verification bound to the exact Work integration head is missing\");\n  }\n",
+      "testFile": "dist/test/board.test.js"
+    },
+    {
+      "id": "board/artifact-identity-cannot-satisfy-required-evidence",
+      "why": "Harness-generated artifact identity says which target was examined; accepting it as requirement proof lets the Harness certify its own Work without a passing primary check.",
+      "file": "src/board.ts",
+      "remove": "item.kind !== \"artifact-identity\" && ",
+      "testFile": "dist/test/verify.test.js"
+    },
+    {
+      "id": "schemas/read-only-work-carries-no-write-scope",
+      "why": "SCOUT and REVIEW carrying production write scope silently converts a read-only mission into a writing one.",
+      "file": "src/schemas.ts",
+      "remove": "  if ((value.type === \"SCOUT\" || value.type === \"REVIEW\") && value.writeScope.length > 0) {\n    ctx.addIssue({\n      code: \"custom\",\n      path: [\"writeScope\"],\n      message: `${value.type} work cannot carry production write scope`,\n    });\n  }\n",
+      "testFile": "dist/test/schemas.test.js"
+    },
+    {
+      "id": "schemas/required-proof-forces-verification",
+      "why": "A contract that demands proof and disables verification is a contract that cannot be honestly accepted.",
+      "file": "src/schemas.ts",
+      "remove": "  if (hasRequiredProof && !value.verificationPolicy.required) {\n    ctx.addIssue({\n      code: \"custom\",\n      path: [\"verificationPolicy\", \"required\"],\n      message: \"verification must be required when acceptance criteria or evidence requirements are required\",\n    });\n  }\n",
+      "testFile": "dist/test/policy-invariants.test.js"
+    },
+    {
+      "id": "verify/passing-check-must-carry-evidence",
+      "why": "A passing check with no evidence is an assertion, not a verification.",
+      "file": "src/verify/engine.ts",
+      "remove": "        if (result.status === \"pass\" && result.evidence.length === 0) {\n          result = VerificationCheckResultSchema.parse({ ...result, status: \"error\", summary: \"passing verifier check returned no evidence\" });\n        }\n",
+      "testFile": "dist/test/guard-proofs.test.js"
+    },
+    {
+      "id": "verify/refuses-workspace-mutating-provider",
+      "why": "A verifier that may mutate the target cannot attest to the target.",
+      "file": "src/verify/engine.ts",
+      "remove": "      if (!descriptor.readOnly) throw new Error(`Verify v1 refuses workspace-mutating provider ${provider.id}`);\n",
+      "testFile": "dist/test/verify.test.js"
+    },
+    {
+      "id": "crew/read-only-mission-may-not-change-its-workspace",
+      "why": "Read-only enforcement in Crew v0 is drift detection; without it a SCOUT can write freely and be reported clean.",
+      "file": "src/crew.ts",
+      "remove": "    if (before.digest !== after.digest) {\n      violations.push(\"read-only Crew mission changed its workspace\");\n    }\n",
+      "testFile": "dist/test/crew.test.js"
+    },
+    {
+      "id": "crew/changed-paths-must-be-inside-write-scope",
+      "why": "Without this, a SHIP mission can write anywhere in the tree and still report no violations.",
+      "file": "src/crew.ts",
+      "remove": "    if (!pathAllowed(path, work.writeScope)) {\n      violations.push(`changed path ${path} is outside Work writeScope`);\n    }\n",
+      "testFile": "dist/test/crew.test.js"
+    },
+    {
+      "id": "ledger/duplicate-event-identity-is-rejected",
+      "why": "Replaying an event id would let a projection be driven twice from one fact.",
+      "file": "adapters/local/durable-ledger.ts",
+      "remove": "    if (this.#eventIds.has(event.id)) throw new DuplicateEventError(event.id);\n",
+      "testFile": "dist/test/durable-ledger.test.js"
+    },
+    {
+      "id": "ledger/record-digest-must-match-contents",
+      "why": "The chain is the only reason a reopened Ledger can be trusted at all.",
+      "file": "adapters/local/durable-ledger.ts",
+      "remove": "    if (recordDigest(unsigned) !== storedDigest) {\n      throw new LedgerIntegrityError(`record ${expectedGlobal} digest does not match its contents`, expectedGlobal);\n    }\n",
+      "testFile": "dist/test/durable-ledger.test.js"
+    },
+    {
+      "id": "guard/deny-by-default-actually-denies",
+      "why": "The canonical false green: the flag returned defaultDecision in both branches and changed only the audit label, so a policy could allow every unlisted tool while stamping the record default-deny.",
+      "file": "src/guard.ts",
+      "remove": "      return verdict(\"forbid\", `Tool \"${request.tool.name}\" has no active specific/category authorization and this policy denies by default.`, DEFAULT_RISK_LEVELS[request.tool.category], ruleHits);\n",
+      "testFile": "dist/test/guard.test.js"
+    },
+    {
+      "id": "sandbox/require-fails-closed-without-a-launcher",
+      "why": "A missing boundary must never take the same code path as a permitting one. Without this, requiring containment on a host that has none would run unconfined.",
+      "file": "src/sandbox.ts",
+      "remove": "  if (launcher === null) throw new SandboxUnavailableError(\"containment was required and no sandbox launcher is configured\");\n",
+      "testFile": "dist/test/containment.test.js"
+    },
+    {
+      "id": "sandbox/verifier-actually-wraps-the-command",
+      "why": "The whole containment claim for the verifier path. Without this line the policy is computed, the profile is written, and the command still runs unconfined.",
+      "file": "adapters/local/command-verifier.ts",
+      "remove": "        effective = { command: wrapped.command, args: wrapped.args };\n",
+      "testFile": "dist/test/containment.test.js"
+    },
+    {
+      "id": "verify/required-criteria-must-be-falsifiable",
+      "why": "#30 made a declared control impossible to satisfy dishonestly; nothing required one. Without this, a plan whose primary check is /usr/bin/true produces a passing receipt and leaves Board ready.",
+      "file": "src/verify/schema.ts",
+      "remove": "    if (!falsifiable) {\n      throw new Error(\n        `required acceptance criterion ${criterion.id} is proven by a check with no negative control, so nothing establishes that check can detect a failure; `\n        + \"add a negative control, or record a falsifiability exemption on the Work contract naming a human\",\n      );\n    }\n",
+      "testFile": "dist/test/falsifiability.test.js"
+    },
+    {
+      "id": "board/all-exempt-verification-cannot-reach-ready-alone",
+      "why": "A verification in which every required criterion was exempted attests rather than verifies. Owns both halves: whether the rule applies AND that the signer is independent. Extracting only the predicate let the projection accept a self-signed attestation the gate refused (#54).",
+      "file": "src/board.ts",
+      "remove": "      && !executionActors.has(review.actor.id),\n",
+      "testFile": "dist/test/falsifiability.test.js"
+    },
+    {
+      "id": "crew/authorization-reaches-the-ledger",
+      "why": "An exception auditable at the moment of decision and unreconstructible afterwards is the worst pairing available. Without this, replay cannot show that a provider was admitted by human exception. Constitution 5.",
+      "file": "src/crew.ts",
+      "remove": "        ...(resolution.selection.authorization === undefined\n          ? {}\n          : { authorization: resolution.selection.authorization }),\n",
+      "testFile": "dist/test/falsifiability.test.js"
+    },
+    {
+      "id": "disposable/derivative-may-not-live-inside-the-candidate",
+      "why": "The physical half of #63. Without it a factory can hand back <candidate>/.tmp and every mutation a proof makes lands in the artifact the proof is judging, exactly as the RH-14 canary did.",
+      "file": "src/disposable.ts",
+      "remove": "  if (contains(candidate, derivative)) {\n    throw new DerivativeContainmentError(`derivative root ${derivative} is inside candidate ${candidate}; every mutation would land in the candidate`);\n  }\n",
+      "testFile": "dist/test/disposable-proof.test.js"
+    },
+    {
+      "id": "disposable/a-proof-may-only-write-inside-its-derivative",
+      "why": "The other physical half. A proof holds only a derivative handle, so this is the single place that knows where the derivative ends; without it `../../src/board.ts` writes the RH-14 mutation straight back into the candidate.",
+      "file": "src/disposable.ts",
+      "remove": "    if (resolved !== this.root && !resolved.startsWith(this.root + sep)) {\n      throw new DerivativeEscapeError(\n        `path ${relativePath} resolves to ${resolved}, outside derivative ${this.root}; a proof may only write inside its derivative`,\n      );\n    }\n",
+      "testFile": "dist/test/disposable-proof.test.js"
+    },
+    {
+      "id": "disposable/candidate-drift-invalidates-the-proof",
+      "why": "A proof whose candidate moved mid-flight has concluded something about an artifact that no longer exists. Without this the receipt reports that conclusion as if it still applied.",
+      "file": "src/disposable.ts",
+      "remove": "  if (differences.length > 0) {\n    invalidations.push({\n      code: \"candidate-drifted\",\n      detail:\n        `the authoritative candidate changed during the proof (${differences.join(\", \")}); `\n        + \"this proof's conclusion is about an artifact that no longer exists\",\n    });\n  }\n",
+      "testFile": "dist/test/disposable-proof.test.js"
+    },
+    {
+      "id": "disposable/a-surviving-derivative-invalidates-the-proof",
+      "why": "Cleanup that fails must fail the proof, not be logged. A surviving derivative is a mutated copy of the candidate left on disk; without this the receipt reads `proven` while that copy sits there.",
+      "file": "src/disposable.ts",
+      "remove": "      invalidations.push({ code: \"cleanup-failed\", detail: describe(error) });\n",
+      "testFile": "dist/test/disposable-proof.test.js"
+    },
+    {
+      "id": "disposable/derivative-must-reproduce-the-pinned-candidate",
+      "why": "A derivative that does not match the pin means the candidate moved during creation or the copy is not faithful, so every later observation is about the wrong artifact. Without this the proof runs anyway and reports it.",
+      "file": "src/disposable.ts",
+      "remove": "      if (identity.digest !== expectedDigest) {\n        // Either the candidate moved while we copied it, or the copy is not\n        // faithful. Both make every later conclusion about the wrong artifact.\n        throw new Error(\n          `derivative digest ${identity.digest} does not match the pinned candidate ${expectedDigest}; `\n          + \"the candidate changed during creation or the copy is not faithful\",\n        );\n      }\n",
+      "testFile": "dist/test/disposable-proof.test.js"
+    },
+    {
+      "id": "disposable/sweep-never-reclaims-a-live-owner",
+      "why": "The crash reaper is the half of the guarantee a killed process cannot provide for itself. Without the liveness check it deletes the workspace of a proof that is still running, turning a cleanup mechanism into a corruption mechanism.",
+      "file": "src/disposable.ts",
+      "remove": "      if (this.#processAlive(lease.ownerPid)) continue;\n",
+      "testFile": "dist/test/disposable-proof.test.js"
+    },
+    {
+      "id": "disposable/symlinks-are-copied-verbatim",
+      "why": "fs.cp with dereference:false rewrites a relative symlink into an absolute path back into the SOURCE tree (#72): a derivative carrying that link hands every proof a path straight into the authoritative candidate. The digest catches the rewrite and refuses, but without verbatim copying no symlink-bearing candidate can ever be derived.",
+      "file": "src/disposable.ts",
+      "remove": "        verbatimSymlinks: true,\n",
+      "testFile": "dist/test/disposable-symlinks.test.js"
+    },
+    {
+      "id": "disposable/the-derivative-validates-its-own-symlinks",
+      "why": "The master switch for #72: the copy is faithful by digest and safe only if every link it carries is proven to kernel-resolve inside the derivative root. Without the walk a candidate containing an escaping link derives cleanly and the proof holds a path out of the derivative.",
+      "file": "src/disposable.ts",
+      "remove": "      await assertEverySymlinkResolvesInside(root);\n",
+      "testFile": "dist/test/disposable-symlinks.test.js"
+    },
+    {
+      "id": "disposable/a-symlink-resolving-outside-refuses-the-derivative",
+      "why": "A link whose kernel resolution lands outside the derivative root is a path out of the derivative that the digest cannot see (it hashes target strings, not where they land). Without this refusal a candidate with a climbing link derives and the proof can write through it.",
+      "file": "src/disposable.ts",
+      "remove": "    if (resolved !== realRoot && !contains(realRoot, resolved)) {\n      throw new DerivativeLinkEscapeError(\n        `symlink ${relPath} -> ${target} resolves to ${resolved}, outside the derivative root; a proof would hold a path out of the derivative`,\n        relPath,\n        target,\n        resolved,\n      );\n    }\n",
+      "testFile": "dist/test/disposable-symlinks.test.js"
+    },
+    {
+      "id": "disposable/an-absolute-symlink-target-refuses-the-derivative",
+      "why": "An absolute link resolves as a function of filesystem state outside the derivative, which no digest covers. Even when it lands inside the derivative today it is refused: move the tree and it silently points somewhere else. Only this rule refuses the lands-inside case, so its falsifier is exactly that shape.",
+      "file": "src/disposable.ts",
+      "remove": "  if (isAbsolute(target)) {\n    throw new DerivativeLinkEscapeError(\n      `symlink ${relPath} -> ${target} has an absolute target; its resolution depends on filesystem state outside the derivative, which no digest covers`,\n      relPath,\n      target,\n    );\n  }\n",
+      "testFile": "dist/test/disposable-symlinks.test.js"
+    },
+    {
+      "id": "disposable/an-unresolvable-symlink-refuses-the-derivative",
+      "why": "A broken or cyclic link has no kernel witness of where it lands, and computing where it WOULD land means reimplementing partial path resolution \u2014 a clever containment proof that will eventually be wrong. Without this refusal a broken link whose target would land outside is accepted on no evidence at all.",
+      "file": "src/disposable.ts",
+      "remove": "  throw new DerivativeLinkEscapeError(\n    unresolvable === \"ENOENT\"\n      ? `symlink ${relPath} -> ${target} is broken; where it would resolve once its target exists cannot be proven, so the derivative is refused`\n      : `symlink ${relPath} -> ${target} cannot be resolved by the kernel (${unresolvable}); a link with no kernel witness of where it lands cannot be proven contained`,\n    relPath,\n    target,\n  );\n",
+      "testFile": "dist/test/disposable-symlinks.test.js"
+    },
+    {
+      "id": "verify/negative-control-perturbs-its-disposable-derivative",
+      "why": "Proves Verify's control actually breaks something, and breaks it in the derivative. Without this line the control runs against a faithful copy, the verifier passes, and a check that can detect nothing is recorded as falsifiable.",
+      "file": "src/verify/engine.ts",
+      "remove": "    await derivative.mutate(options.perturbation.path, options.perturbation.content, options.perturbation.description);\n",
+      "testFile": "dist/test/falsifiability.test.js"
+    },
+    {
+      "id": "sandbox/worker-actually-wraps-the-command",
+      "why": "The entire containment claim for the worker path, which is the path that edits the repository. Without this one assignment the policy is derived, the profile is written, the launcher is consulted and authority.granted is emitted -- and the worker still runs the original, unconfined argv.",
+      "file": "adapters/local/command-worker.ts",
+      "remove": "    effective = { command: wrapped.command, args: wrapped.args };\n",
+      "testFile": "dist/test/worker-containment.test.js"
+    },
+    {
+      "id": "workers/write-enabled-work-requires-a-sandbox-capable-host",
+      "why": "Without it a write-enabled mission can be handed to a host that imposes no OS boundary, which is exactly the prompt-text-as-authority defect of issue #11.",
+      "file": "src/workers.ts",
+      "remove": "    if (requirements.requireSandboxCapableHost && !(await hostImposesContainment(entry))) {\n      // No authorization overrides this one. Prompt text and human trust are\n      // not an OS write boundary (issue #11); whoever vouches for the\n      // provider, the filesystem is still the filesystem.\n      rejections.push({\n        providerId: entry.provider.id,\n        reason: \"work with write access requires a host that imposes OS containment (HostCapabilities.sandbox)\",\n      });\n      continue;\n    }\n",
+      "testFile": "dist/test/worker-containment.test.js"
+    },
+    {
+      "id": "workers/unknown-write-authority-is-denied-not-permitted",
+      "why": "host-policy write access means the host will not say what the worker may write. Without this rejection unknown authority is treated as permitted, and a SHIP mission accepts a worker nobody bounded.",
+      "file": "src/workers.ts",
+      "remove": "    if (!allowedWriteAccess.has(descriptor.writeAccess) && authorization === undefined) {\n      rejections.push({\n        providerId: entry.provider.id,\n        reason: `write access ${descriptor.writeAccess} is not allowed by this supervision policy`,\n      });\n      continue;\n    }\n",
+      "testFile": "dist/test/worker-containment.test.js"
+    },
+    {
+      "id": "sandbox/write-scope-cannot-widen-past-the-execution-root",
+      "why": "The allow-list is derived from a contract the worker's own repository can influence. Without this check a writeScope naming an absolute path outside the execution root becomes an OS allow rule, and the boundary admits more than the contract said.",
+      "file": "src/sandbox.ts",
+      "remove": "      if (absolute !== executionRoot && !absolute.startsWith(`${executionRoot}/`)) {\n        refuseScope(uri, executionRoot, \"absolute path is outside the execution root\");\n      }\n",
+      "testFile": "dist/test/worker-containment.test.js"
+    },
+    {
+      "id": "workspace/git-subcommands-ignore-repository-supplied-config",
+      "why": "The execution-root digest excludes .git, so a worker can plant core.fsmonitor there and get code executed by the act of snapshotting. This flag is what makes that exclusion safe rather than a hole.",
+      "file": "adapters/git/worktrees.ts",
+      "remove": "  \"-c\", \"core.fsmonitor=\",\n",
+      "testFile": "dist/test/worker-containment.test.js"
+    },
+    {
+      "id": "board/authority-decisions-reach-the-projection",
+      "why": "authority.granted and authority.denied previously fell through default: break, so a refusal at the enforcement seam left no trace any reader could see. Evidence that is not projected is not evidence.",
+      "file": "src/board.ts",
+      "remove": "    case \"authority.granted\":\n    case \"authority.denied\": {\n      board = {\n        ...board,\n        authorityDecisions: [\n          ...board.authorityDecisions,\n          {\n            eventId: event.id,\n            decision: event.type === \"authority.granted\" ? \"granted\" : \"denied\",\n            reason: event.payload.reason ?? \"\",\n          },\n        ],\n      };\n      break;\n    }\n",
+      "testFile": "dist/test/worker-containment.test.js"
+    },
+    {
+      "id": "crew/authority-evidence-reaches-the-ledger-from-the-seam",
+      "why": "The seam's typed authority report is the only channel by which an OS refusal becomes a durable fact. Without this append the boundary still holds but the refusal is unevidenced, which is the half of issue #11 about proof rather than prevention.",
+      "file": "src/crew.ts",
+      "remove": "          if (observation.authority !== undefined) {\n            await append(\n              observation.authority.decision === \"granted\" ? \"authority.granted\" : \"authority.denied\",\n              {\n                policy: work.authority,\n                reason: `${observation.authority.reason} [boundary: ${observation.authority.boundary}]`,\n              },\n              { taskId, attemptId, actor: workerActor },\n            );\n          }\n",
+      "testFile": "dist/test/worker-containment.test.js"
+    },
+    {
+      "id": "worker/guarded-tool-mediation",
+      "why": "A Guard verdict is only an authority boundary when the native provider awaits it before effecting the tool call. Without this callback bridge, a denied shared-ref mutation can still happen.",
+      "file": "adapters/dsh/product-routes.ts",
+      "remove": "      ...(options.guardedToolMediation === undefined ? {} : {\n        canUseTool: async (call: GuardToolCall): Promise<GuardVerdict> => {\n          let evaluation: GuardEvaluation;\n          try {\n            evaluation = await options.guardedToolMediation!.evaluate(call);\n          } catch (cause) {\n            const refusal = routeRefusal(\n              call,\n              this.#route,\n              `DSH route ${this.#route.workerId} could not complete guarded mediation for this native tool call, so the effect is refused. ${cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)}`,\n              this.#now,\n            );\n            observeBestEffort(observations, () => ({\n              kind: \"diagnostic\",\n              occurredAt: this.#now(),\n              detail: `Guard mediation failed for a native tool call; refused: ${refusal.rationale}`.slice(0, 4000),\n            }));\n            return refusal;\n          }\n\n          // This hook is answered by a machine in a non-interactive permission\n          // mode, so nothing but an explicit allow may authorize the effect.\n          const effected = permittingVerdict(evaluation.verdict, this.#route);\n          observeBestEffort(observations, () => ({\n            kind: \"diagnostic\",\n            occurredAt: this.#now(),\n            detail: effected.decision === evaluation.verdict.decision\n              ? `Guard evaluated native tool ${evaluation.request.tool.name}: ${evaluation.verdict.decision}`\n              : `Guard evaluated native tool ${evaluation.request.tool.name}: ${evaluation.verdict.decision}, effected as ${effected.decision} (${this.#route.permissionMode} has no approval channel)`,\n            guardEvaluation: summarizeGuardEvaluation(evaluation),\n          }));\n          return effected;\n        },\n      }),\n",
+      "testFile": "dist/test/guard-mediation.test.js"
+    },
+    {
+      "id": "board/guard-evaluated-verdict-replays-as-evidence",
+      "why": "A Guard verdict that is written to the Ledger but omitted from Board replay is not reconstructible evidence; an operator cannot distinguish a denied operation from an unevaluated one after a restart.",
+      "file": "src/board.ts",
+      "remove": "    case \"guard.evaluated\": {\n      board = {\n        ...board,\n        guardEvaluations: [\n          ...board.guardEvaluations,\n          { eventId: event.id, ...event.payload },\n        ],\n      };\n      break;\n    }\n",
+      "testFile": "dist/test/guard-mediation.test.js"
+    },
+    {
+      "id": "guard/prompt-verdict-cannot-authorize-an-unattended-effect",
+      "why": "A prompt verdict means a human must decide. A native permission hook has no human, so a seam that passes prompt through effects an operation nobody approved.",
+      "file": "src/guard.ts",
+      "remove": "    if (decision !== \"allow\" && decision !== \"forbid\" && (this.#options.approvalChannel ?? \"none\") !== \"interactive\") {\n      return {\n        ...verdict,\n        decision: \"forbid\",\n        rationale: `Guard decided \"${decision}\" but this seam has no human approval channel, so the effect is refused. ${verdict.rationale}`.slice(0, 4000),\n        ruleHits: [...verdict.ruleHits, `mediation-no-approval-channel:${decision}`],\n      };\n    }\n",
+      "testFile": "dist/test/guard-mediation.test.js"
+    },
+    {
+      "id": "guard/durable-argument-summary-normalizes-unusable-keys",
+      "why": "A whitespace-only native argument key is valid input but invalid durable evidence unless it is normalized away. Without this summary boundary, a Guard ALLOW loses its ledger evidence and previously caused the DSH route to refuse the allowed effect.",
+      "file": "src/guard.ts",
+      "remove": ".map((key) => key.trim().slice(0, 200)).filter((key) => key.length > 0)",
+      "testFile": "dist/test/guard-mediation.test.js"
+    },
+    {
+      "id": "worker/only-allow-permits-a-native-dsh-effect",
+      "why": "The DSH product routes run in permission modes that never ask a human. Returning anything but an explicit allow as permitting lets a non-allow verdict take effect at the observable boundary.",
+      "file": "adapters/dsh/product-routes.ts",
+      "remove": "  if (verdict.decision !== \"allow\" && verdict.decision !== \"forbid\") {\n    return {\n      ...verdict,\n      decision: \"forbid\",\n      rationale: `Guard decided \"${verdict.decision}\", which requires a human; DSH route ${route.workerId} runs permissionMode ${route.permissionMode} and cannot ask one, so the effect is refused. ${verdict.rationale}`.slice(0, 4000),\n      ruleHits: [...verdict.ruleHits, `dsh-route-no-approval-channel:${verdict.decision}`],\n    };\n  }\n",
+      "testFile": "dist/test/guard-mediation.test.js"
+    },
+    {
+      "id": "worker/route-mediation-claim-is-rechecked-at-start",
+      "why": "A route declares whether its runtime routes native permission callbacks. Without rechecking that claim against the live runtime before the first native effect, a stale or false declaration silently buys write authority the runtime cannot enforce.",
+      "file": "adapters/dsh/product-routes.ts",
+      "remove": "      const nativeCapabilities = DshSubagentRuntimeCapabilitiesSchema.parse(await runtime.capabilities());\n      if (!nativeCapabilities.guardedToolMediation) {\n        throw new Error(`DSH product route ${this.#route.workerId} cannot mediate native tool calls synchronously`);\n      }\n",
+      "testFile": "dist/test/guard-mediation.test.js"
+    },
+    {
+      "id": "board/accepted-kinds-at-acceptance-gate",
+      "why": "The acceptance reader must enforce acceptedKinds independently from the verification engine. Without this, if the engine's filter is removed, unaccepted evidence could reach acceptance.",
+      "file": "src/board.ts",
+      "remove": "      const acceptable = evidence.some((item) => evidenceSatisfiesRequirement(requirement, item));\n      if (!acceptable) {\n        reasons.push(`required evidence ${requirement.id} is not satisfied by an accepted evidence kind`);\n      }\n",
+      "testFile": "dist/test/verify.test.js"
+    },
+    {
+      "id": "verify/check-binding-selector",
+      "why": "Evidence must only come from checks bound to the requirement. Without this, a passing check for requirement A could satisfy requirement B.",
+      "file": "src/verify/engine.ts",
+      "remove": "...primary.filter((check) => check.requirementIds.includes(requirement.id)).flatMap((check) => {\n          const result = byCheck.get(check.id);\n          return result?.status === \"pass\" ? result.evidence : [];\n        }),",
+      "testFile": "dist/test/verify.test.js"
+    },
+    {
+      "id": "integration/candidate-must-be-remotely-durable",
+      "why": "A local ref dies with the machine or disposable worktree. Queueing it as shared Work truth before a remote read-back makes automatic convergence capable of losing the only candidate bytes.",
+      "file": "src/board.ts",
+      "remove": "        if (event.payload.checkpoint.remoteStatus !== \"pushed\" || event.payload.checkpoint.remoteRef === undefined) {\n          return violation(board, event, \"integration-candidate-not-remote\", \"integration candidate must be durably pushed before it enters shared Work truth\");\n        }\n",
+      "testFile": "dist/test/integration-controller-v77.test.js"
+    },
+    {
+      "id": "integration/final-proof-must-bind-exact-head",
+      "why": "A passing verification for different bytes cannot authorize advancement of the Work integration ref. Without the exact-head check, stale proof becomes current organizational truth.",
+      "file": "src/integration.ts",
+      "remove": "      if (result.proofHead !== result.head || proof?.status !== \"pass\" || proof.contractRevision !== this.#requireBoard().contractRevision) {\n        await this.#append(\"integration.failed\", {\n          lockId,\n          checkpointId,\n          reason: \"integrated artifact lacks passing proof bound to its exact head\",\n          semanticConflict: false,\n          preservedRefs: [projected.checkpoint.remoteRef].filter((value): value is string => value !== undefined),\n        });\n        throw new IntegrationControllerError(\"integrated artifact lacks passing proof bound to its exact head\");\n      }\n",
+      "testFile": "dist/test/integration-controller-v77.test.js"
+    },
+    {
+      "id": "integration/workers-cannot-own-git-convergence",
+      "why": "Workers produce candidate bytes but cannot push, merge, rebase, update the shared ref, or open a competing PR. Removing this priority denial lets an ordinary per-tool allow bypass the Integration Controller.",
+      "file": "src/guard.ts",
+      "remove": "    const harnessOwnedGitOperation = matchHarnessOwnedGitOperation(request);\n    if (harnessOwnedGitOperation !== null) {\n      ruleHits.push(\"integration-git-authority:harness-owned\");\n      return verdict(\n        \"forbid\",\n        `${harnessOwnedGitOperation} is owned by the Work Integration Controller, not by a worker Attempt.`,\n        \"critical\",\n        ruleHits,\n      );\n    }\n\n",
+      "testFile": "dist/test/integration-controller-v77.test.js"
+    },
+    {
+      "id": "integration/mutations-require-operator-authority",
+      "why": "Without this controller seam, any worker-class actor can initialize or mutate durable Work integration state, including self-releasing a parked Work.",
+      "file": "src/integration.ts",
+      "remove": "    if (this.#actor.kind !== \"human\" && this.#actor.kind !== \"service\") {\n      throw new IntegrationControllerError(`actor ${this.#actor.id} lacks integration operator authority`);\n    }\n",
+      "testFile": "dist/test/integration.test.js"
+    },
+    {
+      "id": "verify/acceptance-requires-human-authority",
+      "why": "An independently verified result is not an accepted Outcome until a human makes the organizational decision; a worker must not be able to cross that acceptance seam.",
+      "file": "src/verify/accept.ts",
+      "remove": "  if (actor.kind !== \"human\") throw new Error(`actor ${actor.id} lacks human acceptance authority`);\n",
+      "testFile": "dist/test/verify.test.js"
+    },
+    {
+      "id": "crew/dependency-output-is-not-spliced-into-objective",
+      "why": "Constitution \u00a79 forbids prompt text as an enforcement boundary. A SHIP worker's free-text summary must not reach a downstream worker's instruction channel; the only path is the typed TaintedAttachment array, which the adapter renders as fenced data (#15).",
+      "file": "src/crew.ts",
+      "remove": "        taintedAttachments: missionContext.taintedAttachments,\n",
+      "testFile": "dist/test/crew.test.js"
+    },
+    {
+      "id": "crew/attempt-respects-deadline",
+      "why": "Constitution \u00a710 requires timeouts alongside PID checks. Crew must not block forever on a hung worker's result; a deadline race must force a non-recoverable attempt.failed when the budget is exceeded (#16).",
+      "file": "src/crew.ts",
+      "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${raceOutcome.observedAt}`, recoverable: false },\n          { taskId, attemptId, actor: workerActor },\n          raceOutcome.observedAt,\n        );\n",
+      "testFile": "dist/test/crew.test.js"
+    },
+    {
+      "id": "integration/horizon-blocks-write-work",
+      "why": "Work that advances past a tripped horizon is the drift that produced 2,020 unmerged commits and 110 branches whose unique bytes existed on exactly one machine.",
+      "file": "src/horizon.ts",
+      "remove": "  if (decision.kind === \"tripped\") {\n    throw new IntegrationHorizonExceededError(policyId, decision.reasons.map((reason) => reason.signal));\n  }\n",
+      "testFile": "dist/test/horizon-enforcement.test.js"
+    },
+    {
+      "id": "integration/durability-is-never-grandfathered",
+      "why": "A baseline exists to let inherited drift shrink safely. Consulting it before durability would let it legalize unique bytes that exist on one machine, which is the loss the horizon exists to prevent.",
+      "file": "src/horizon.ts",
+      "remove": "  if (durability !== undefined) return { kind: \"tripped\", reasons: [durability, ...volume] };\n",
+      "testFile": "dist/test/horizon-enforcement.test.js"
+    },
+    {
+      "id": "integration/review-forgives-only-size",
+      "why": "Review answers whether a change is too large to review. It does not reconcile private history, divergence, or age, so forgiving those under review would reopen the drift ADR 0023 closed.",
+      "file": "src/horizon.ts",
+      "remove": "  if (volume.some((reason) => reason.signal !== \"diffLines\")) return undefined;\n",
+      "testFile": "dist/test/horizon-enforcement.test.js"
+    },
+    {
+      "id": "integration/review-growth-is-bounded",
+      "why": "Without a bound, opening a pull request would be a permanent exemption from the size horizon, and a second feature could ride on the first one's review.",
+      "file": "src/horizon.ts",
+      "remove": "  if (signals.diffLines >= limit) return undefined;\n",
+      "testFile": "dist/test/horizon-enforcement.test.js"
+    }
+  ]
+}

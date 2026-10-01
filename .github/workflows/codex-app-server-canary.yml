@@ -1,0 +1,51 @@
+name: Codex App Server Canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-codex-app-server:
+    name: Real Codex App Server through Crew
+    # Rhiz's self-hosted Mac already carries the operator's Codex auth state.
+    # The canary installs the pinned CLI but never copies a long-lived model key
+    # into GitHub Actions.
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Verify npm version
+        run: test "$(npm --version)" = "11.17.0"
+
+      - name: Install Harness dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install pinned Codex CLI
+        run: npm install --global --no-audit --no-fund @openai/codex@0.148.0
+
+      - name: Require existing Codex authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "$HOME/.codex/auth.json" ]; then
+            echo '::error::The self-hosted Rhiz runner has no Codex auth state.'
+            exit 2
+          fi
+          if ! codex login status >/dev/null 2>&1; then
+            echo '::error::The self-hosted Rhiz runner Codex auth state is not usable.'
+            exit 2
+          fi
+          echo 'Codex authentication is available on the self-hosted Rhiz runner.'
+
+      - name: Run real Codex App Server through Crew and Guard
+        run: npm run canary:codex

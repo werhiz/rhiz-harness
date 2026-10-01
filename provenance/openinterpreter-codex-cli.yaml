@@ -1,0 +1,32 @@
+source_repository: openinterpreter/openinterpreter
+upstream_commit: 5b07159c477920c159d8892d112b480e7307f257
+upstream_paths:
+  - codex-rs/core/src/guardian/mod.rs
+  - codex-rs/core/src/guardian/policy.md
+  - codex-rs/execpolicy/src/lib.rs
+  - codex-rs/execpolicy/src/main.rs
+rhiz_paths:
+  - src/guard.ts
+  - test/guard.test.ts
+  - docs/decisions/0008-policy-oracle.md
+  - provenance/openinterpreter-codex-cli.yaml
+purpose: PolicyOracle interface, RhizNativePolicyOracle state machine, GuardianRejectionCircuitBreaker tuning constants and circuit-breaker semantics, Decision{Allow,Prompt,Forbidden} trichotomy, four-step doctrine (reconstruct compact transcript -> dedicated review session -> strict-JSON contract -> fail closed on timeout/malformed).
+material_changes:
+  - Re-implemented GuardianRejectionCircuitBreaker in TypeScript matching the upstream state machine semantics (consecutive denials + sliding-window denials with time-bound pruning).
+  - Adopted default tuning constants (90s timeout, 3 consecutive denials, 10 sliding-window denials in 5 minutes) and per-category token budgets (10k prompt / 10k tool / 2k per-entry) from codex-rs/core/src/guardian/mod.rs:53-69.
+  - Replaced the LLM-as-judge path with deterministic rule evaluation (forbidden-pattern matching + per-tool mode + default-deny) per Constitution §22 mechanical supervision SHOULD consume zero model tokens whenever possible.
+  - Added Zod schemas for portable GuardPolicy, GuardRequest, GuardVerdict, PerToolGuardMode, CircuitBreakerConfig, GuardBackend, ToolCategory, RiskLevel, GuardDecision.
+  - Added explicit GuardBackend selector ('rhiz-native' default, 'execpolicy' escape hatch) so operators can opt into the codex-rs/execpolicy sidecar when it ships.
+  - Added ExecPolicyBackendOracle as a swappable backend (default disabled; sidecar runtime is unimplemented in v0.1 and surfaces GuardOracleUnavailableError).
+  - Added helper guardPolicyFromWorkContract that derives a default GuardPolicy from WorkContract.authority so the Guard is a first-class consumer of WorkContract.
+  - Added assertGuardCanEvaluate gating that throws GuardCircuitOpenError before invoking the oracle when the circuit breaker is open.
+  - Licence: Apache-2.0 with NOTICE (any redistribution must carry the upstream OpenAI copyright line per Apache-2.0 §4(d) and the crate+module NOTICE obligations).
+  - Upstream is a fork (openinterpreter/openinterpreter @ 5b07159c, advertised as 'rust-v0.0.40'); derive only from the documented guardian/contracts and explicitly pin to the upstream OpenAI Codex commit before redistribution.
+license: Apache-2.0
+strategy: derived
+reviewed_at: 2026-08-20
+reviewed_by: openai:gpt-5.6-pro
+
+notice_obligation: satisfied. The upstream NOTICE ("OpenAI Codex / Copyright 2025 OpenAI") is reproduced in the repository NOTICE file.
+upstream_license_verified_at: 2026-10-01
+upstream_license_verified: openinterpreter/openinterpreter at 5b07159c carries the Apache-2.0 LICENSE and the OpenAI Codex NOTICE; openai/codex is Apache-2.0.

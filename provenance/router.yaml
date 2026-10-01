@@ -1,0 +1,74 @@
+module: src/router.ts
+status: study-and-derive
+version: 0.1
+decided: 2026-08-20
+
+# Router v0.1 — sources studied and reused
+
+The Router module's evidence-based policy selection surface derives from
+the Compound Engineering Plan §14. Below are the open-source projects that
+informed the design, with study notes and (where applicable) license
+classification. Code reuse is *study-only* in v0.1; v0.2 may selectively
+derive specific patterns under a permissive license (to be classified
+before any code is incorporated).
+
+## Primary sources
+
+### Compound Engineering Plan §14 (Rhiz)
+
+- **upstream**: `docs/COMPOUND_ENGINEERING_PLAN.md:346-375`
+- **license**: Rhiz project (internal)
+- **relationship**: the canonical reference for the four policy kinds
+  (`cheapest-capable | fastest-capable | highest-confidence | balanced`)
+  and the "evidence-based rather than reputation-based" requirement.
+- **reuse**: direct mapping — every policy kind in `RouterPolicySchema`
+  matches the Plan's vocabulary exactly.
+
+## Studied sources
+
+### langchain-ai/langchain (model profiles)
+
+- **upstream**: `libs/langchain/langchain-chat-models/langchain_anthropic/...`
+  (also `langchain-model-profiles` package)
+- **license**: MIT
+- **relationship**: the Router v0.1 derives its capability declaration
+  (`RouterWorkerDescriptorSchema`) from the same idea: each worker declares
+  its capability surface up-front so the router can match and score.
+- **reuse**: study-only. v0.2 may derive a `RouterConfig.profileProvider`
+  that consumes `langchain-model-profiles` data.
+
+### open-telemetry/opentelemetry-collector (OTTL)
+
+- **upstream**: `opentelemetry-collector/internal/filter/ottl/...`
+- **license**: Apache-2.0
+- **relationship**: the Compound Engineering Plan §14 names OTel OTTL as
+  the reference DSL for declarative routing rules.
+- **reuse**: study-only. v0.2 may add a `RouterExpression` schema that
+  compiles to OTTL.
+
+### langchain-ai/langchain v1 (middleware)
+
+- **upstream**: `libs/langchain_v1/langchain/agents/middleware/...`
+- **license**: MIT
+- **relationship**: langchain v1's middleware layer is a model of typed
+  policy hooks. The Router's discriminated policy surface mirrors that
+  pattern.
+- **reuse**: study-only.
+
+## Upstream evidence captures (none in v0.1)
+
+The Router v0.1 does not copy code from any upstream project. The four
+policy kinds and the evidence computation are derived from the Plan and
+the existing Kernel surfaces (`WorkContract`, `EventLedger`,
+`HarnessEvent`). All code in `src/router.ts` is Rhiz-authored.
+
+## What stays out of v0.1 (deferred to v0.2)
+
+- `RouterExpression` — derive from OTel OTTL.
+- `RouterConfig.profileProvider` — derive from `langchain-model-profiles`.
+- `RouterConfig.advisorModel` — derive from langchain v1 middleware.
+- Adaptive bandit exploration over worker success rates.
+- Direct `PolicyOracle` composition inside `routeWorker`.
+
+Each deferred item must have a follow-up provenance entry before code
+is incorporated.

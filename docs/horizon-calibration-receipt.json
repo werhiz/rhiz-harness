@@ -1,0 +1,40 @@
+{
+  "$comment": "Calibration evidence for the integration horizon. The branch count is evidence, never an invariant.",
+  "policy": "calibrated-integration-horizon-0023",
+  "policyStatus": "calibrated",
+  "thresholds": {
+    "commitsAhead": 10,
+    "commitsBehind": 50,
+    "diffLines": 400,
+    "divergenceAgeMs": 86400000
+  },
+  "repository": "<Customer Zero monorepo, private>",
+  "integrationRef": "origin/main",
+  "integrationHead": "2220dcf3b3e296dbe0300598bc5aa6df2e9746b9",
+  "measuredAt": "2026-09-14T01:02:05.958Z",
+  "branchCount": 176,
+  "tally": {
+    "clear": 0,
+    "grandfathered": 0,
+    "tripped": 175,
+    "unavailable": 1
+  },
+  "sentinels": {
+    "worstDivergedBranch": "<private branch>",
+    "worstDivergedSignals": {
+      "commitsAhead": 196,
+      "commitsBehind": 321,
+      "elapsedMsSinceConvergence": 0,
+      "divergenceAgeMs": 951479217,
+      "diffLines": 18710,
+      "binaryFilesChanged": 0,
+      "upstreamState": "pushed",
+      "overlappingResourceClaims": 0,
+      "integrationHeadMoved": false,
+      "proofInvalidationRisk": false
+    },
+    "durabilityDisagreements": 0
+  },
+  "failures": [],
+  "$redaction": "Repository path and branch names are redacted for publication. Counts and signals are unchanged from the measured receipt."
+}

@@ -1,0 +1,122 @@
+{
+  "name": "@werhiz/rhiz-harness",
+  "version": "0.0.1-kernel.0",
+  "private": true,
+  "description": "Portable organizational kernel for Rhiz Harness",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/werhiz/rhiz-harness.git"
+  },
+  "homepage": "https://github.com/werhiz/rhiz-harness#readme",
+  "bugs": {
+    "url": "https://github.com/werhiz/rhiz-harness/issues"
+  },
+  "type": "module",
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "check:portable-boundary": "node scripts/check-portable-boundary.mjs",
+    "check:barrel": "node scripts/check-barrel.mjs",
+    "check:operator-scripts": "node scripts/check-operator-scripts.mjs",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "check": "npm run check:ci-trigger-budget && npm run check:portable-boundary && npm run check:barrel && npm run check:operator-scripts && npm run build && node --test dist/test/*.test.js && npm run check:guards && npm run proof:falsifiability && npm run check:ci-parity",
+    "canary:codex": "npm run build && node scripts/codex-app-server-canary.mjs",
+    "work:repository": "npm run build && node scripts/run-repository-work.mjs",
+    "setup:dsh-products": "node scripts/install-dsh-product-deps.mjs",
+    "proof:dsh-products": "npm run build && node scripts/dsh-product-operator-proof.mjs",
+    "smoke:dsh": "npm run build && node scripts/dsh-smoke.mjs",
+    "smoke:dsh-products": "npm run build && node scripts/dsh-product-routes-smoke.mjs",
+    "check:guards": "node scripts/check-guard-falsifiability.mjs",
+    "proof:falsifiability": "node --test dist/test/proofs/*.test.js",
+    "check:ci-parity": "node scripts/check-ci-parity.mjs",
+    "benchmark:compare": "npm run build && node scripts/compare-benchmark-runs.mjs",
+    "check:ci-trigger-budget": "node scripts/check-ci-trigger-budget.mjs"
+  },
+  "files": [
+    "dist/src",
+    "dist/adapters",
+    "scripts/run-repository-work.mjs",
+    "README.md",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "bin": {
+    "rhiz-harness-repository-work": "scripts/run-repository-work.mjs"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-sdk-client": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-subagent": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-subagent-claude-code": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-subagent-codex": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-subprocess-local": "0.1.0-rc.8"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-sdk-client": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subagent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subagent-claude-code": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subagent-codex": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subprocess": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subprocess-local": {
+      "optional": true
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./codex": {
+      "types": "./dist/adapters/codex/app-server.d.ts",
+      "import": "./dist/adapters/codex/app-server.js"
+    },
+    "./dsh": {
+      "types": "./dist/adapters/dsh/index.d.ts",
+      "import": "./dist/adapters/dsh/index.js"
+    },
+    "./dsh-products": {
+      "types": "./dist/adapters/dsh/products.d.ts",
+      "import": "./dist/adapters/dsh/products.js"
+    },
+    "./git-worktrees": {
+      "types": "./dist/adapters/git/index.d.ts",
+      "import": "./dist/adapters/git/index.js"
+    },
+    "./local-verify": {
+      "types": "./dist/adapters/local/index.d.ts",
+      "import": "./dist/adapters/local/index.js"
+    },
+    "./durable-ledger": {
+      "types": "./dist/adapters/local/durable-ledger.d.ts",
+      "import": "./dist/adapters/local/durable-ledger.js"
+    }
+  },
+  "types": "./dist/src/index.d.ts"
+}
