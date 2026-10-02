@@ -120,7 +120,8 @@ function forkSafetyProblems(file, workflow) {
 }
 
 try {
-  const files = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/.test(file)).sort();
+  // Case-insensitive, so evil.YML cannot sit beside the decided files unseen.
+  const files = readdirSync(workflowsDir).filter((file) => /\.ya?ml$/i.test(file)).sort();
   const decided = Object.keys(DECIDED_TRIGGERS).sort();
   if (files.join("\n") !== decided.join("\n")) {
     throw new Error(`workflow inventory changed: ${files.join(", ")}; decide its triggers before updating this guard`);

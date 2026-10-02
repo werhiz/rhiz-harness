@@ -111,3 +111,16 @@ test("the canary stays manual", () => {
 test("the kernel fixture actually uses a GitHub-hosted runner", () => {
   assert.ok(KERNEL.includes(RUNS_ON));
 });
+
+test("a workflow file with an upper-case extension is part of the inventory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rhiz-ci-budget-"));
+  try {
+    cpSync(resolve(ROOT, ".github/workflows"), dir, { recursive: true });
+    writeFileSync(join(dir, "evil.YML"), "on:\n  pull_request:\npermissions:\n  contents: read\njobs:\n  x:\n    runs-on: self-hosted\n    steps:\n      - run: id\n");
+    const result = spawnSync(process.execPath, [SCRIPT, "--workflows", dir], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /workflow inventory changed: .*evil\.YML/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
