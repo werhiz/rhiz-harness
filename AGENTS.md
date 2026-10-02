@@ -18,8 +18,8 @@ The Constitution is the highest architectural authority in this repository. An A
 ## Non-negotiable development rules
 
 - Before integration, use the independent exact-candidate check and receipt in
-  `docs/AGENT_PROOF_AND_CI_SPEND.md`. GitHub Actions is manual dispatch only;
-  a failed or empty hosted run is not proof.
+  `docs/AGENT_PROOF_AND_CI_SPEND.md`. Kernel CI runs on every pull request;
+  a failed, skipped, or empty hosted run is not proof.
 
 - The portable core MUST NOT import DSH, Rhiz Protocol, or another concrete host/runtime.
 - DSH is the first host implementation behind a Rhiz-owned interface.
