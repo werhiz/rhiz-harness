@@ -341,3 +341,11 @@ test("an empty population is an observation with nothing in it, not an error", (
   assert.deepEqual(observation.findings, []);
   assert.match(formatFactoryObservation(observation), /no benchmark runs/);
 });
+
+test("the same run supplied twice is counted once and reported as a duplicate", () => {
+  const runs = [benchRun(), benchRun({ benchmarkCaseId: "case:2", verified: false })];
+  const observation = observeFactory({ runs: [...runs, ...runs] });
+  assert.equal(observation.northStar.runs, 2);
+  assert.equal(observation.window.runCount, 2);
+  assert.equal(observation.window.duplicateRunsIgnored, 2);
+});

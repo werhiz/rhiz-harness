@@ -22,6 +22,7 @@ import {
 import {
   InterventionCoverageSchema,
   ReplayExperimentSpecSchema,
+  benchmarkRunIdentity,
   interventionCoverageOf,
   median,
   northStarOf,
@@ -131,11 +132,14 @@ function refusal(spec: ReplayExperimentSpec, pair: ReplayTrialPair): { reason: s
 function verdictOf(baseline: ReplayArmSummary, candidate: ReplayArmSummary, reasons: string[]): ReplayVerdict {
   const rateB = baseline.verifiedCompletionRate ?? 0;
   const rateC = candidate.verifiedCompletionRate ?? 0;
-  // Intervention ratios compare only when both arms counted interventions the
-  // same way and both verified something. Otherwise the ratio is silent.
+  // Intervention ratios decide a verdict only when both arms are a complete
+  // census and both verified something. A runner-observed count is a floor:
+  // a candidate that moves work onto checks the runner cannot see would read
+  // as an improvement. compareBenchmarkRuns withholds the pairwise count for
+  // the same reason.
   const ratiosComparable =
-    baseline.interventionCoverage === candidate.interventionCoverage &&
-    baseline.interventionCoverage !== "mixed" &&
+    baseline.interventionCoverage === "complete" &&
+    candidate.interventionCoverage === "complete" &&
     baseline.interventionsPerVerifiedOutcome !== null &&
     candidate.interventionsPerVerifiedOutcome !== null;
   if (!ratiosComparable) {
@@ -167,12 +171,50 @@ export function summarizeReplayExperiment(
   const candidateRuns: BenchmarkRun[] = [];
   const accepted = new Map<string, number>(spec.benchmarkCaseIds.map((caseId) => [caseId, 0]));
 
+  const countedRuns = new Set<string>();
+  const armSignature: { baseline?: string; candidate?: string } = {};
+
   pairs.forEach((pair, index) => {
+    const refuse = (reason: string) => {
+      refusedPairs.push({ index, benchmarkCaseId: pair.baseline.benchmarkCaseId, reason });
+    };
     const outcome = refusal(spec, pair);
-    if ("reason" in outcome) {
-      refusedPairs.push({ index, benchmarkCaseId: pair.baseline.benchmarkCaseId, reason: outcome.reason });
-      return;
+    if ("reason" in outcome) return refuse(outcome.reason);
+
+    // One trial supplied twice is one trial. Counting it again would let a
+    // single run satisfy trialsPerArm on its own.
+    const identities = [benchmarkRunIdentity(pair.baseline), benchmarkRunIdentity(pair.candidate)];
+    if (identities.some((identity) => countedRuns.has(identity))) {
+      return refuse("this run is already counted in an earlier pair");
     }
+
+    // A pair that varies nothing the experiment permits is an A/A run. It
+    // cannot be evidence for the change.
+    if (spec.permittedDifferences.every((field) =>
+      controlValue(pair.baseline, field) === controlValue(pair.candidate, field))) {
+      return refuse(`the pair changes nothing the experiment varies (${spec.permittedDifferences.join(", ")})`);
+    }
+
+    // Each arm is one configuration across every pair. An arm that drifts,
+    // or arms that swap, compare nothing.
+    for (const arm of ["baseline", "candidate"] as const) {
+      const run = pair[arm];
+      const signature = JSON.stringify([
+        run.variantId ?? null,
+        ...spec.permittedDifferences.map((field) => controlValue(run, field)),
+      ]);
+      const established = armSignature[arm];
+      if (established !== undefined && established !== signature) {
+        return refuse(`${arm} arm ran ${signature}, but earlier pairs' ${arm} arm ran ${established} (variant, ${spec.permittedDifferences.join(", ")})`);
+      }
+    }
+    for (const arm of ["baseline", "candidate"] as const) {
+      armSignature[arm] ??= JSON.stringify([
+        pair[arm].variantId ?? null,
+        ...spec.permittedDifferences.map((field) => controlValue(pair[arm], field)),
+      ]);
+    }
+    for (const identity of identities) countedRuns.add(identity);
     comparisons.push(outcome.comparison);
     baselineRuns.push(pair.baseline);
     candidateRuns.push(pair.candidate);

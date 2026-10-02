@@ -191,6 +191,8 @@ export const FactoryObservationSchema = z.object({
     eventCount: z.number().int().nonnegative(),
     workCount: z.number().int().nonnegative(),
     runCount: z.number().int().nonnegative(),
+    /** Runs supplied more than once. Each is counted once; a repeat is not more evidence. */
+    duplicateRunsIgnored: z.number().int().nonnegative(),
   }).strict(),
   northStar: NorthStarSchema,
   /** Judgment decisions are tracked apart from clerical effort, never folded into it. */
@@ -224,6 +226,20 @@ const INTERVENTION_PROPOSAL: Record<HumanIntervention["kind"], RefinerProposalKi
   "judgment-decision": "documentation",
   other: "documentation",
 };
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** The identity of a supplied run: its full canonical content. */
+export function benchmarkRunIdentity(run: BenchmarkRun): string {
+  return canonicalJson(run);
+}
 
 function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
@@ -705,7 +721,10 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
   const config = ObserverConfigSchema.parse({ ...DEFAULT_OBSERVER_CONFIG, ...(input.config ?? {}) });
   const events = [...(input.events ?? [])].sort((a, b) =>
     a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
-  const runs = [...(input.runs ?? [])].sort((a, b) =>
+  const uniqueRuns = new Map<string, BenchmarkRun>();
+  for (const run of input.runs ?? []) uniqueRuns.set(benchmarkRunIdentity(run), run);
+  const duplicateRunsIgnored = (input.runs?.length ?? 0) - uniqueRuns.size;
+  const runs = [...uniqueRuns.values()].sort((a, b) =>
     a.benchmarkCaseId.localeCompare(b.benchmarkCaseId) ||
     (a.variantId ?? "").localeCompare(b.variantId ?? "") ||
     a.startedAt.localeCompare(b.startedAt) ||
@@ -738,6 +757,7 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
       eventCount: events.length,
       workCount: new Set([...events.map((event) => event.workId), ...runs.flatMap((run) => (run.workId ? [run.workId] : []))]).size,
       runCount: runs.length,
+      duplicateRunsIgnored,
     },
     northStar: northStarOf(runs),
     decisions: {
@@ -758,7 +778,8 @@ export function formatFactoryObservation(observation: FactoryObservation): strin
   const star = observation.northStar;
   lines.push(
     `Observed ${observation.window.workCount} Works, ${observation.window.eventCount} Ledger events, ` +
-    `${observation.window.runCount} benchmark runs.`,
+    `${observation.window.runCount} benchmark runs` +
+    (observation.window.duplicateRunsIgnored > 0 ? ` (${observation.window.duplicateRunsIgnored} duplicate runs ignored).` : "."),
   );
   if (star.runs === 0) {
     lines.push("North Star: no benchmark runs, so interventions per verified outcome cannot be measured.");

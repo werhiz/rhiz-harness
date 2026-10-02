@@ -40,13 +40,17 @@ Add two portable modules. Both are pure projections over existing evidence.
 
 ### Invariants
 
-- **Observation appends nothing.** The CLI opens a Ledger with torn-tail repair off, and a test proves the file is byte-identical afterward.
+- **Observation writes nothing.** The CLI verifies a private copy of the Ledger file, so it takes no lock and creates no file in the Ledger directory. A path with no Ledger is an error, never an empty report. Tests prove both.
 - **Learning proposes; named authorities promote.** A finding carries a proposal kind, never a promotion. A quiet criterion is reported for falsification, never for removal.
 - **No denominator of zero.** Guard `observer/no-verified-outcome-means-no-north-star`.
 - **A proven check is not inert.** A criterion with an executed negative control is never called quiet. Guard `observer/falsified-criterion-is-not-quiet`.
 - **Refused trials are reported, never dropped.** Guard `replay/refused-pair-is-reported-never-dropped`.
 - **Missing trials do not shrink the experiment.** Guard `replay/missing-trials-are-insufficient`.
-- **Ratios compare only like with like.** Arms whose intervention coverage differs never have their ratios compared.
+- **Intervention floors never decide.** Interventions per verified outcome decides a replay verdict only when both arms counted interventions completely. A runner-observed count is a floor. Guard `replay/intervention-floors-never-decide`.
+- **One trial counts once.** A run supplied in more than one pair is refused. Guard `replay/one-trial-counts-once`.
+- **A/A is not evidence.** A pair that differs in none of the experiment's permitted dimensions is refused. Guard `replay/a-a-pair-is-not-evidence`.
+- **Each arm is one configuration.** A pair whose variant or permitted-dimension values differ from the arm established by earlier pairs is refused. Guard `replay/arms-hold-one-configuration`.
+- **Duplicate runs are counted once** by the Observer and reported as `duplicateRunsIgnored`.
 - **Deterministic.** The same evidence in any order yields the same observation, with stable finding ids.
 
 ### Not decided here

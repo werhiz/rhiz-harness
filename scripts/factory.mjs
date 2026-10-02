@@ -5,9 +5,11 @@
 //            population shows and the replay experiments worth running
 //   replay   summarize paired benchmark receipts against one experiment
 //
-// Both commands only read. A Ledger is opened with torn-tail repair off, so
-// observing evidence never rewrites it.
-import { readFile, readdir, stat } from "node:fs/promises";
+// Both commands only read. A Ledger is verified from a private copy of its
+// events file, so observing never takes the writer's lock, repairs a torn
+// tail, or creates anything in the Ledger directory.
+import { copyFile, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { DurableEventLedger } from "../dist/adapters/local/durable-ledger.js";
@@ -52,14 +54,25 @@ async function readRuns(path) {
   return (Array.isArray(raw) ? raw : [raw]).map(toRun);
 }
 
+class UsageError extends Error {}
+
 async function readLedger(directory) {
-  const ledger = await DurableEventLedger.open({ directory: resolve(directory), repairTornTail: false });
+  const source = join(resolve(directory), "events.jsonl");
+  const exists = await stat(source).then((entry) => entry.isFile(), () => false);
+  if (!exists) throw new UsageError(`no Ledger at ${resolve(directory)} (expected events.jsonl)`);
+  const scratch = await mkdtemp(join(tmpdir(), "rhiz-factory-observe-"));
   try {
-    const events = [];
-    for await (const record of ledger.records()) events.push(record.event);
-    return events;
+    await copyFile(source, join(scratch, "events.jsonl"));
+    const ledger = await DurableEventLedger.open({ directory: scratch, repairTornTail: false });
+    try {
+      const events = [];
+      for await (const record of ledger.records()) events.push(record.event);
+      return events;
+    } finally {
+      await ledger.close();
+    }
   } finally {
-    await ledger.close();
+    await rm(scratch, { recursive: true, force: true });
   }
 }
 
@@ -73,7 +86,14 @@ if (command === "observe") {
     console.error(usage());
     process.exit(2);
   }
-  const events = (await Promise.all(ledgers.map(readLedger))).flat();
+  let events;
+  try {
+    events = (await Promise.all(ledgers.map(readLedger))).flat();
+  } catch (error) {
+    if (!(error instanceof UsageError)) throw error;
+    console.error(error.message);
+    process.exit(2);
+  }
   const runs = (await Promise.all(runFiles.map(readRuns))).flat();
   const observation = observeFactory({ events, runs });
   console.log(json ? JSON.stringify(observation, null, 2) : formatFactoryObservation(observation));

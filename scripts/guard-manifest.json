@@ -413,6 +413,34 @@
       "file": "src/replay.ts",
       "remove": "  } else if (trialsByCase.some((entry) => entry.accepted < entry.required)) {\n    verdict = \"insufficient-evidence\";\n    const short = trialsByCase.filter((entry) => entry.accepted < entry.required);\n    reasons.push(`${short.length} case(s) have fewer than ${spec.trialsPerArm} paired trials`);\n",
       "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/one-trial-counts-once",
+      "why": "A trial supplied twice would let a single run satisfy trialsPerArm and carry a verdict on its own.",
+      "file": "src/replay.ts",
+      "remove": "      return refuse(\"this run is already counted in an earlier pair\");\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/a-a-pair-is-not-evidence",
+      "why": "A pair whose arms differ in nothing the experiment varies measures noise and would be scored as the change's effect.",
+      "file": "src/replay.ts",
+      "remove": "      return refuse(`the pair changes nothing the experiment varies (${spec.permittedDifferences.join(\", \")})`);\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/arms-hold-one-configuration",
+      "why": "Arms that drift or swap between pairs compare nothing, yet would aggregate into a verdict.",
+      "file": "src/replay.ts",
+      "remove": "        return refuse(`${arm} arm ran ${signature}, but earlier pairs' ${arm} arm ran ${established} (variant, ${spec.permittedDifferences.join(\", \")})`);\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/intervention-floors-never-decide",
+      "why": "A runner-observed intervention count is a floor; letting it decide would reward a change that moves work onto checks the runner cannot see.",
+      "file": "src/replay.ts",
+      "remove": "    baseline.interventionCoverage === \"complete\" &&\n    candidate.interventionCoverage === \"complete\" &&\n",
+      "testFile": "dist/test/replay.test.js"
     }
   ]
 }

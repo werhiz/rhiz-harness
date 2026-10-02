@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -80,7 +80,16 @@ test("replay exits nonzero when the result may not be claimed", () => {
     assert.equal(short.status, 1);
     assert.match(short.stdout, /insufficient-evidence/);
 
-    writeFileSync(join(root, "two.json"), JSON.stringify([pair, pair]));
+    const second = {
+      baseline: benchRun({ variantId: "baseline", verified: false, attemptIds: ["attempt:3"] }),
+      candidate: benchRun({ variantId: "candidate", model: "model-b", attemptIds: ["attempt:4"] }),
+    };
+    writeFileSync(join(root, "repeated.json"), JSON.stringify([pair, pair]));
+    const repeated = factory(["replay", "--experiment", join(root, "experiment.json"), "--pairs", join(root, "repeated.json")]);
+    assert.equal(repeated.status, 1);
+    assert.match(repeated.stdout, /invalid/);
+
+    writeFileSync(join(root, "two.json"), JSON.stringify([pair, second]));
     const enough = factory(["replay", "--experiment", join(root, "experiment.json"), "--pairs", join(root, "two.json")]);
     assert.equal(enough.status, 0, enough.stderr);
     assert.match(enough.stdout, /Replay replay:cli: improved \(descriptive\)/);
@@ -93,4 +102,33 @@ test("no command prints usage and exits 2", () => {
   const result = factory([]);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /factory:observe/);
+});
+
+test("observe refuses a Ledger path that does not exist and creates nothing there", () => {
+  const root = mkdtempSync(join(tmpdir(), "rhiz-factory-cli-"));
+  try {
+    const missing = join(root, "no-such-ledger");
+    const result = factory(["observe", "--ledger", missing]);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /no Ledger/);
+    assert.equal(existsSync(missing), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("observe leaves no lock, snapshot directory, or other file behind in the Ledger directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rhiz-factory-cli-"));
+  try {
+    const ledgerDir = join(root, "ledger");
+    const ledger = await DurableEventLedger.open({ directory: ledgerDir });
+    await ledger.close();
+    rmSync(join(ledgerDir, "snapshots"), { recursive: true, force: true });
+    const before = readdirSync(ledgerDir).sort();
+    const result = factory(["observe", "--ledger", ledgerDir]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readdirSync(ledgerDir).sort(), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

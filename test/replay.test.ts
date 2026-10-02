@@ -208,3 +208,62 @@ test("an arm with nothing verified prints an undefined ratio rather than zero", 
     /interventions\/outcome undefined/,
   );
 });
+
+const RUNNER_OBSERVED = { wallClock: "runner-measured", humanInterventions: "runner-observed", usage: "provider-reported" };
+
+test("intervention floors never decide a verdict, even when both arms are floors", () => {
+  const result = summarizeReplayExperiment(
+    spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 3 }),
+    [0, 1, 2].map((trial) => pair(
+      "case:1",
+      trial,
+      { measurementCoverage: RUNNER_OBSERVED, humanInterventions: [intervention(trial)] },
+      { measurementCoverage: RUNNER_OBSERVED },
+    )),
+  );
+  assert.notEqual(result.verdict, "improved");
+  assert.equal(result.verdict, "no-difference");
+  assert.ok(result.reasons.some((reason) => /not comparable/.test(reason)));
+});
+
+test("one trial passed several times is refused, not counted as several trials", () => {
+  const once = pair("case:1", 0, { verified: false });
+  const result = summarizeReplayExperiment(spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 3 }), [once, once, once]);
+  assert.equal(result.verdict, "invalid");
+  assert.equal(result.refusedPairs.length, 2);
+  assert.match(result.refusedPairs[0]!.reason, /already counted/);
+});
+
+test("a run reused across two pairs is refused", () => {
+  const shared = benchRun({ variantId: "baseline", attemptIds: ["a:shared"] });
+  const first = pair("case:1", 0);
+  const second = pair("case:1", 1);
+  const result = summarizeReplayExperiment(spec({ benchmarkCaseIds: ["case:1"] }), [
+    { ...first, baseline: shared },
+    { ...second, baseline: shared },
+  ]);
+  assert.equal(result.verdict, "invalid");
+  assert.match(result.refusedPairs[0]!.reason, /already counted/);
+});
+
+test("arms that swap or drift between pairs are refused", () => {
+  const operatorChosen = spec({ benchmarkCaseIds: ["case:1"], permittedDifferences: ["contextStrategy"], candidateControls: { contextStrategy: "" }, trialsPerArm: 3 });
+  const swapped = [
+    pair("case:1", 0, { contextStrategy: "minimal", verified: false }, { model: "model-a", contextStrategy: "broad" }),
+    pair("case:1", 1, { contextStrategy: "broad", verified: false }, { model: "model-a", contextStrategy: "minimal" }),
+    pair("case:1", 2, { contextStrategy: "minimal", verified: false }, { model: "model-a", contextStrategy: "broad" }),
+  ];
+  const result = summarizeReplayExperiment(operatorChosen, swapped);
+  assert.equal(result.verdict, "invalid");
+  assert.equal(result.refusedPairs.length, 1);
+  assert.match(result.refusedPairs[0]!.reason, /baseline arm/);
+});
+
+test("an A/A pair that changes nothing the experiment varies is refused", () => {
+  const result = summarizeReplayExperiment(
+    spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 1 }),
+    [pair("case:1", 0, { model: "model-b", verified: false })],
+  );
+  assert.equal(result.verdict, "invalid");
+  assert.match(result.refusedPairs[0]!.reason, /changes nothing/);
+});
