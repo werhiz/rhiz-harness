@@ -7,7 +7,10 @@ on every pull request and every push to `main`, and it still accepts manual
 dispatch. A newer push to the same pull request cancels its unfinished run.
 
 The Codex App Server canary stays manual-only. It needs a self-hosted machine
-holding operator credentials.
+holding operator credentials. Because no self-hosted runner is available to
+this public repository, the workflow cannot currently run here. The canary is
+proven by the operator running `npm run canary:codex` against the exact
+candidate, as the check agent below records.
 
 **What actually protects that machine from a fork.** On a `pull_request` event
 GitHub runs the workflow files from the pull request itself, so a fork can
@@ -24,12 +27,20 @@ settings carry the guarantee instead:
 
 `scripts/check-ci-trigger-budget.mjs`, run first by `npm run check`, prevents
 the other failure: a maintainer merging an unsafe workflow by accident. It
-holds each workflow to its recorded triggers. Every automatic workflow must
-also run only on GitHub-hosted runner labels, set top-level permissions to
-exactly `contents: read` with no job-level permissions, reference no
-`secrets`, call no reusable workflow, and use neither `pull_request_target`
-nor `workflow_run`. `test/ci-trigger-budget.test.ts` plants each of those
-bypasses and requires the gate to refuse it.
+judges the parsed YAML, not the text, so flow-style mappings, quoted or
+escaped keys, and complex keys are checked as GitHub would read them, and
+duplicate keys are refused. It holds each workflow to its recorded triggers.
+Every automatic workflow must also:
+
+- run only on free standard GitHub-hosted labels. Larger runners bill even on
+  a public repository.
+- set top-level permissions to exactly `contents: read`, with no job-level
+  permissions.
+- use no `secrets` in any expression or key.
+- call no reusable workflow.
+
+`test/ci-trigger-budget.test.ts` plants each known bypass and requires the
+gate to refuse it for the stated reason.
 
 **Decision (2026-09-28), now historical:** while the repository was private, the
 organization exhausted its included Actions minutes, so every workflow ran by

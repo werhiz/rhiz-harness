@@ -38,31 +38,48 @@ test("CRLF line endings do not change the verdict", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-const UNSAFE: Record<string, (kernel: string) => string> = {
-  "self-hosted label": (k) => replaceOnce(k, RUNS_ON, "    runs-on: self-hosted\n"),
-  "bare macOS label routes to a self-hosted Mac": (k) => replaceOnce(k, RUNS_ON, "    runs-on: [macOS]\n"),
-  "multi-line label list": (k) => replaceOnce(k, RUNS_ON, "    runs-on:\n      - self-hosted\n      - macOS\n"),
-  "quoted runs-on key": (k) => replaceOnce(k, RUNS_ON, '    "runs-on": [self-hosted]\n'),
-  "runner group": (k) => replaceOnce(k, RUNS_ON, "    runs-on:\n      group: operators\n"),
-  "runner chosen by expression": (k) => replaceOnce(k, RUNS_ON, `    runs-on: \${{ fromJSON('["self-hosted"]') }}\n`),
-  "dotted secret": (k) => k.replace("run: npm ci --ignore-scripts --no-audit --no-fund", "run: echo ${{ secrets.TOKEN }}"),
-  "secret without spaces": (k) => k.replace("run: npm ci --ignore-scripts --no-audit --no-fund", "run: echo ${{secrets.TOKEN}}"),
-  "secret by index": (k) => k.replace("run: npm ci --ignore-scripts --no-audit --no-fund", "run: echo ${{ secrets['TOKEN'] }}"),
-  "all secrets serialized": (k) => k.replace("run: npm ci --ignore-scripts --no-audit --no-fund", "run: echo ${{ toJSON(secrets) }}"),
-  "extra top-level write permission": (k) => replaceOnce(k, "permissions:\n  contents: read\n", "permissions:\n  contents: read\n  pull-requests: write\n"),
-  "write-all": (k) => replaceOnce(k, "permissions:\n  contents: read\n", "permissions: write-all\n"),
-  "job-level permissions": (k) => replaceOnce(k, RUNS_ON, `    permissions:\n      contents: write\n${RUNS_ON}`),
-  "reusable workflow with inherited secrets": (k) => k + "\n  external:\n    uses: someone/repo/.github/workflows/x.yml@main\n    secrets: inherit\n",
-  "reusable workflow without secrets": (k) => k + "\n  external:\n    uses: someone/repo/.github/workflows/x.yml@main\n",
+const NPM_CI = "run: npm ci --ignore-scripts --no-audit --no-fund";
+const appendJob = (job: string) => (k: string) => k.replace(/\n*$/, "\n") + job;
+
+const UNSAFE: Record<string, [(kernel: string) => string, RegExp]> = {
+  "self-hosted label": [(k) => replaceOnce(k, RUNS_ON, "    runs-on: self-hosted\n"), /not a free GitHub-hosted runner/],
+  "bare macOS label routes to a self-hosted Mac": [(k) => replaceOnce(k, RUNS_ON, "    runs-on: [macOS]\n"), /not a free GitHub-hosted runner/],
+  "multi-line label list": [(k) => replaceOnce(k, RUNS_ON, "    runs-on:\n      - self-hosted\n      - macOS\n"), /not a free GitHub-hosted runner/],
+  "quoted runs-on key": [(k) => replaceOnce(k, RUNS_ON, '    "runs-on": [self-hosted]\n'), /not a free GitHub-hosted runner/],
+  "runner group": [(k) => replaceOnce(k, RUNS_ON, "    runs-on:\n      group: operators\n"), /not a free GitHub-hosted runner/],
+  "runner chosen by expression": [(k) => replaceOnce(k, RUNS_ON, `    runs-on: \${{ fromJSON('["self-hosted"]') }}\n`), /not a free GitHub-hosted runner/],
+  "paid larger macOS runner": [(k) => replaceOnce(k, RUNS_ON, "    runs-on: macos-14-xlarge\n"), /not a free GitHub-hosted runner/],
+  "paid larger Linux runner": [(k) => replaceOnce(k, RUNS_ON, "    runs-on: ubuntu-22.04-64core\n"), /not a free GitHub-hosted runner/],
+  "flow-style job on a self-hosted runner": [appendJob("  evil: {runs-on: [self-hosted, macOS], steps: [{run: id}]}\n"), /job evil runs-on/],
+  "flow-style job with write-all": [appendJob("  evil: {runs-on: ubuntu-latest, permissions: write-all, steps: [{run: id}]}\n"), /job evil sets job-level permissions/],
+  "flow-style reusable workflow": [appendJob("  ext: {uses: someone/repo/.github/workflows/x.yml@main}\n"), /job ext calls a reusable workflow/],
+  "escaped runs-on key": [(k) => replaceOnce(k, RUNS_ON, '    "runs\\x2don": [self-hosted, macOS]\n'), /not a free GitHub-hosted runner/],
+  "escaped permissions key": [(k) => replaceOnce(k, RUNS_ON, `    "perm\\x69ssions": write-all\n${RUNS_ON}`), /sets job-level permissions/],
+  "complex runs-on key": [(k) => replaceOnce(k, RUNS_ON, "    ? runs-on\n    : [self-hosted, macOS]\n"), /not a free GitHub-hosted runner/],
+  "dotted secret": [(k) => replaceOnce(k, NPM_CI, "run: echo ${{ secrets.TOKEN }}"), /references secrets/],
+  "secret without spaces": [(k) => replaceOnce(k, NPM_CI, "run: echo ${{secrets.TOKEN}}"), /references secrets/],
+  "secret by index": [(k) => replaceOnce(k, NPM_CI, "run: echo ${{ secrets['TOKEN'] }}"), /references secrets/],
+  "all secrets serialized": [(k) => replaceOnce(k, NPM_CI, "run: echo ${{ toJSON(secrets) }}"), /references secrets/],
+  "escaped secret": [(k) => replaceOnce(k, NPM_CI, 'run: "echo ${{ \\x73ecrets.TOKEN }}"'), /references secrets/],
+  "extra top-level write permission": [(k) => replaceOnce(k, "permissions:\n  contents: read\n", "permissions:\n  contents: read\n  pull-requests: write\n"), /exactly contents: read/],
+  "write-all": [(k) => replaceOnce(k, "permissions:\n  contents: read\n", "permissions: write-all\n"), /exactly contents: read/],
+  "job-level permissions": [(k) => replaceOnce(k, RUNS_ON, `    permissions:\n      contents: write\n${RUNS_ON}`), /sets job-level permissions/],
+  "reusable workflow with inherited secrets": [appendJob("  external:\n    uses: someone/repo/.github/workflows/x.yml@main\n    secrets: inherit\n"), /calls a reusable workflow/],
+  "duplicate key": [(k) => replaceOnce(k, RUNS_ON, `${RUNS_ON}    runs-on: [self-hosted]\n`), /not clean YAML/],
 };
 
-for (const [name, mutate] of Object.entries(UNSAFE)) {
+for (const [name, [mutate, reason]] of Object.entries(UNSAFE)) {
   test(`an automatic workflow is refused: ${name}`, () => {
     const result = budget(mutate);
     assert.equal(result.status, 1, `${name} passed the guard:\n${result.stdout}`);
-    assert.match(result.stderr, /kernel\.yml/);
+    assert.match(result.stderr, reason);
   });
 }
+
+test("prose that mentions secrets is not a secret reference", () => {
+  const result = budget((k) => replaceOnce(k, NPM_CI, `${NPM_CI}\n        # No secrets here.`).replace("name: Checkout", "name: Checkout without secrets"));
+  assert.equal(result.status, 0, result.stderr);
+});
 
 test("a privileged trigger or a new trigger is refused", () => {
   for (const mutate of [
