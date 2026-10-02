@@ -55,8 +55,11 @@ This checklist deliberately does not choose a license. That is a legal/product d
 - [x] Configure issue templates for bug, security-redirection, feature, and architecture proposals.
 - [x] Configure pull-request template with proof and authority checkboxes.
 - [ ] Document maintainer and merge authority.
-- [ ] Protect `main` with an enforceable independent exact-candidate proof
-      mechanism that respects the no-automatic-Actions spending decision.
+- [ ] Protect `main` with required Kernel CI checks on the exact head, now that
+      hosted CI runs on every pull request.
+- [x] Require maintainer approval before any external contributor's workflow
+      runs (`all_external_contributors`).
+- [ ] Confirm no organization runner group allows public repositories.
 - [ ] Require review for architecture/security boundary changes.
 - [ ] Protect release tags.
 

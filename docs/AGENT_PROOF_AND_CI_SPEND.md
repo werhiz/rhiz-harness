@@ -6,22 +6,39 @@ contributors need hosted proof on their pull requests. Kernel CI therefore runs
 on every pull request and every push to `main`, and it still accepts manual
 dispatch. A newer push to the same pull request cancels its unfinished run.
 
-The Codex App Server canary stays manual-only. It runs on a self-hosted machine
-that holds operator credentials, and a pull request from a fork must never be
-able to schedule code there.
+The Codex App Server canary stays manual-only. It needs a self-hosted machine
+holding operator credentials.
 
-`scripts/check-ci-trigger-budget.mjs`, run first by `npm run check`, holds each
-workflow to exactly these triggers. Every automatically triggered workflow must
-also stay safe for a fork's pull request: GitHub-hosted runners, top-level
-`permissions: contents: read` with no job-level widening, no `secrets`, and no
-`pull_request_target`.
+**What actually protects that machine from a fork.** On a `pull_request` event
+GitHub runs the workflow files from the pull request itself, so a fork can
+edit any workflow, and no check inside the repository can stop that. Two
+settings carry the guarantee instead:
+
+- Fork pull request workflows require maintainer approval for **all**
+  external contributors (`all_external_contributors`, set 2026-10-01). No
+  outside code runs until a maintainer has read it.
+- No self-hosted runner is registered to this repository. An
+  organization runner group must keep "allow public repositories" off. That
+  setting needs organization-admin access to read, and it has to be confirmed
+  there.
+
+`scripts/check-ci-trigger-budget.mjs`, run first by `npm run check`, prevents
+the other failure: a maintainer merging an unsafe workflow by accident. It
+holds each workflow to its recorded triggers. Every automatic workflow must
+also run only on GitHub-hosted runner labels, set top-level permissions to
+exactly `contents: read` with no job-level permissions, reference no
+`secrets`, call no reusable workflow, and use neither `pull_request_target`
+nor `workflow_run`. `test/ci-trigger-budget.test.ts` plants each of those
+bypasses and requires the gate to refuse it.
 
 **Decision (2026-09-28), now historical:** while the repository was private, the
 organization exhausted its included Actions minutes, so every workflow ran by
 manual dispatch only.
 
-The check agent below remains the proof for what hosted CI cannot run: the
-darwin containment suites, the DSH product smoke runs, and the Codex canary.
+Hosted Kernel CI now runs the build, the full test suite, the guard falsifiers,
+and the DSH SDK and product smoke runs. The check agent below remains the proof
+for what hosted CI cannot run: the darwin containment suites and the Codex
+canary.
 
 ## The check agent
 
@@ -48,9 +65,9 @@ exception that names the failed or unrun proof and the consequence of landing.
 Do not turn an agent's opinion or an empty GitHub check into a green test claim.
 
 One full proof per exact candidate is the default. Rerun a failed portion to
-diagnose a specific failure, and rerun after a code change. Manual Actions
-dispatch remains available when its particular host environment is necessary
-and the spend is deliberately approved. It is not the routine merge gate.
+diagnose a specific failure, and rerun after a code change. Hosted Kernel CI
+on the exact head is part of the merge gate; it does not replace the darwin and
+canary proof above.
 
 ## Cost and friction decisions
 
@@ -63,7 +80,8 @@ and a date to inspect the result again. The verdict is **keep**, **change**, or
 First case: in September 2026 hosted GitHub Actions minutes for this repository
 were measured against the proof they produced. A hosted check on PR #124
 failed before any job step, supplying no proof for that candidate at real
-cost. The decision here is to retire automatic Actions for rhiz-harness and
-use the independent check agent. Other repositories need their own review
+cost. The decision then was to retire automatic Actions for rhiz-harness and use
+the independent check agent; the 2026-10-01 public-repository decision above
+superseded it. Other repositories need their own review
 before a production deploy or payment audit is retired.
 

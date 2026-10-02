@@ -399,6 +399,20 @@
       "file": "src/router.ts",
       "remove": "&& !executors.has(proof.actor.id);",
       "testFile": "dist/test/router.test.js"
+    },
+    {
+      "id": "ci/automatic-workflows-use-hosted-runners",
+      "why": "An automatic workflow on any label other than a GitHub-hosted one can route a pull request's code to a self-hosted machine holding operator credentials.",
+      "file": "scripts/check-ci-trigger-budget.mjs",
+      "remove": "    if (!HOSTED_RUNNER.test(value)) {\n      problems.push(`line ${index + 1} runs-on \"${value || lines[index + 1]?.trim() || \"\"}\" is not a single GitHub-hosted runner label`);\n    }\n",
+      "testFile": "dist/test/ci-trigger-budget.test.js"
+    },
+    {
+      "id": "ci/automatic-workflows-hold-no-secrets",
+      "why": "Any secrets reference in a workflow that pull requests trigger is a credential exposed to code the maintainers have not reviewed.",
+      "file": "scripts/check-ci-trigger-budget.mjs",
+      "remove": "  if (/\\bsecrets\\b/.test(source)) problems.push(\"references secrets\");\n",
+      "testFile": "dist/test/ci-trigger-budget.test.js"
     }
   ]
 }

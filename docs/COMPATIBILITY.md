@@ -106,9 +106,10 @@ The portable TypeScript contracts are designed to be host-independent. Concrete 
 
 ### Current proven/used environments
 
-- Kernel CI can be manually dispatched in the GitHub Actions environment
-  defined in `.github/workflows/kernel.yml`. Routine integration uses the
-  independent local check described in `docs/AGENT_PROOF_AND_CI_SPEND.md`.
+- Kernel CI runs on every pull request and push to `main` in the GitHub
+  Actions environment defined in `.github/workflows/kernel.yml`. The darwin
+  containment suites and the Codex canary are proven by the independent check
+  described in `docs/AGENT_PROOF_AND_CI_SPEND.md`.
 - The real Codex App Server canary runs on a self-hosted macOS runner.
 - Git worktree behavior depends on a compatible Git installation.
 - OS containment depends on an available concrete `SandboxLauncher` for the host platform.
