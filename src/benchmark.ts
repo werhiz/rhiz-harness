@@ -337,9 +337,12 @@ export function compareBenchmarkRuns(
   }
 
   for (const run of [baseline, candidate]) {
-    if (run.attemptIds.length <= 1) continue;
     const observed = run.attemptRuntimeControls;
+    // Legacy single-attempt receipts can use the run-level controls. Once
+    // per-attempt observations exist, they must agree at every attempt count.
+    if (observed === undefined && run.attemptIds.length <= 1) continue;
     if (!observed || observed.length !== run.attemptIds.length ||
+      new Set(run.attemptIds).size !== run.attemptIds.length ||
       new Set(observed.map((attempt) => attempt.attemptId)).size !== run.attemptIds.length ||
       run.attemptIds.some((attemptId) => !observed.some((attempt) => attempt.attemptId === attemptId)) ||
       observed.some((attempt) =>

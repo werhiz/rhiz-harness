@@ -13,8 +13,9 @@ The Kernel 0.1 already exposes the surfaces the Router needs to read:
 - `WorkContract.type` (`SCOUT` | `SHIP` | `REVIEW`) is the primary input for
   capability matching.
 - `WorkContract.workerPolicy.preferredProviders` is the soft-preference channel.
-- `EventLedger` records `attempt.started | finished | failed`, `verification.result`,
-  and `review.result` — all of which are evidence signals.
+- `EventLedger` records the full Work history needed to replay Board state;
+  individual completion, verification, and review events are not standalone
+  Router outcomes.
 - `InMemoryEventLedger` is sufficient for v0.1; the Router does not need a
   durable ledger to derive evidence.
 - `HarnessEventSchema` is a discriminated union the Router extends with a single
@@ -40,8 +41,9 @@ The Router module exports:
 - **`RouterPolicySchema`** — discriminated union of four policy kinds:
   - `cheapest-capable` — minimize cost per 1k tokens.
   - `fastest-capable` — minimize average latency.
-  - `highest-confidence` — maximize confidence derived from
-    `verification.result` and `review.result` events.
+  - `highest-confidence` — maximize confidence derived from accepted outcomes
+    and terminal failures, with independent current-revision verification
+    required for success.
   - `balanced` — weighted score across success rate, cost inverse, duration
     inverse, and confidence (default weights: 0.4 / 0.3 / 0.3 / 0.0).
 - **`RouterEvidenceSchema`** — per-worker stats:
@@ -58,9 +60,12 @@ The Router module exports:
 - **`RouterDecisionRationaleSchema`** — discriminated union:
   `selected | no-capable-worker | no-evidence | policy-denied`.
 - **`computeRouterEvidence(ledger, options)`** — derives per-worker evidence
-  from the Ledger. Reads `attempt.started`, `attempt.finished`,
-  `attempt.failed`, `verification.result`, and `review.result` events.
-  Deterministic: same `(ledger, options)` produces the same evidence.
+  by replaying each Work's full event history through the canonical Board
+  projection. A finished Attempt is not a success: success requires an
+  accepted Work, a current-revision passing verification selected by
+  `acceptanceReadiness`, an independent verifier, and a current finished
+  Attempt. Deterministic: the same `(ledger, options)` produces the same
+  evidence.
 - **`routeWorker(registry, ledger | null, input, now)`** — pure, deterministic
   router. Same `(registry, ledger, contract, policy, options)` produces the
   same decision byte-for-byte (apart from `decidedAt`, which is the only
@@ -104,27 +109,32 @@ Tie-breaker: lexicographic on `workerId`. Deterministic.
 
 ### Evidence derivation
 
-`computeRouterEvidence` reads events from the configured `streamIds` and
-groups them by worker id. The worker id is derived from:
+`computeRouterEvidence` reads the configured streams as candidate full Work
+histories and replays them through `projectEvent`. Duplicate event IDs within
+a Work view are counted once. If one Work ID appears in multiple streams, the
+history is ambiguous and contributes no evidence; the Router does not stitch
+partial or competing streams together. Events rejected by Board projection do
+not establish attempt state.
 
-- `task.assigned.payload.worker.id`
-- `attempt.started.payload.worker.id`
-- `attempt.*.actor.id`
-- `verification.*.actor.id`
-- `review.*.actor.id`
+Evidence is attributed only to unique actors in each admitted Attempt's
+`executionProvenance`; task assignment, verification, and review actors do
+not earn executor credit. Each admitted attempt with a started event counts
+once for each unique executor, including unresolved attempts. Success requires
+all of the following: Board state is accepted; `acceptanceReadiness` selects a
+passing verification for the current contract revision; that verifier is not
+an execution actor for the Work; and the executor's attempt is finished,
+current-revision, and the latest attempt for its task. A self-proof acceptance
+or acceptance without qualifying verification earns no success.
 
-Per-worker stats are computed:
-
-- `attemptCount` = count of `attempt.started`.
-- `successCount` = count of `attempt.finished`.
-- `failedCount` = count of `attempt.failed`.
-- `successRate` = `successCount / attemptCount` if `attemptCount > 0` else null.
-- `confidence` = mean of `verification.result.status` (pass=1, fail=0)
-  and `review.result.status` (pass=1, fail=0) over all counted events.
-- `medianDurationMs` = median of `recordedAt - occurredAt` for terminal
-  `attempt.*` events.
-- `p95DurationMs` = 95th percentile of the same.
-- `lastSeenAt` = max `occurredAt` across all counted events for that worker.
+`failedCount` records a Board-admitted failed Attempt, or a current finished
+Attempt when the Work was rejected. Success and such terminal failure produce
+confidence signals of 1 and 0 respectively. Unresolved attempts contribute
+to `attemptCount` but have no confidence signal; absent evidence remains
+unknown. Duration is measured from the admitted `attempt.started.occurredAt`
+to the admitted terminal `attempt.finished.occurredAt` or
+`attempt.failed.occurredAt`. Negative or invalid elapsed durations are
+omitted. `lastSeenAt` is the latest `occurredAt` among admitted attempt events
+and a terminal Board acceptance or rejection relevant to that outcome.
 
 ### Determinism
 
@@ -170,9 +180,9 @@ in any order relative to the other three.
 
 ### Negative
 
-- v0.1 evidence is computed from the in-memory stream view; durable-ledger
-  consumers will need a follow-up PR that calls `replay()` against the
-  durable ledger.
+- Evidence requires a complete, unambiguous per-Work stream. Sparse or
+  multi-stream histories conservatively withhold evidence rather than
+  reconstructing a synthetic Board history.
 - The Router does not currently call `PolicyOracle` itself; the caller is
   responsible for the guard composition. A follow-up PR can fold that into
   the Router for ergonomics.
@@ -205,8 +215,8 @@ in any order relative to the other three.
   `provenance/router.yaml` records the derivation.
 - **AGENTS.md non-negotiable** ("portable core MUST NOT import DSH, Rhiz
   Protocol, or any concrete host/runtime"): ✓ — `src/router.ts` imports
-  only `./schemas.js`, `./ledger.js`, and `node:crypto`. Verified by
-  `npm run check:portable-boundary`.
+  the portable Board projection, Ledger interface, schemas, and `node:crypto`.
+  Verified by `npm run check:portable-boundary`.
 - **Compound Engineering Plan §14:** ✓ — the four policy kinds match the
   Plan's vocabulary, and the evidence surface matches the Plan's required
   captured fields.

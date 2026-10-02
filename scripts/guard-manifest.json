@@ -248,9 +248,9 @@
     },
     {
       "id": "crew/authority-evidence-reaches-the-ledger-from-the-seam",
-      "why": "The seam's typed authority report is the only channel by which an OS refusal becomes a durable fact. Without this append the boundary still holds but the refusal is unevidenced, which is the half of issue #11 about proof rather than prevention.",
+      "why": "A typed authority report from the worker enforcement seam must become durable Ledger and Board evidence. The attempt-closed check prevents late observations from appending after the Attempt is closed; omitting this append loses both granted and denied decisions.",
       "file": "src/crew.ts",
-      "remove": "          if (observation.authority !== undefined) {\n            await append(\n              observation.authority.decision === \"granted\" ? \"authority.granted\" : \"authority.denied\",\n              {\n                policy: work.authority,\n                reason: `${observation.authority.reason} [boundary: ${observation.authority.boundary}]`,\n              },\n              { taskId, attemptId, actor: workerActor },\n            );\n          }\n",
+      "remove": "            if (observation.authority !== undefined) {\n              if (attemptClosed()) return;\n              await append(\n                observation.authority.decision === \"granted\" ? \"authority.granted\" : \"authority.denied\",\n                {\n                  policy: work.authority,\n                  reason: `${observation.authority.reason} [boundary: ${observation.authority.boundary}]`,\n                },\n                { taskId, attemptId, actor: workerActor },\n              );\n            }\n",
       "testFile": "dist/test/worker-containment.test.js"
     },
     {
@@ -353,10 +353,10 @@
     },
     {
       "id": "crew/attempt-respects-deadline",
-      "why": "Constitution \u00a710 requires timeouts alongside PID checks. Crew must not block forever on a hung worker's result; a deadline race must force a non-recoverable attempt.failed when the budget is exceeded (#16).",
+      "why": "Constitution \u00a710 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
       "file": "src/crew.ts",
-      "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${raceOutcome.observedAt}`, recoverable: false },\n          { taskId, attemptId, actor: workerActor },\n          raceOutcome.observedAt,\n        );\n",
-      "testFile": "dist/test/crew.test.js"
+      "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false },\n          { taskId, attemptId, actor: workerActor },\n          deadlineObservedAt,\n        );\n",
+      "testFile": "dist/test/crew-deadline.test.js"
     },
     {
       "id": "integration/horizon-blocks-write-work",
@@ -385,6 +385,20 @@
       "file": "src/horizon.ts",
       "remove": "  if (signals.diffLines >= limit) return undefined;\n",
       "testFile": "dist/test/horizon-enforcement.test.js"
+    },
+    {
+      "id": "benchmark/observed-attempt-controls",
+      "why": "Supplied per-attempt telemetry must match the declared run-level provider, model, and effort, and bind one-to-one to the executed attempts. Without this check, a comparison can be labeled with controls its attempts did not use, making the controlled comparison misleading.",
+      "file": "src/benchmark.ts",
+      "remove": "      throw new Error(\"benchmark comparison requires consistent observed runtime controls for every attempt\");\n",
+      "testFile": "dist/test/benchmark.test.js"
+    },
+    {
+      "id": "router/verification-must-be-independent-of-execution",
+      "why": "Router evidence must not treat a verifier who also executed the Work as independent proof of success. Removing the executor exclusion lets a self-check inflate success rates and bias future routing.",
+      "file": "src/router.ts",
+      "remove": "&& !executors.has(proof.actor.id);",
+      "testFile": "dist/test/router.test.js"
     },
     {
       "id": "observer/no-verified-outcome-means-no-north-star",

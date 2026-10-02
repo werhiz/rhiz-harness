@@ -27,7 +27,7 @@ import {
 } from "../src/router.js";
 import { InMemoryEventLedger } from "../src/ledger.js";
 import { parseHarnessEvent } from "../src/schemas.js";
-import { human, worker as workerActor, event, work } from "./helpers.js";
+import { human, worker as workerActor, event, work, successfulExecution, passingVerificationSequence } from "./helpers.js";
 
 const TEST_NOW = new Date("2026-08-20T04:00:00.000Z");
 
@@ -221,22 +221,17 @@ test("computeRouterEvidence returns an empty list when no streams are configured
   assert.equal(result.length, 0);
 });
 
-test("computeRouterEvidence aggregates attempt and verification events per worker", async () => {
+test("computeRouterEvidence aggregates accepted outcomes and terminal failures per executor", async () => {
   const ledger = new InMemoryEventLedger();
+  const execution = successfulExecution();
   const events = [
-    event("attempt.started", { worker: workerActor, contractRevision: 1 }, { taskId: "t:1", attemptId: "a:1", occurredAt: ts(0), recordedAt: ts(1), actor: workerActor }),
-    event("attempt.finished", { resultSummary: "done", artifactRefs: [] }, { taskId: "t:1", attemptId: "a:1", occurredAt: ts(2), recordedAt: ts(3), actor: workerActor }),
-    event("attempt.started", { worker: workerActor, contractRevision: 1 }, { taskId: "t:2", attemptId: "a:2", occurredAt: ts(4), recordedAt: ts(5), actor: workerActor }),
-    event("attempt.failed", { reason: "boom", recoverable: true }, { taskId: "t:2", attemptId: "a:2", occurredAt: ts(6), recordedAt: ts(9), actor: workerActor }),
-    event("verification.result", {
-      verificationId: "v:1",
-      contractRevision: 1,
-      status: "pass",
-      criterionResults: [],
-      evidenceSatisfaction: [],
-        falsifiability: { provenCriteria: [], exemptedCriteria: [] },
-    }, { occurredAt: ts(7), recordedAt: ts(8), actor: workerActor }),
-    event("review.result", { reviewId: "r:1", contractRevision: 1, status: "fail", summary: "no" }, { occurredAt: ts(9), recordedAt: ts(10), actor: workerActor }),
+    execution[0]!,
+    event("task.created", { objective: "First task" }, { taskId: "task:failed" }),
+    event("attempt.started", { worker: workerActor, contractRevision: 1 }, { taskId: "task:failed", attemptId: "attempt:failed", occurredAt: ts(1) }),
+    event("attempt.failed", { reason: "boom", recoverable: true }, { taskId: "task:failed", attemptId: "attempt:failed", occurredAt: ts(4) }),
+    ...execution.slice(1).map((item) => ({ ...item, occurredAt: item.type === "attempt.finished" ? ts(16) : ts(10), recordedAt: ts(100) })),
+    ...passingVerificationSequence(),
+    event("work.accepted", { contractRevision: 1, reason: "Independently verified" }, { occurredAt: ts(20) }),
   ];
   for (const item of events) await ledger.append(item);
 
@@ -248,20 +243,108 @@ test("computeRouterEvidence aggregates attempt and verification events per worke
   assert.equal(item.successCount, 1);
   assert.equal(item.failedCount, 1);
   assert.equal(item.successRate, 1 / 2);
-  assert.equal(item.medianDurationMs, 2000);
-  assert.ok(item.p95DurationMs !== null);
+  assert.equal(item.medianDurationMs, 4500);
+  assert.equal(item.p95DurationMs, 6000);
   assert.equal(item.confidence, 0.5);
-  assert.equal(item.lastSeenAt, ts(9));
+  assert.equal(item.lastSeenAt, ts(20));
 });
 
-test("computeRouterEvidenceFromEvents is deterministic for the same input", () => {
-  const events = [
-    event("attempt.started", { worker: workerActor, contractRevision: 1 }, { taskId: "t:1", attemptId: "a:1", occurredAt: ts(0), recordedAt: ts(1), actor: workerActor }),
-    event("attempt.finished", { resultSummary: "ok", artifactRefs: [] }, { taskId: "t:1", attemptId: "a:1", occurredAt: ts(2), recordedAt: ts(3), actor: workerActor }),
-  ];
+test("computeRouterEvidenceFromEvents is deterministic for the same Board-valid input", () => {
+  const events = [...successfulExecution(), ...passingVerificationSequence(),
+    event("work.accepted", { reason: "Verified", contractRevision: 1 })];
   const left = computeRouterEvidenceFromEvents(events);
   const right = computeRouterEvidenceFromEvents(events);
   assert.deepEqual(left, right);
+  assert.equal(left[0]?.successCount, 1);
+});
+
+test("finished work earns no success before independent verification and Board acceptance", () => {
+  const evidence = computeRouterEvidenceFromEvents(successfulExecution());
+  assert.equal(evidence[0]?.attemptCount, 1);
+  assert.equal(evidence[0]?.successCount, 0);
+  assert.equal(evidence[0]?.failedCount, 0);
+  assert.equal(evidence[0]?.confidence, null);
+});
+
+test("accepted work whose verifier also executed it earns no Router success", () => {
+  const contract = work({
+    verificationPolicy: { required: true, independentActor: false, reviewRequired: false, falsifiabilityExemptions: [] },
+  });
+  const events = [
+    ...successfulExecution(contract),
+    ...passingVerificationSequence(workerActor),
+    event("work.accepted", { reason: "Board allows the configured self-check", contractRevision: 1 }),
+  ];
+  const evidence = computeRouterEvidenceFromEvents(events);
+  assert.equal(evidence.find((item) => item.workerId === workerActor.id)?.successCount, 0);
+});
+
+test("handoff credits each unique Board execution actor once", () => {
+  const successor = { id: "agent:successor", kind: "agent" as const, displayName: "Successor" };
+  const execution = successfulExecution();
+  const handoff = event("attempt.lease-transferred", {
+    fromLeaseId: "lease:1",
+    worker: successor,
+    lease: {
+      id: "lease:2",
+      workspaceId: "workspace:2",
+      resourceClaims: [{ kind: "path", resource: "src" }],
+      acquiredAt: ts(1),
+      expiresAt: ts(100),
+    },
+    reason: "Continue from the checkpoint",
+  }, { taskId: "task:1", attemptId: "attempt:1", actor: successor, occurredAt: ts(1), recordedAt: ts(1) });
+  const events = [
+    ...execution.slice(0, 4),
+    handoff,
+    ...execution.slice(4),
+    ...passingVerificationSequence(),
+    event("work.accepted", { reason: "Independently verified", contractRevision: 1 }),
+  ];
+  const evidence = computeRouterEvidenceFromEvents(events);
+  assert.deepEqual(evidence.map((item) => [item.workerId, item.attemptCount, item.successCount]), [
+    ["agent:successor", 1, 1],
+    ["agent:worker", 1, 1],
+  ]);
+});
+
+test("duplicate event input and duplicate streams cannot double-credit one Work", () => {
+  const events = [
+    ...successfulExecution(),
+    ...passingVerificationSequence(),
+    event("work.accepted", { reason: "Independently verified", contractRevision: 1 }),
+  ];
+  const repeatedEvents = computeRouterEvidenceFromEvents([...events, ...events]);
+  assert.equal(repeatedEvents[0]?.attemptCount, 1);
+  assert.equal(repeatedEvents[0]?.successCount, 1);
+
+  const secondStream = events.map((item) => ({ ...item, streamId: "stream:duplicate-work-view" }));
+  assert.deepEqual(computeRouterEvidenceFromEvents([...events, ...secondStream]), []);
+});
+
+test("conflicting bodies for one event ID withhold that Work's evidence", () => {
+  const events = [
+    ...successfulExecution(),
+    ...passingVerificationSequence(),
+    event("work.accepted", { reason: "Independently verified", contractRevision: 1 }),
+  ];
+  const conflictingStart = { ...events[3]!, occurredAt: ts(1) };
+  assert.deepEqual(computeRouterEvidenceFromEvents([...events, conflictingStart]), []);
+});
+
+test("negative source-clock duration is omitted", () => {
+  const events = [
+    ...successfulExecution().map((item) => {
+      if (item.type === "attempt.started") return { ...item, occurredAt: ts(5) };
+      if (item.type === "attempt.finished") return { ...item, occurredAt: ts(4) };
+      return item;
+    }),
+    ...passingVerificationSequence(),
+    event("work.accepted", { reason: "Independently verified", contractRevision: 1 }),
+  ];
+  const evidence = computeRouterEvidenceFromEvents(events);
+  assert.equal(evidence[0]?.medianDurationMs, null);
+  assert.equal(evidence[0]?.p95DurationMs, null);
 });
 
 test("routeWorker with cheapest-capable picks the lowest-cost worker among matched candidates", async () => {
