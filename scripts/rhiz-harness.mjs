@@ -7,7 +7,7 @@
 // and the last run receipt, under <git-common-dir>/rhiz-harness/operator/.
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -81,10 +81,6 @@ function operatorDir(repo, workId) {
   return join(repo.operatorRoot, harnessGitRefSegment(workId));
 }
 
-function defaultLedgerDir(repo, workId) {
-  return join(repo.commonDir, "rhiz-harness", "ledgers", harnessGitRefSegment(workId));
-}
-
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
@@ -98,6 +94,20 @@ async function readJsonIfPresent(path) {
   }
 }
 
+// Actual spend a reviewer reported, from the review receipts this CLI wrote.
+// Router cost on the Board is an estimate; this is a measurement.
+async function reviewerSpend(repo, workId) {
+  const directory = join(operatorDir(repo, workId), "reviews");
+  let names = [];
+  try { names = await readdir(directory); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  let total = 0;
+  for (const name of names.filter((item) => item.endsWith(".json"))) {
+    const record = await readJson(join(directory, name));
+    if (typeof record.costUsd === "number") total += record.costUsd;
+  }
+  return total;
+}
+
 async function loadWorks(repo) {
   const { ledgers, unreadable } = await readRepositoryWorkLedgers(repo.commonDir);
   const works = [];
@@ -106,8 +116,9 @@ async function loadWorks(repo) {
       const events = ledger.events.filter((event) => event.workId === workId && event.streamId === streamIdForWork(workId));
       if (events.length === 0) continue;
       const status = summarizeOperatorWork(events);
+      const reviewerCostUsd = await reviewerSpend(repo, workId);
       const lastEventAt = events.reduce((latest, event) => (event.occurredAt > latest ? event.occurredAt : latest), "");
-      works.push({ status, ledgerDirectory: ledger.directory, lastEventAt });
+      works.push({ status, reviewerCostUsd, ledgerDirectory: ledger.directory, lastEventAt });
     }
   }
   works.sort((left, right) => right.lastEventAt.localeCompare(left.lastEventAt));
@@ -137,18 +148,27 @@ function human(repo) {
   return { id: `human:${email}`.slice(0, 200), kind: "human", ...(name ? { displayName: name.slice(0, 200) } : {}) };
 }
 
+function requireCommit(repo, head) {
+  try {
+    git(repo.root, ["cat-file", "-e", `${head}^{commit}`]);
+  } catch {
+    throw new Error(`verified head ${head} is not in this repository; fetch it before deciding on it`);
+  }
+}
+
 function money(value) {
   return `$${value.toFixed(value < 1 ? 4 : 2)}`;
 }
 
-function printStatus(status) {
+function printStatus(status, reviewerCostUsd = 0) {
   const lines = [
     `${status.workId}  ${status.state}  next: ${status.nextAction}  (${status.nextActionReason})`,
     `  attempts ${status.attempts.total}${status.attempts.budget === null ? "" : `/${status.attempts.budget}`}` +
       `  failed ${status.attempts.failed}  verification ${status.verification.latest ?? "none"}` +
       `  review ${status.review.latest ?? (status.review.required ? "required" : "none")}`,
     `  outcome ${status.metrics.outcome}  recovered ${status.metrics.recovered ? "yes" : "no"}` +
-      `  interventions ${status.metrics.humanInterventions}  est. cost ${money(status.metrics.estimatedCostUsd)}` +
+      `  decisions ${status.metrics.humanDecisions}  interventions ${status.metrics.humanInterventions}` +
+      `  est. cost ${money(status.metrics.estimatedCostUsd)}  reviewer spend ${money(reviewerCostUsd)}` +
       `  elapsed ${Math.round(status.metrics.elapsedMs / 1000)}s`,
   ];
   if (status.violations > 0) lines.push(`  Board violations ${status.violations}`);
@@ -240,32 +260,39 @@ async function resume(repo, query, values) {
 async function status(repo, query, values) {
   const { works, unreadable } = await loadWorks(repo);
   const selected = query === undefined ? works : [pickWork(works, query)];
-  const digest = summarizeOperatorWorks(selected.map((item) => item.status));
+  const digest = {
+    ...summarizeOperatorWorks(selected.map((item) => item.status)),
+    reviewerCostUsd: selected.reduce((total, item) => total + item.reviewerCostUsd, 0),
+  };
   if (values.json) {
     process.stdout.write(`${JSON.stringify({
       schema: "rhiz/operator-status/v1",
       digest,
-      works: selected.map((item) => item.status),
+      works: selected.map((item) => ({ ...item.status, reviewerCostUsd: item.reviewerCostUsd })),
       unreadable,
     }, null, 2)}\n`);
     return unreadable.length > 0 ? 2 : 0;
   }
   if (selected.length === 0) process.stdout.write("no Work in this repository yet\n");
-  for (const item of selected) printStatus(item.status);
+  for (const item of selected) printStatus(item.status, item.reviewerCostUsd);
   const perOutcome = digest.interventionsPerAcceptedOutcome;
   process.stdout.write(
     `\n${digest.works} Work  ${digest.accepted} accepted  ${digest.rejected} rejected  ${digest.open} open` +
     `  ${digest.readyToAccept} ready to accept  ${digest.recovered} recovered` +
-    `  interventions/accepted ${perOutcome === null ? "n/a" : perOutcome.toFixed(2)}\n`,
+    `  interventions/accepted ${perOutcome === null ? "n/a" : perOutcome.toFixed(2)}` +
+    `  decisions/accepted ${digest.decisionsPerAcceptedOutcome === null ? "n/a" : digest.decisionsPerAcceptedOutcome.toFixed(2)}` +
+    `  reviewer spend ${money(digest.reviewerCostUsd)}\n`,
   );
   for (const item of unreadable) process.stdout.write(`UNREADABLE Ledger ${item.directory}: ${item.error}\n`);
   return unreadable.length > 0 ? 2 : 0;
 }
 
-async function withLedger(repo, workId, receipt, action) {
+// The Ledger the Work was discovered in is the one written to. A receipt is
+// an operator file and never chooses where a Board decision lands.
+async function withLedger(work, action) {
   const ledger = await DurableEventLedger.open({
-    directory: receipt?.ledgerRoot ?? defaultLedgerDir(repo, workId),
-    ledgerId: `ledger:${workId}`.slice(0, 200),
+    directory: work.ledgerDirectory,
+    ledgerId: `ledger:${work.status.workId}`.slice(0, 200),
   });
   try {
     return await action(ledger);
@@ -333,27 +360,28 @@ async function review(repo, query, values) {
   const work = pickWork(works, query, "review");
   const workId = work.status.workId;
   const dir = operatorDir(repo, workId);
-  const receipt = await readJsonIfPresent(join(dir, "receipt.json"));
-  if (!receipt?.candidate?.head || !receipt?.baseRevision) throw new Error(`Work ${workId} has no verified candidate to review`);
+  const target = work.status.verifiedTarget;
+  if (!target) throw new Error(`Work ${workId} has no verified integration head on its Board to review`);
+  requireCommit(repo, target.head);
   const contract = parseWorkContract(await readJson(join(dir, "contract.json")));
-  const fullDiff = git(repo.root, ["diff", "--no-ext-diff", `${receipt.baseRevision}..${receipt.candidate.head}`]);
+  const fullDiff = git(repo.root, ["diff", "--no-ext-diff", `${target.base}..${target.head}`]);
   const truncated = Buffer.byteLength(fullDiff) > MAX_REVIEW_DIFF_BYTES;
   const diff = truncated ? fullDiff.slice(0, MAX_REVIEW_DIFF_BYTES) : fullDiff;
   const startedAt = Date.now();
   const result = runReviewer(values, reviewPrompt(contract, diff, truncated), repo.root);
-  const status = await withLedger(repo, workId, receipt, (ledger) => recordOperatorReview({
+  const status = await withLedger(work, (ledger) => recordOperatorReview({
     ledger,
     streamId: work.status.streamId,
     reviewer: result.reviewer,
     status: result.verdict.status,
     summary: result.verdict.summary,
     findings: result.verdict.findings,
-    evidence: [{ id: `diff:${receipt.candidate.head}`.slice(0, 200), kind: "diff", digest: `git:${receipt.candidate.head}` }],
+    evidence: [{ id: `diff:${target.head}`.slice(0, 200), kind: "diff", digest: `git:${target.base}..${target.head}` }],
   }));
   const record = {
     schema: "rhiz/operator-review/v1",
     workId,
-    candidateHead: receipt.candidate.head,
+    candidateHead: target.head,
     reviewer: result.reviewer,
     model: result.model,
     costUsd: result.costUsd,
@@ -380,31 +408,22 @@ async function accept(repo, query, values) {
   const { works } = await loadWorks(repo);
   const work = pickWork(works, query, "accept");
   const workId = work.status.workId;
-  const receipt = await readJsonIfPresent(join(operatorDir(repo, workId), "receipt.json"));
-  const result = await withLedger(repo, workId, receipt, (ledger) => acceptOperatorWork({
+  const target = work.status.verifiedTarget;
+  const result = await withLedger(work, (ledger) => acceptOperatorWork({
     ledger,
     streamId: work.status.streamId,
     actor,
     reason: values.reason,
     refiner: new RefinerBridge({ ledger }),
-    evidence: receipt?.candidate?.head
-      ? [{ id: `commit:${receipt.candidate.head}`.slice(0, 200), kind: "artifact-identity", digest: `git:${receipt.candidate.head}` }]
+    evidence: target
+      ? [{ id: `commit:${target.head}`.slice(0, 200), kind: "artifact-identity", digest: `git:${target.head}` }]
       : [],
-    confirmTarget: async () => {
-      const head = receipt?.candidate?.head;
-      if (!head) throw new Error(`Work ${workId} has no recorded verified candidate; nothing to accept`);
-      try {
-        git(repo.root, ["cat-file", "-e", `${head}^{commit}`]);
-      } catch {
-        throw new Error(`verified candidate ${head} is no longer in this repository`);
-      }
-      if (receipt.candidate.verifiedRef) {
-        let resolved = null;
-        try { resolved = git(repo.root, ["rev-parse", `${receipt.candidate.verifiedRef}^{commit}`]); } catch { resolved = null; }
-        if (resolved !== null && resolved !== head && receipt.checkpoint?.head !== resolved) {
-          throw new Error(`${receipt.candidate.verifiedRef} moved to ${resolved} after verification of ${head}`);
-        }
-      }
+    // The Board's integration head proof names what was verified. Acceptance
+    // re-checks that exact commit still exists before anything is written.
+    confirmTarget: async (board) => {
+      const proof = board.integration?.headProof;
+      if (!proof) throw new Error(`Work ${workId} has no verified integration head; nothing to accept`);
+      requireCommit(repo, proof.head);
     },
   }));
   if (values.json) {

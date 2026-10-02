@@ -552,10 +552,11 @@ export function acceptanceReadiness(board: BoardProjection): AcceptanceReadiness
     }
   }
 
-  const currentReviews = board.reviews.filter(
-    (review) => review.contractRevision === board.contractRevision && review.status === "pass",
-  );
-  const qualifyingReview = [...currentReviews].reverse().find((review) => !executionActors.has(review.actor.id));
+  const latestReview = latestIndependentReview(board);
+  if (latestReview?.status === "fail") {
+    reasons.push("the latest independent review of the current contract revision failed");
+  }
+  const qualifyingReview = latestReview?.status === "pass" ? latestReview : undefined;
   if (contract.verificationPolicy.reviewRequired && !qualifyingReview) {
     reasons.push("required independent passing review for the current contract revision is missing");
   }
@@ -613,17 +614,25 @@ export function isAttestationOnly(verification: VerificationProjection): boolean
  * Extracting a predicate is not enough when the consequence carries its own
  * condition. The condition is the part that drifts.
  */
+/**
+ * The review that currently speaks for this contract revision: the newest one
+ * by an actor who did not execute the Work. A pass is superseded by a later
+ * fail, so readers must ask this question rather than "was there ever a
+ * passing review", which let a failed second review be ignored.
+ */
+export function latestIndependentReview(board: BoardProjection): ReviewProjection | undefined {
+  const executionActors = executionActorIds(board);
+  return board.reviews
+    .filter((review) => review.contractRevision === board.contractRevision && !executionActors.has(review.actor.id))
+    .at(-1);
+}
+
 export function attestationSatisfied(
   board: BoardProjection,
   verification: VerificationProjection,
 ): boolean {
   if (!isAttestationOnly(verification)) return true;
-  const executionActors = executionActorIds(board);
-  return board.reviews.some(
-    (review) => review.contractRevision === board.contractRevision
-      && review.status === "pass"
-      && !executionActors.has(review.actor.id),
-  );
+  return latestIndependentReview(board)?.status === "pass";
 }
 
 /**
@@ -709,8 +718,8 @@ function deriveState(board: BoardProjection): WorkState {
   if (board.activeReview?.contractRevision === board.contractRevision) return "reviewing";
   if (board.activeVerification?.contractRevision === board.contractRevision) return "verifying";
 
-  const latestReview = board.reviews.at(-1);
-  if (board.contract?.verificationPolicy.reviewRequired && latestReview?.contractRevision === board.contractRevision) {
+  const latestReview = latestIndependentReview(board);
+  if (board.contract?.verificationPolicy.reviewRequired && latestReview !== undefined) {
     if (latestReview.status === "pass") {
       if (authorshipUnproven(board) !== null) return "unverifiable";
       return "ready";

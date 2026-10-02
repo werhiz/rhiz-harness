@@ -54,7 +54,11 @@ export async function readRepositoryWorkLedgers(gitCommonDir: string): Promise<R
     const directory = join(root, name);
     try {
       await stat(join(directory, "events.jsonl"));
-    } catch {
+    } catch (error) {
+      // Only absence means "not a Ledger". Anything else (permissions, I/O)
+      // is a Ledger we failed to read, and must be reported as such.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      unreadable.push({ directory, error: error instanceof Error ? error.message : String(error) });
       continue;
     }
     try {

@@ -45,6 +45,8 @@ export interface OperatorWorkMetrics {
   contextTokens: number;
   /** Human decisions beyond stating the Work and accepting it. See HUMAN_INTERVENTION_EVENT_TYPES. */
   humanInterventions: number;
+  /** Every human decision: stating the Work, each intervention, and the acceptance itself. */
+  humanDecisions: number;
   /** Start of the stream to its last event, in milliseconds. */
   elapsedMs: number;
 }
@@ -60,6 +62,12 @@ export interface OperatorWorkStatus {
   review: { latest: "pass" | "fail" | null; count: number; required: boolean };
   readiness: { ready: boolean; reasons: readonly string[] };
   violations: number;
+  /**
+   * What verification proved, read from the Board's integration head proof:
+   * the base the Work started from and the exact head verified. Null when the
+   * Work has no integration proof. Callers name this, never a side file.
+   */
+  verifiedTarget: { base: string; head: string; ref: string } | null;
   nextAction: OperatorNextAction;
   nextActionReason: string;
   metrics: OperatorWorkMetrics;
@@ -76,8 +84,11 @@ export interface OperatorDigest {
   repairAttempts: number;
   estimatedCostUsd: number;
   humanInterventions: number;
+  humanDecisions: number;
   /** The North Star: human interventions per accepted outcome. Null before the first one. */
   interventionsPerAcceptedOutcome: number | null;
+  /** All human decisions, the two judgment calls included, per accepted outcome. */
+  decisionsPerAcceptedOutcome: number | null;
 }
 
 export class OperatorError extends Error {
@@ -129,7 +140,8 @@ export function summarizeOperatorWork(events: readonly HarnessEvent[]): Operator
     attempts: attempts.length,
     failedAttempts: failed,
     repairAttempts: Math.max(0, attempts.length - 1),
-    recovered: outcome === "accepted" && (failed > 0 || verificationFailed),
+    // The same definition the Refiner uses, so status and learning agree.
+    recovered: outcome === "accepted" && (attempts.length > 1 || failed > 0 || verificationFailed),
     estimatedCostUsd: events.reduce(
       (total, event) => total + (event.type === "router.decision-made" ? event.payload.expectedCostUsd : 0),
       0,
@@ -139,6 +151,8 @@ export function summarizeOperatorWork(events: readonly HarnessEvent[]): Operator
       0,
     ),
     humanInterventions: countHumanInterventions(events),
+    humanDecisions: countHumanInterventions(events) + events.filter((event) => event.actor.kind === "human"
+      && (event.type === "work.created" || event.type === "work.accepted")).length,
     elapsedMs: elapsed(events),
   };
   const { nextAction, nextActionReason } = nextActionFor(board, readiness.ready, readiness.reasons, active, budget);
@@ -153,6 +167,9 @@ export function summarizeOperatorWork(events: readonly HarnessEvent[]): Operator
     review: { latest: latestStatus(board.reviews, board.contractRevision), count: board.reviews.length, required: reviewRequired },
     readiness: { ready: readiness.ready, reasons: readiness.reasons },
     violations: board.violations.length,
+    verifiedTarget: board.integration?.headProof
+      ? { base: board.integration.configuration.head, head: board.integration.headProof.head, ref: board.integration.configuration.ref }
+      : null,
     nextAction,
     nextActionReason,
     metrics,
@@ -170,6 +187,9 @@ function nextActionFor(
     return { nextAction: "none", nextActionReason: `Work is ${board.state}` };
   }
   if (ready) return { nextAction: "accept", nextActionReason: "independently verified and ready for acceptance" };
+  if (reasons.some((reason) => reason.includes("latest independent review") && reason.includes("failed"))) {
+    return { nextAction: "review", nextActionReason: "the latest independent review failed; repair the Work or obtain a passing independent review" };
+  }
   const reviewMissing = reasons.some((reason) => reason.includes("independent passing review"));
   if (reviewMissing) return { nextAction: "review", nextActionReason: "verified, waiting on an independent review" };
   if (active > 0) return { nextAction: "resume", nextActionReason: `${active} attempt(s) have no terminal event` };
@@ -184,6 +204,7 @@ export function summarizeOperatorWorks(statuses: readonly OperatorWorkStatus[]):
   const count = (outcome: OperatorWorkMetrics["outcome"]) => statuses.filter((item) => item.metrics.outcome === outcome).length;
   const accepted = count("accepted");
   const humanInterventions = statuses.reduce((total, item) => total + item.metrics.humanInterventions, 0);
+  const humanDecisions = statuses.reduce((total, item) => total + item.metrics.humanDecisions, 0);
   return {
     works: statuses.length,
     accepted,
@@ -195,7 +216,9 @@ export function summarizeOperatorWorks(statuses: readonly OperatorWorkStatus[]):
     repairAttempts: statuses.reduce((total, item) => total + item.metrics.repairAttempts, 0),
     estimatedCostUsd: statuses.reduce((total, item) => total + item.metrics.estimatedCostUsd, 0),
     humanInterventions,
+    humanDecisions,
     interventionsPerAcceptedOutcome: accepted === 0 ? null : humanInterventions / accepted,
+    decisionsPerAcceptedOutcome: accepted === 0 ? null : humanDecisions / accepted,
   };
 }
 
@@ -257,7 +280,32 @@ export async function recordOperatorReview(input: OperatorReviewInput): Promise<
     const timestamp = now();
     return { occurredAt: timestamp, recordedAt: timestamp };
   };
+  // A review is several appends. If a previous run by this reviewer died
+  // between them, its lifecycle is still open and would block every later
+  // decision. Close it as a failed, interrupted review: the record keeps
+  // that it happened, and only a fresh complete review can pass.
+  const interrupted: HarnessEvent[] = [];
+  const active = board.activeReview;
+  if (active) {
+    if (active.actor.id !== reviewer.id) {
+      throw new OperatorError(`review ${active.id} by ${active.actor.id} is still open; only that reviewer can close it`);
+    }
+    interrupted.push(parseHarnessEvent({
+      ...base,
+      ...at(),
+      id: `event:review:${idFactory()}`,
+      type: "review.result",
+      evidence: [],
+      payload: {
+        reviewId: active.id,
+        contractRevision: active.contractRevision,
+        status: "fail",
+        summary: "review interrupted: the previous run ended without recording a result",
+      },
+    }));
+  }
   const candidates: HarnessEvent[] = [
+    ...interrupted,
     parseHarnessEvent({ ...base, ...at(), id: `event:review:${idFactory()}`, type: "review.started", evidence: [], payload: { reviewId, contractRevision } }),
     ...(input.findings ?? []).slice(0, 50).map((finding) => parseHarnessEvent({
       ...base,

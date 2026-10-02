@@ -14,7 +14,7 @@ import { RefinerBridge } from "../src/refiner-bridge.js";
 import { RouterBridge, defaultRouterWorkerDescriptor } from "../src/router-bridge.js";
 import { InMemoryRouterWorkerRegistry } from "../src/router.js";
 import type { HarnessEvent } from "../src/schemas.js";
-import { event, human, passingVerificationSequence, reviewer, successfulExecution, work, worker } from "./helpers.js";
+import { event, guardedWrite, human, passingVerificationSequence, reviewer, successfulExecution, work, worker } from "./helpers.js";
 
 const STREAM = "stream:work:1";
 
@@ -175,4 +175,88 @@ test("RouterBridge credits accepted outcomes from prior Work when given an evide
   const informed = await route(new RouterBridge({ registry, ledger, idFactory, now: () => new Date(now()), evidenceEvents: async () => prior }));
   const evidence = informed.considered.find((item) => item.workerId === worker.id)?.evidence;
   assert.equal(evidence?.successCount, 1);
+});
+
+test("a failing independent review after a passing one blocks acceptance and writes nothing", async () => {
+  const contract = work({ verificationPolicy: { required: true, independentActor: true, reviewRequired: true, falsifiabilityExemptions: [] } });
+  const ledger = await ledgerWith(verifiedWork(contract));
+  const second = { id: "agent:reviewer-two", kind: "verifier" as const, displayName: "Second reviewer" };
+  await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "pass", summary: "fine", now, idFactory });
+  const status = await recordOperatorReview({
+    ledger, streamId: STREAM, reviewer: second, status: "fail", summary: "breaks the contract",
+    findings: [{ severity: "critical", summary: "src/feature.ts drops the error path" }], now, idFactory,
+  });
+  assert.equal(status.review.latest, "fail");
+  assert.equal(status.readiness.ready, false);
+  assert.equal(status.nextAction, "review");
+  await assert.rejects(
+    acceptOperatorWork({ ledger, streamId: STREAM, actor: human, reason: "ok", now, idFactory }),
+    /latest independent review of the current contract revision failed/,
+  );
+  assert.equal((await ledger.replay(STREAM)).some((item) => item.type === "work.accepted"), false);
+
+  const third = await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "pass", summary: "fixed on re-read", now, idFactory });
+  assert.equal(third.nextAction, "accept", "a newer passing independent review speaks for the revision again");
+});
+
+test("a failing review blocks acceptance even when the contract does not require review", async () => {
+  const ledger = await ledgerWith(verifiedWork());
+  await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "fail", summary: "wrong file", now, idFactory });
+  await assert.rejects(
+    acceptOperatorWork({ ledger, streamId: STREAM, actor: human, reason: "ok", now, idFactory }),
+    /review of the current contract revision failed/,
+  );
+});
+
+test("an interrupted review by the same reviewer is closed as failed before a new one; another reviewer's is refused", async () => {
+  const contract = work({ verificationPolicy: { required: true, independentActor: true, reviewRequired: true, falsifiabilityExemptions: [] } });
+  const ledger = await ledgerWith([
+    ...verifiedWork(contract),
+    event("review.started", { reviewId: "review:dangling", contractRevision: 1 }, { actor: reviewer }),
+  ]);
+  const other = { id: "agent:reviewer-two", kind: "verifier" as const };
+  await assert.rejects(
+    recordOperatorReview({ ledger, streamId: STREAM, reviewer: other, status: "pass", summary: "fine", now, idFactory }),
+    /review:dangling by agent:reviewer is still open/,
+  );
+  const status = await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "pass", summary: "complete review", now, idFactory });
+  assert.equal(status.violations, 0);
+  assert.equal(status.review.count, 2);
+  assert.equal(status.nextAction, "accept");
+  const results = (await ledger.replay(STREAM)).filter((item) => item.type === "review.result");
+  assert.equal(results[0]?.type === "review.result" && results[0].payload.status, "fail");
+});
+
+test("status names the Board's verified head, never a side file", () => {
+  const status = summarizeOperatorWork(verifiedWork());
+  assert.equal(status.verifiedTarget, null, "no integration proof, no target");
+});
+
+test("a second attempt that succeeds counts as recovered in status, as the Refiner counts it", async () => {
+  const execution = successfulExecution();
+  const extra = [
+    event("task.created", { objective: "First try" }, { taskId: "task:0" }),
+    event("attempt.started", {
+      worker,
+      contractRevision: 1,
+      lease: {
+        id: "lease:0",
+        workspaceId: "workspace:0",
+        resourceClaims: [{ kind: "path", resource: "src" }],
+        acquiredAt: "2026-08-20T04:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    }, { taskId: "task:0", attemptId: "attempt:0", actor: worker }),
+    event("attempt.activity-observed", {
+      state: "working", detail: "message: worker edited src/feature.ts", source: "agent:worker", authority: "observation",
+    }, { taskId: "task:0", attemptId: "attempt:0", actor: worker }),
+    guardedWrite("attempt:0", "task:0"),
+    event("attempt.finished", { resultSummary: "first candidate", artifactRefs: [] }, { taskId: "task:0", attemptId: "attempt:0", actor: worker }),
+  ];
+  const ledger = await ledgerWith([execution[0]!, ...extra, ...execution.slice(1), ...passingVerificationSequence()]);
+  const refiner = new RefinerBridge({ ledger, idFactory, now });
+  const result = await acceptOperatorWork({ ledger, streamId: STREAM, actor: human, reason: "ok", now, idFactory, refiner });
+  assert.equal(result.status.metrics.recovered, true);
+  assert.equal(result.learning.analysis?.classifications.includes("successful-recovery"), true);
+  assert.equal(result.status.metrics.humanDecisions, 2, "stating the Work and accepting it");
 });

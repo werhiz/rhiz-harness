@@ -64,6 +64,22 @@ never holds a refused decision. Acceptance also requires:
 - a target check, which verifies the candidate commit still exists and the verified ref has not
   moved.
 
+### D2a. The latest independent review speaks for the revision
+
+Repeated review is now routine, so the Board must not act on "a passing review ever happened".
+`latestIndependentReview` returns the newest current-revision review by an actor who did not
+execute the Work. Acceptance readiness, attestation, and the derived state all read it.
+
+- A passing review followed by a failing one is not ready, whether or not the contract requires
+  review.
+- A newer independent pass speaks for the revision again.
+- A review lifecycle left open by a crashed run is closed as a failed, interrupted review by the
+  same reviewer before that reviewer's next review. A different reviewer cannot close it.
+
+The verified target that `review` diffs and `accept` re-checks is the Board's integration head proof
+(`verifiedTarget`). It is never the operator's receipt file. Decisions are written to the Ledger in
+which the Work was discovered.
+
 ### D3. Acceptance starts learning
 
 When `accept` succeeds, it calls `RefinerBridge.consume` on the accepted stream and returns the
@@ -105,11 +121,14 @@ judgment calls of stating the Work and accepting it:
 - park and release
 - cancel and reject
 
-`status` reports each Work's intervention count, and the North Star of human interventions per
-accepted outcome.
+`status` reports each Work's intervention count and the North Star, human interventions per accepted
+outcome. It also reports `humanDecisions`, which counts every human decision including the two
+judgment calls, and decisions per accepted outcome, so a reader can see that acceptance still needs a
+person.
 
 Cost appears as the sum of Router `expectedCostUsd`, labelled as an estimate. A reviewer that
 reports its spend, such as the Claude reviewer's `total_cost_usd`, records it in the review receipt.
+`status` sums those receipts as `reviewerCostUsd`, a measured spend shown next to the estimate.
 
 ## Consequences
 
