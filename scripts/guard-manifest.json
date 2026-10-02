@@ -404,7 +404,7 @@
       "id": "replay/refused-pair-is-reported-never-dropped",
       "why": "An experiment that silently discards pairs failing its controls can prove anything; a refused pair must make the result unclaimable.",
       "file": "src/replay.ts",
-      "remove": "      refusedPairs.push({ index, benchmarkCaseId: pair.baseline.benchmarkCaseId, reason: outcome.reason });\n",
+      "remove": "      refusedPairs.push({ index, benchmarkCaseId: pair.baseline.benchmarkCaseId, reason });\n",
       "testFile": "dist/test/replay.test.js"
     },
     {
