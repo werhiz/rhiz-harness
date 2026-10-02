@@ -52,8 +52,8 @@ This checklist deliberately does not choose a license. That is a legal/product d
 - [ ] Keep `CONTRIBUTING.md` current.
 - [x] Keep `SECURITY.md` current with a private vulnerability reporting channel.
 - [x] Adopt and publish `CODE_OF_CONDUCT.md`.
-- [ ] Configure issue templates for bug, security-redirection, feature, and architecture proposals.
-- [ ] Configure pull-request template with proof and authority checkboxes.
+- [x] Configure issue templates for bug, security-redirection, feature, and architecture proposals.
+- [x] Configure pull-request template with proof and authority checkboxes.
 - [ ] Document maintainer and merge authority.
 - [ ] Protect `main` with an enforceable independent exact-candidate proof
       mechanism that respects the no-automatic-Actions spending decision.

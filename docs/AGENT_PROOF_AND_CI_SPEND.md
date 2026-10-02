@@ -1,11 +1,27 @@
 # Agent proof and GitHub Actions spend
 
-**Decision (2026-09-28):** GitHub Actions workflows in this repository run by
-manual dispatch only. The organization exhausted its included Actions minutes
-and reached its configured spending cap. Routine PR and main pushes do not buy
-hosted proof. `scripts/check-ci-trigger-budget.mjs`, run first by
-`npm run check`, refuses a new automatic trigger or workflow without a new
-cost and outcome decision.
+**Decision (2026-10-01), superseding 2026-09-28 for this repository:** the
+repository is public, so GitHub-hosted Linux minutes cost nothing and outside
+contributors need hosted proof on their pull requests. Kernel CI therefore runs
+on every pull request and every push to `main`, and it still accepts manual
+dispatch. A newer push to the same pull request cancels its unfinished run.
+
+The Codex App Server canary stays manual-only. It runs on a self-hosted machine
+that holds operator credentials, and a pull request from a fork must never be
+able to schedule code there.
+
+`scripts/check-ci-trigger-budget.mjs`, run first by `npm run check`, holds each
+workflow to exactly these triggers. Every automatically triggered workflow must
+also stay safe for a fork's pull request: GitHub-hosted runners, top-level
+`permissions: contents: read` with no job-level widening, no `secrets`, and no
+`pull_request_target`.
+
+**Decision (2026-09-28), now historical:** while the repository was private, the
+organization exhausted its included Actions minutes, so every workflow ran by
+manual dispatch only.
+
+The check agent below remains the proof for what hosted CI cannot run: the
+darwin containment suites, the DSH product smoke runs, and the Codex canary.
 
 ## The check agent
 
