@@ -193,6 +193,8 @@ export const FactoryObservationSchema = z.object({
     runCount: z.number().int().nonnegative(),
     /** Runs supplied more than once. Each is counted once; a repeat is not more evidence. */
     duplicateRunsIgnored: z.number().int().nonnegative(),
+    /** Ledger events supplied more than once (same id, same content). Each is counted once. */
+    duplicateEventsIgnored: z.number().int().nonnegative(),
   }).strict(),
   northStar: NorthStarSchema,
   /** Judgment decisions are tracked apart from clerical effort, never folded into it. */
@@ -719,7 +721,19 @@ function capabilityFindings(runs: readonly BenchmarkRun[], config: ObserverConfi
  */
 export function observeFactory(input: ObserveInput): FactoryObservation {
   const config = ObserverConfigSchema.parse({ ...DEFAULT_OBSERVER_CONFIG, ...(input.config ?? {}) });
-  const events = [...(input.events ?? [])].sort((a, b) =>
+  // An event id names one fact. The same event read twice, from an
+  // overlapping Ledger or a backup copy, is one event; two different events
+  // claiming one id is corrupt evidence and fails closed.
+  const uniqueEvents = new Map<string, HarnessEvent>();
+  for (const event of input.events ?? []) {
+    const seen = uniqueEvents.get(event.id);
+    if (seen === undefined) uniqueEvents.set(event.id, event);
+    else if (canonicalJson(seen) !== canonicalJson(event)) {
+      throw new Error(`two different Ledger events share id ${event.id}`);
+    }
+  }
+  const duplicateEventsIgnored = (input.events?.length ?? 0) - uniqueEvents.size;
+  const events = [...uniqueEvents.values()].sort((a, b) =>
     a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
   const uniqueRuns = new Map<string, BenchmarkRun>();
   for (const run of input.runs ?? []) uniqueRuns.set(benchmarkRunIdentity(run), run);
@@ -758,6 +772,7 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
       workCount: new Set([...events.map((event) => event.workId), ...runs.flatMap((run) => (run.workId ? [run.workId] : []))]).size,
       runCount: runs.length,
       duplicateRunsIgnored,
+      duplicateEventsIgnored,
     },
     northStar: northStarOf(runs),
     decisions: {
@@ -779,7 +794,9 @@ export function formatFactoryObservation(observation: FactoryObservation): strin
   lines.push(
     `Observed ${observation.window.workCount} Works, ${observation.window.eventCount} Ledger events, ` +
     `${observation.window.runCount} benchmark runs` +
-    (observation.window.duplicateRunsIgnored > 0 ? ` (${observation.window.duplicateRunsIgnored} duplicate runs ignored).` : "."),
+    (observation.window.duplicateRunsIgnored + observation.window.duplicateEventsIgnored > 0
+      ? ` (ignored ${observation.window.duplicateRunsIgnored} duplicate runs and ${observation.window.duplicateEventsIgnored} duplicate events).`
+      : "."),
   );
   if (star.runs === 0) {
     lines.push("North Star: no benchmark runs, so interventions per verified outcome cannot be measured.");

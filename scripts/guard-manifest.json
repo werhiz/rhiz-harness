@@ -432,21 +432,21 @@
       "id": "replay/one-trial-counts-once",
       "why": "A trial supplied twice would let a single run satisfy trialsPerArm and carry a verdict on its own.",
       "file": "src/replay.ts",
-      "remove": "      return refuse(\"this run is already counted in an earlier pair\");\n",
+      "remove": "      return refuse(\"an attempt in this pair is already counted, in this pair or an earlier one\");\n",
       "testFile": "dist/test/replay.test.js"
     },
     {
       "id": "replay/a-a-pair-is-not-evidence",
       "why": "A pair whose arms differ in nothing the experiment varies measures noise and would be scored as the change's effect.",
       "file": "src/replay.ts",
-      "remove": "      return refuse(`the pair changes nothing the experiment varies (${spec.permittedDifferences.join(\", \")})`);\n",
+      "remove": "      return refuse(`the pair changes nothing on ${unchanged.join(\", \")}, which the experiment says it varies`);\n",
       "testFile": "dist/test/replay.test.js"
     },
     {
       "id": "replay/arms-hold-one-configuration",
       "why": "Arms that drift or swap between pairs compare nothing, yet would aggregate into a verdict.",
       "file": "src/replay.ts",
-      "remove": "        return refuse(`${arm} arm ran ${signature}, but earlier pairs' ${arm} arm ran ${established} (variant, ${spec.permittedDifferences.join(\", \")})`);\n",
+      "remove": "        return refuse(`${arm} arm ran ${JSON.stringify(observed)}, but earlier pairs' ${arm} arm ran ${JSON.stringify(established)}`);\n",
       "testFile": "dist/test/replay.test.js"
     },
     {
@@ -455,6 +455,13 @@
       "file": "src/replay.ts",
       "remove": "    baseline.interventionCoverage === \"complete\" &&\n    candidate.interventionCoverage === \"complete\" &&\n",
       "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "observer/conflicting-event-ids-fail-closed",
+      "why": "Two different events claiming one id is corrupt evidence; folding either silently would let a forged or damaged Ledger shape the observation.",
+      "file": "src/observer.ts",
+      "remove": "      throw new Error(`two different Ledger events share id ${event.id}`);\n",
+      "testFile": "dist/test/observer.test.js"
     }
   ]
 }

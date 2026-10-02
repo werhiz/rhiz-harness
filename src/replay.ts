@@ -22,7 +22,6 @@ import {
 import {
   InterventionCoverageSchema,
   ReplayExperimentSpecSchema,
-  benchmarkRunIdentity,
   interventionCoverageOf,
   median,
   northStarOf,
@@ -78,6 +77,11 @@ export const ReplayResultSchema = z.object({
     benchmarkCaseId: id,
     reason: z.string().min(1).max(1000),
   }).strict()),
+  /** What each arm actually ran on the experiment's dimensions, observed from accepted pairs. Null until a pair is accepted. */
+  armControls: z.object({
+    baseline: z.record(z.string(), z.string().nullable()).nullable(),
+    candidate: z.record(z.string(), z.string().nullable()).nullable(),
+  }).strict(),
   comparisons: z.array(BenchmarkComparisonSchema),
 }).strict();
 export type ReplayResult = z.infer<typeof ReplayResultSchema>;
@@ -171,8 +175,13 @@ export function summarizeReplayExperiment(
   const candidateRuns: BenchmarkRun[] = [];
   const accepted = new Map<string, number>(spec.benchmarkCaseIds.map((caseId) => [caseId, 0]));
 
-  const countedRuns = new Set<string>();
-  const armSignature: { baseline?: string; candidate?: string } = {};
+  const countedAttempts = new Set<string>();
+  const armControls: { baseline: Record<string, string | null> | null; candidate: Record<string, string | null> | null } =
+    { baseline: null, candidate: null };
+  const controlsOf = (run: BenchmarkRun): Record<string, string | null> => ({
+    variantId: run.variantId ?? null,
+    ...Object.fromEntries(spec.permittedDifferences.map((field) => [field, controlValue(run, field)])),
+  });
 
   pairs.forEach((pair, index) => {
     const refuse = (reason: string) => {
@@ -181,40 +190,40 @@ export function summarizeReplayExperiment(
     const outcome = refusal(spec, pair);
     if ("reason" in outcome) return refuse(outcome.reason);
 
-    // One trial supplied twice is one trial. Counting it again would let a
-    // single run satisfy trialsPerArm on its own.
-    const identities = [benchmarkRunIdentity(pair.baseline), benchmarkRunIdentity(pair.candidate)];
-    if (identities.some((identity) => countedRuns.has(identity))) {
-      return refuse("this run is already counted in an earlier pair");
+    // A trial is an execution, named by its attempts. Each attempt counts once
+    // across both arms and every pair, so neither a copied receipt with one
+    // field changed nor one execution relabelled as the other arm can pass as
+    // a second trial. An arm that never executed is not a trial of its
+    // configuration at all.
+    for (const arm of ["baseline", "candidate"] as const) {
+      if (pair[arm].attemptIds.length === 0) return refuse(`the ${arm} arm never executed (no attempts)`);
+    }
+    const attempts = [...pair.baseline.attemptIds, ...pair.candidate.attemptIds];
+    if (new Set(attempts).size !== attempts.length || attempts.some((attempt) => countedAttempts.has(attempt))) {
+      return refuse("an attempt in this pair is already counted, in this pair or an earlier one");
     }
 
-    // A pair that varies nothing the experiment permits is an A/A run. It
-    // cannot be evidence for the change.
-    if (spec.permittedDifferences.every((field) =>
-      controlValue(pair.baseline, field) === controlValue(pair.candidate, field))) {
-      return refuse(`the pair changes nothing the experiment varies (${spec.permittedDifferences.join(", ")})`);
+    // The experiment names the dimensions it varies. A pair that leaves any of
+    // them unchanged does not test the stated change, and an A/A pair tests
+    // nothing.
+    const unchanged = spec.permittedDifferences.filter((field) =>
+      controlValue(pair.baseline, field) === controlValue(pair.candidate, field));
+    if (unchanged.length > 0) {
+      return refuse(`the pair changes nothing on ${unchanged.join(", ")}, which the experiment says it varies`);
     }
 
     // Each arm is one configuration across every pair. An arm that drifts,
     // or arms that swap, compare nothing.
     for (const arm of ["baseline", "candidate"] as const) {
-      const run = pair[arm];
-      const signature = JSON.stringify([
-        run.variantId ?? null,
-        ...spec.permittedDifferences.map((field) => controlValue(run, field)),
-      ]);
-      const established = armSignature[arm];
-      if (established !== undefined && established !== signature) {
-        return refuse(`${arm} arm ran ${signature}, but earlier pairs' ${arm} arm ran ${established} (variant, ${spec.permittedDifferences.join(", ")})`);
+      const observed = controlsOf(pair[arm]);
+      const established = armControls[arm];
+      if (established !== null && JSON.stringify(established) !== JSON.stringify(observed)) {
+        return refuse(`${arm} arm ran ${JSON.stringify(observed)}, but earlier pairs' ${arm} arm ran ${JSON.stringify(established)}`);
       }
     }
-    for (const arm of ["baseline", "candidate"] as const) {
-      armSignature[arm] ??= JSON.stringify([
-        pair[arm].variantId ?? null,
-        ...spec.permittedDifferences.map((field) => controlValue(pair[arm], field)),
-      ]);
-    }
-    for (const identity of identities) countedRuns.add(identity);
+    armControls.baseline ??= controlsOf(pair.baseline);
+    armControls.candidate ??= controlsOf(pair.candidate);
+    for (const attempt of attempts) countedAttempts.add(attempt);
     comparisons.push(outcome.comparison);
     baselineRuns.push(pair.baseline);
     candidateRuns.push(pair.candidate);
@@ -251,6 +260,7 @@ export function summarizeReplayExperiment(
     candidate,
     trialsByCase,
     refusedPairs,
+    armControls,
     comparisons,
   });
 }
@@ -276,6 +286,8 @@ export function formatReplayResult(result: ReplayResult): string {
     `Replay ${result.experiment.id}: ${result.verdict} (${result.claim}).`,
     `Hypothesis: ${result.experiment.hypothesis}`,
     `Varied: ${result.experiment.permittedDifferences.join(", ")}.`,
+    `  baseline  ran ${JSON.stringify(result.armControls.baseline)}`,
+    `  candidate ran ${JSON.stringify(result.armControls.candidate)}`,
     formatReplayArm("  baseline ", result.baseline),
     formatReplayArm("  candidate", result.candidate),
   ];

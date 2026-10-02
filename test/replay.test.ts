@@ -267,3 +267,52 @@ test("an A/A pair that changes nothing the experiment varies is refused", () => 
   assert.equal(result.verdict, "invalid");
   assert.match(result.refusedPairs[0]!.reason, /changes nothing/);
 });
+
+test("a copied receipt with one field changed is still the same trial", () => {
+  const first = pair("case:1", 0, { verified: false }, { attemptIds: ["candidate:0"] });
+  const copy = pair("case:1", 1, { verified: false }, { attemptIds: ["candidate:0"], evidenceRefs: ["copy"] });
+  const result = summarizeReplayExperiment(spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 2 }), [first, copy]);
+  assert.equal(result.verdict, "invalid");
+  assert.match(result.refusedPairs[0]!.reason, /already counted/);
+});
+
+test("one execution relabelled as the other arm is not a pair", () => {
+  const result = summarizeReplayExperiment(
+    spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 1 }),
+    [pair("case:1", 0, { verified: false, attemptIds: ["shared"] }, { attemptIds: ["shared"] })],
+  );
+  assert.equal(result.verdict, "invalid");
+  assert.match(result.refusedPairs[0]!.reason, /already counted/);
+});
+
+test("an arm that never executed is not a trial", () => {
+  const result = summarizeReplayExperiment(
+    spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 1 }),
+    [pair("case:1", 0, { verified: false, outcome: "failed", attemptIds: [] })],
+  );
+  assert.equal(result.verdict, "invalid");
+  assert.match(result.refusedPairs[0]!.reason, /never executed/);
+});
+
+test("a dimension the experiment claims to vary must actually vary", () => {
+  const twoDimensions = spec({
+    benchmarkCaseIds: ["case:1"],
+    trialsPerArm: 1,
+    permittedDifferences: ["workerProviderId", "model"],
+    candidateControls: { workerProviderId: "worker:codex", model: "model-b" },
+  });
+  const result = summarizeReplayExperiment(twoDimensions, [
+    pair("case:1", 0, { model: "model-tiny", verified: false }, { workerProviderId: "worker:codex" }),
+  ]);
+  assert.equal(result.verdict, "invalid");
+  assert.match(result.refusedPairs[0]!.reason, /changes nothing on workerProviderId/);
+});
+
+test("the result records and prints what each arm actually ran", () => {
+  const result = summarizeReplayExperiment(spec(), fullCorpus());
+  assert.deepEqual(result.armControls, {
+    baseline: { variantId: "baseline", model: "model-a" },
+    candidate: { variantId: "candidate", model: "model-b" },
+  });
+  assert.match(formatReplayResult(result), /baseline {2}ran \{"variantId":"baseline","model":"model-a"\}/);
+});

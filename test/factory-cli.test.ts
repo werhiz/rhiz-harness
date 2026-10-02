@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -128,6 +128,30 @@ test("observe leaves no lock, snapshot directory, or other file behind in the Le
     const result = factory(["observe", "--ledger", ledgerDir]);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(readdirSync(ledgerDir).sort(), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("observe reports a damaged Ledger and an empty runs directory instead of crashing or reporting nothing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rhiz-factory-cli-"));
+  try {
+    const ledgerDir = join(root, "ledger");
+    const ledger = await DurableEventLedger.open({ directory: ledgerDir });
+    await ledger.append(event("attempt.failed", { reason: "crashed", recoverable: true }, { taskId: "t", attemptId: "a" }));
+    await ledger.close();
+    const file = join(ledgerDir, "events.jsonl");
+    writeFileSync(file, readFileSync(file, "utf8") + "{\"torn\":");
+    const damaged = factory(["observe", "--ledger", ledgerDir]);
+    assert.equal(damaged.status, 2);
+    assert.match(damaged.stderr, /failed verification/);
+    assert.doesNotMatch(damaged.stderr, /\n\s+at /);
+
+    const emptyRuns = join(root, "runs");
+    mkdirSync(emptyRuns);
+    const empty = factory(["observe", "--runs", emptyRuns]);
+    assert.equal(empty.status, 2);
+    assert.match(empty.stderr, /no benchmark run files/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

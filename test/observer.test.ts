@@ -349,3 +349,19 @@ test("the same run supplied twice is counted once and reported as a duplicate", 
   assert.equal(observation.window.runCount, 2);
   assert.equal(observation.window.duplicateRunsIgnored, 2);
 });
+
+test("the same Ledger event read twice is one event", () => {
+  const events = ["w1", "w2", "w3"].map((workId) => verification(workId, { "criterion:x": "pass" }));
+  const once = observeFactory({ events, config: { minimumQuietCriterionEvaluations: 5 } });
+  const twice = observeFactory({ events: [...events, ...events], config: { minimumQuietCriterionEvaluations: 5 } });
+  assert.equal(once.findings.length, 0);
+  assert.equal(twice.findings.length, 0);
+  assert.equal(twice.window.eventCount, 3);
+  assert.equal(twice.window.duplicateEventsIgnored, 3);
+});
+
+test("two different events that share an id fail closed", () => {
+  const original = event("attempt.failed", { reason: "crashed", recoverable: true }, { id: "event:same", taskId: "t", attemptId: "a" });
+  const forged = event("attempt.failed", { reason: "different", recoverable: true }, { id: "event:same", taskId: "t", attemptId: "a" });
+  assert.throws(() => observeFactory({ events: [original, forged] }), /share id event:same/);
+});

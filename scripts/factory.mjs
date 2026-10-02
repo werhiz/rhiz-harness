@@ -40,6 +40,8 @@ function options(argv, name) {
   return values;
 }
 
+class UsageError extends Error {}
+
 function toRun(raw) {
   return parseBenchmarkRun(raw?.benchmarkRun ?? raw);
 }
@@ -48,13 +50,12 @@ async function readRuns(path) {
   const absolute = resolve(path);
   if ((await stat(absolute)).isDirectory()) {
     const names = (await readdir(absolute)).filter((name) => name.endsWith(".json")).sort();
+    if (names.length === 0) throw new UsageError(`no benchmark run files (*.json) in ${absolute}`);
     return (await Promise.all(names.map((name) => readRuns(join(absolute, name))))).flat();
   }
   const raw = JSON.parse(await readFile(absolute, "utf8"));
   return (Array.isArray(raw) ? raw : [raw]).map(toRun);
 }
-
-class UsageError extends Error {}
 
 async function readLedger(directory) {
   const source = join(resolve(directory), "events.jsonl");
@@ -63,7 +64,13 @@ async function readLedger(directory) {
   const scratch = await mkdtemp(join(tmpdir(), "rhiz-factory-observe-"));
   try {
     await copyFile(source, join(scratch, "events.jsonl"));
-    const ledger = await DurableEventLedger.open({ directory: scratch, repairTornTail: false });
+    let ledger;
+    try {
+      ledger = await DurableEventLedger.open({ directory: scratch, repairTornTail: false });
+    } catch (error) {
+      // A Ledger copied mid-append, or a damaged one, is reported, never repaired here.
+      throw new UsageError(`Ledger at ${resolve(directory)} failed verification: ${error instanceof Error ? error.message : String(error)}`);
+    }
     try {
       const events = [];
       for await (const record of ledger.records()) events.push(record.event);
@@ -87,14 +94,15 @@ if (command === "observe") {
     process.exit(2);
   }
   let events;
+  let runs;
   try {
     events = (await Promise.all(ledgers.map(readLedger))).flat();
+    runs = (await Promise.all(runFiles.map(readRuns))).flat();
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     console.error(error.message);
     process.exit(2);
   }
-  const runs = (await Promise.all(runFiles.map(readRuns))).flat();
   const observation = observeFactory({ events, runs });
   console.log(json ? JSON.stringify(observation, null, 2) : formatFactoryObservation(observation));
 } else if (command === "replay") {
