@@ -512,6 +512,45 @@ async function releaseLock(lockPath: string, token: string): Promise<void> {
   await syncDirectory(dirname(lockPath));
 }
 
+/**
+ * Read a durable Ledger's events without opening it for writing.
+ *
+ * `open` takes the single-writer lock and may repair a torn tail; neither is
+ * acceptable for a reader such as `status` or Router evidence while a run may
+ * be appending. This reads the committed prefix (everything up to the last
+ * newline), verifies the full hash chain over it, and never writes. A missing
+ * file is an empty Ledger; a broken chain is an error, never an empty result.
+ */
+export async function readDurableLedgerEvents(
+  directory: string,
+  fileName = "events.jsonl",
+): Promise<readonly HarnessEvent[]> {
+  if (fileName.includes("/") || fileName.includes("\\") || fileName === "." || fileName === "..") {
+    throw new TypeError("ledger fileName must be one path segment");
+  }
+  let value: Buffer;
+  try {
+    value = await readFile(join(resolve(directory), fileName));
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+  const committed = value.subarray(0, value.lastIndexOf(0x0a) + 1);
+  const lines = committed.toString("utf8").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  const records: LedgerRecord[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (line.length === 0) throw new LedgerIntegrityError("ledger contains a blank interior record", index + 1);
+    try {
+      records.push(LedgerRecordSchema.parse(JSON.parse(line)));
+    } catch (error) {
+      throw new LedgerIntegrityError(`ledger record ${index + 1} is invalid: ${safeError(error)}`, index + 1);
+    }
+  }
+  validateRecordChain(records);
+  return records.map((record) => record.event);
+}
+
 async function loadRecords(
   filePath: string,
   repairTornTail: boolean,

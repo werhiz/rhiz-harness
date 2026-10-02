@@ -28,7 +28,20 @@ Optional arguments:
 --output <receipt.json>
 --benchmark-case <stable case id>
 --benchmark-variant <variant id>
+--resume true
 ```
+
+`--resume true` continues the Work its Ledger already holds. Any attempt whose process ended without a
+terminal event is closed as a recoverable failure by `service:repository-runner-resume`. Then the
+remaining `maxAttempts` budget is spent on the same Work. Resume refuses terminal Work, `ready` Work,
+a spent budget, a contract that differs from the one the Work was opened with, and benchmark runs.
+
+Worker selection reads accepted outcomes from every other Work Ledger in the repository through
+`RouterBridge` `evidenceEvents` (ADR 0026). The receipt records how many Work items were read, and
+which Ledgers could not be read, in `composition.routerEvidence`.
+
+The operator loop in `scripts/rhiz-harness.mjs` (`npm run operator -- <verb>`) wraps this runner for
+`start` and `resume`. It adds `status`, `review`, and `accept` over the same Ledgers.
 
 Default base is the target repository's current `HEAD`.
 `--benchmark-variant` requires `--benchmark-case`. Benchmark arguments do not change execution authority, worker selection, verification, delivery, or acceptance. They add a canonical `BenchmarkRun` measurement record to the repository-work receipt. Codex model and reasoning effort are read from the provider's own `thread/start` response and carried through `WorkerResult`; they are never operator-invented benchmark labels.

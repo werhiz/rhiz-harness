@@ -1,6 +1,8 @@
 # Developer Experience v1
 
-Status: proposed design. No implementation yet.
+Status: proposed design. The first slice ships as `rhiz-harness start | status | resume | review |
+accept` under `decisions/0026-operator-loop-and-acceptance-driven-learning.md`; the rest of this
+surface is not implemented.
 
 Canonical decisions extracted from this document live in
 `decisions/0015-inline-cli-and-proof-first-developer-experience.md`. Where the ADR and this document
