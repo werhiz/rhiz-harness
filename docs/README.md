@@ -58,6 +58,7 @@ Source, tests, executed proof, and durable receipts determine what is actually w
 | Hosts and integrations | [Hosts, Providers, and Integrations](HOSTS_PROVIDERS_INTEGRATIONS.md) |
 | Runtime/provider compatibility | [Compatibility and Versioning](COMPATIBILITY.md) |
 | Benchmarks | [Benchmark Contract](BENCHMARK_CONTRACT.md) |
+| Factory Observer and historical replay | [Factory Runtime v1](FACTORY_RUNTIME_V1.md) |
 | API/package surface | [API Reference](API_REFERENCE.md) |
 | Provenance | [Provenance](PROVENANCE.md) |
 

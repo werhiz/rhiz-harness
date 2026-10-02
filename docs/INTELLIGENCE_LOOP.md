@@ -35,6 +35,8 @@ Context selection for future Work
 
 Learning proposes. Named authorities promote.
 
+Refiner reads one closed Work. The [Factory Observer](FACTORY_RUNTIME_V1.md) reads the population, meaning all Works and their benchmark runs, and turns patterns into proposals that carry a replay experiment. Historical replay tests a proposal on the same past Work before anyone promotes it ([ADR 0025](decisions/0025-factory-runtime-observer-and-replay.md)).
+
 ## Rules
 
 Rules are evidence-backed operating instructions selected for relevant Work.

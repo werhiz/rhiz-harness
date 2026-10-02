@@ -1,4 +1,5 @@
 import type { WorkerProvider } from "../src/host.js";
+import { parseBenchmarkRun, type BenchmarkRun } from "../src/benchmark.js";
 import type { ActorRef, HarnessEvent, WorkContract } from "../src/schemas.js";
 import { parseHarnessEvent, parseWorkContract } from "../src/schemas.js";
 import { WorkerCatalog } from "../src/workers.js";
@@ -250,4 +251,42 @@ export function sandboxCapableCatalog(...providers: WorkerProvider[]): WorkerCat
     async close() {},
   });
   return catalog;
+}
+
+/** A schema-valid BenchmarkRun that passes the comparison controls against a sibling variant. */
+let benchRunCounter = 0;
+export function benchRun(overrides: Record<string, unknown> = {}): BenchmarkRun {
+  // Every call is a distinct execution, as in production, unless the test
+  // names the attempts itself.
+  benchRunCounter += 1;
+  const verified = overrides.verified ?? true;
+  return parseBenchmarkRun({
+    benchmarkCaseId: "case:1",
+    taskIdentity: `sha256:${"a".repeat(64)}`,
+    capabilityExposureDigest: null,
+    preparationIdentity: null,
+    harnessMode: "rhiz-harness",
+    harnessVersion: "0.0.1-kernel.0",
+    variantId: "baseline",
+    workId: "work:1",
+    attemptIds: [`attempt:bench:${benchRunCounter}`],
+    baseIdentity: "git:base",
+    resultIdentity: "git:result",
+    hostId: "host:local",
+    workerProviderId: "worker:codex",
+    model: "model-a",
+    effortLevel: "medium",
+    contextStrategy: "minimal",
+    verificationPolicyId: "verify:1",
+    startedAt: "2026-09-01T00:00:00.000Z",
+    endedAt: "2026-09-01T00:10:00.000Z",
+    measurementCoverage: { wallClock: "runner-measured", humanInterventions: "complete", usage: "provider-reported" },
+    usage: { costUsd: 1 },
+    humanInterventions: [],
+    outcome: verified ? "verified" : "failed",
+    verified,
+    repairRequired: false,
+    evidenceRefs: [],
+    ...overrides,
+  });
 }
