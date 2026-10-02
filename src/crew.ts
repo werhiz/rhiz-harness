@@ -7,6 +7,7 @@ import type { EventLedger } from "./ledger.js";
 import { streamIdForWork } from "./refiner.js";
 import type {
   ActorRef,
+  GuardToolCall,
   HarnessEvent,
   ResourceRef,
   WorkContract,
@@ -27,6 +28,9 @@ import {
   createGuardedToolMediation,
   guardPolicyFromWorkContract,
   GuardianRejectionCircuitBreaker,
+  GuardEvaluationSchema,
+  GuardRequestSchema,
+  GuardToolCallSchema,
 } from "./guard.js";
 import type {
   WorkerDescriptor,
@@ -535,16 +539,12 @@ export function computeAttemptDeadline(work: WorkContract, startedAtIso: string)
   return new Date(startedAtMs + budgetMs).toISOString();
 }
 
-/**
- * Race `workerHandle.result()` against the Attempt deadline. Returns
- * `result` when the worker finishes in time, or `null` when the deadline
- * wins. The losing side's promise is cancelled to avoid leaking timers.
- */
-async function awaitAttemptResultOrDeadline(
-  resultPromise: Promise<WorkerResult>,
+/** Race an arbitrary Crew lifecycle operation against its absolute deadline. */
+async function awaitDeadline<T>(
+  promise: Promise<T>,
   deadlineIso: string,
   now: () => string,
-): Promise<{ kind: "result"; result: WorkerResult } | { kind: "deadline"; observedAt: string }> {
+): Promise<{ kind: "completed"; value: T } | { kind: "deadline"; observedAt: string }> {
   const deadlineMs = Date.parse(deadlineIso);
   const remaining = deadlineMs - Date.parse(now());
   if (remaining <= 0) {
@@ -553,17 +553,57 @@ async function awaitAttemptResultOrDeadline(
   let timer: NodeJS.Timeout | null = null;
   const deadline = new Promise<"deadline">((resolve) => {
     timer = setTimeout(() => resolve("deadline"), remaining);
-    // The timer must not keep the process alive past the result race.
+    // The timer must not keep the process alive past the lifecycle race.
     timer.unref?.();
   });
   try {
     const outcome = await Promise.race([
-      resultPromise.then((result) => ({ kind: "result" as const, result })),
+      promise.then((value) => ({ kind: "completed" as const, value })),
       deadline.then(() => ({ kind: "deadline" as const, observedAt: now() })),
     ]);
+    // Timer callbacks can be delayed behind an I/O or microtask completion.
+    // The absolute wall-clock cutoff remains authoritative even in that race.
+    if (outcome.kind === "completed" && Date.parse(now()) >= deadlineMs) {
+      return { kind: "deadline", observedAt: now() };
+    }
     return outcome;
   } finally {
     if (timer !== null) clearTimeout(timer);
+  }
+}
+
+/** Keep teardown hooks from extending a Crew receipt indefinitely. */
+async function awaitCleanupGrace(promise: Promise<unknown>, milliseconds = 100): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, milliseconds);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    // Cancellation and cleanup are best-effort after the Attempt is closed.
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function awaitOptionalGrace<T>(promise: Promise<T>, milliseconds = 100): Promise<T | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), milliseconds);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -863,11 +903,23 @@ export class CrewSupervisor {
     let observations = 0;
     let attemptStarted = false;
     let terminalAttemptEvent = false;
+    let activeAttemptDeadlineAt: string | undefined;
+    // Once closed, no late worker observation or Guard callback may append
+    // evidence that changes the terminal Attempt's story.
+    let workerClosed = false;
     let boardState: WorkState | undefined;
     let projectionViolationCount = 0;
     let changeViolations: string[] = [];
     let errorMessage: string | undefined;
     let contractRevision = 1;
+    let deadlineObservedAt: string | undefined;
+    const attemptClosed = (): boolean => {
+      if (workerClosed) return true;
+      if (activeAttemptDeadlineAt !== undefined && Date.parse(this.#now()) >= Date.parse(activeAttemptDeadlineAt)) {
+        workerClosed = true;
+      }
+      return workerClosed;
+    };
 
     const append = async (
       type: HarnessEvent["type"],
@@ -1058,6 +1110,7 @@ export class CrewSupervisor {
       // the same instant; two calls could disagree.
       const attemptStartedAt = this.#now();
       const attemptDeadlineAt = computeAttemptDeadline(work, attemptStartedAt);
+      activeAttemptDeadlineAt = attemptDeadlineAt;
       // Crew is the only actor that knows which workspace and lease this
       // attempt actually holds, so Crew is the only actor that can record
       // it. Without this the Board carries an attempt with no workspace,
@@ -1094,14 +1147,21 @@ export class CrewSupervisor {
         expectedHead: before.head,
         expectedDigest: before.digest,
       });
-      const categoryAuthorityProof = workspace.mode === "isolated-write"
-        ? await proveContractBoundCategoryAuthority({
+      let categoryAuthorityProof;
+      if (workspace.mode === "isolated-write") {
+        const authorityProofOutcome = await awaitDeadline(proveContractBoundCategoryAuthority({
           registry: this.#workerCatalog,
           selection: resolution.selection,
           provider: resolution.provider,
           work,
-        })
-        : undefined;
+        }), attemptDeadlineAt, this.#now);
+        if (authorityProofOutcome.kind === "deadline") {
+          deadlineObservedAt = authorityProofOutcome.observedAt;
+          workerClosed = true;
+          throw new Error(`attempt deadline ${attemptDeadlineAt} exceeded during Guard authority preflight at ${deadlineObservedAt}`);
+        }
+        categoryAuthorityProof = authorityProofOutcome.value;
+      }
       const guardPolicy = guardPolicyFromWorkContract(work, {
         contractBoundCategoryAuthority: categoryAuthorityProof?.active ?? false,
       });
@@ -1120,6 +1180,7 @@ export class CrewSupervisor {
         // what a provider later echoes back could misreport or omit a decision
         // that has already taken effect (#40).
         record: async (evaluation) => {
+          if (attemptClosed()) return;
           await append(
             "guard.evaluated",
             evaluation,
@@ -1127,13 +1188,50 @@ export class CrewSupervisor {
           );
         },
       });
+      const attemptGuardedToolMediation = {
+        evaluate: async (call: GuardToolCall) => {
+          const closedEvaluation = () => {
+            const request = GuardRequestSchema.parse({
+              ...GuardToolCallSchema.parse(call),
+              workId: work.id,
+              taskId,
+              attemptId,
+              actor: workerActor,
+              writeScope: resolution!.selection.descriptor.writeAccess,
+              contextHash: `crew:${this.plan.id}:${work.id}:${taskId}`.slice(0, 300),
+              evidenceRefs: [],
+              timestampMs: Date.parse(this.#now()),
+            });
+            return GuardEvaluationSchema.parse({
+              request,
+              verdict: {
+                requestId: request.requestId,
+                decision: "forbid",
+                rationale: "Crew Attempt is closed; the tool call is refused.",
+                riskLevel: "critical",
+                ruleHits: ["attempt-closed"],
+                policyBackend: "crew-attempt-lifecycle",
+                evaluatedAt: new Date(request.timestampMs).toISOString(),
+                durationMs: 0,
+              },
+            });
+          };
+          if (attemptClosed()) return closedEvaluation();
+          const evaluation = await guardedToolMediation.evaluate(call);
+          if (!attemptClosed()) return evaluation;
+          // The provider effects a tool call only after this result returns.
+          // Even a Guard evaluation already in flight at closure gets a
+          // refusal at the native boundary.
+          return closedEvaluation();
+        },
+      };
       // The Attempt deadline is the Work contract's declared wall-clock
       // budget for the attempt plus the CrewStarted time. If the contract
       // does not name one, Crew computes a sensible default from the
       // attempt kind so the mission cannot hang forever (#16). Either
       // way, the deadline is recorded in the request so the worker can
       // honor it locally as well as a hard ceiling.
-      const started = await startWorkerAttempt(resolution.provider, {
+      const startup = startWorkerAttempt(resolution.provider, {
         work,
         taskId,
         attemptId,
@@ -1144,77 +1242,103 @@ export class CrewSupervisor {
         contextPack,
         workspace: binding,
         attemptDeadlineAt,
-      }, workspace.mode === "isolated-write" ? { guardedToolMediation } : {});
-      const collecting = (async () => {
-        for await (const observation of started.handle.observe()) {
-          observations += 1;
-          // An authority report is only valid from a real enforcement seam:
-          // the provider that imposed the boundary reports what it enforces
-          // and what the OS refused. Crew turns that typed report into ledger
-          // evidence at the moment it arrives, not after the fact (#11).
-          if (observation.authority !== undefined) {
+      }, workspace.mode === "isolated-write" ? { guardedToolMediation: attemptGuardedToolMediation } : {});
+      // Provider capability discovery and startup are part of the same
+      // Attempt budget as result production and the observation stream.
+      // If startup resolves after timeout, cancel its handle without letting
+      // that late completion reopen the Attempt.
+      const startupOutcome = await awaitDeadline(startup, attemptDeadlineAt, this.#now);
+      if (startupOutcome.kind === "deadline") {
+        deadlineObservedAt = startupOutcome.observedAt;
+        workerClosed = true;
+        void startup.then(({ handle }) => {
+          void handle.cancel(`attempt deadline ${attemptDeadlineAt} exceeded`).catch(() => {});
+        }, () => {});
+      } else {
+        const started = startupOutcome.value;
+        const collecting = (async () => {
+          for await (const observation of started.handle.observe()) {
+            if (attemptClosed()) return;
+            observations += 1;
+            // An authority report is only valid from a real enforcement seam:
+            // the provider that imposed the boundary reports what it enforces
+            // and what the OS refused. Crew turns that typed report into ledger
+            // evidence at the moment it arrives, not after the fact (#11).
+            if (observation.authority !== undefined) {
+              if (attemptClosed()) return;
+              await append(
+                observation.authority.decision === "granted" ? "authority.granted" : "authority.denied",
+                {
+                  policy: work.authority,
+                  reason: `${observation.authority.reason} [boundary: ${observation.authority.boundary}]`,
+                },
+                { taskId, attemptId, actor: workerActor },
+              );
+            }
+            if (attemptClosed()) return;
             await append(
-              observation.authority.decision === "granted" ? "authority.granted" : "authority.denied",
+              "attempt.activity-observed",
               {
-                policy: work.authority,
-                reason: `${observation.authority.reason} [boundary: ${observation.authority.boundary}]`,
+                state: observationState(observation),
+                detail: `${observation.kind}: ${observation.detail}`.slice(0, 1000),
+                source: resolution!.selection.provider.id,
+                authority: "observation",
               },
               { taskId, attemptId, actor: workerActor },
             );
           }
-          await append(
-            "attempt.activity-observed",
-            {
-              state: observationState(observation),
-              detail: `${observation.kind}: ${observation.detail}`.slice(0, 1000),
-              source: resolution!.selection.provider.id,
-              authority: "observation",
-            },
-            { taskId, attemptId, actor: workerActor },
-          );
+        })();
+        const lifecycle = Promise.all([started.handle.result(), collecting]);
+        // Observe a rejected detached stream even if the deadline wins first.
+        void collecting.catch(() => {});
+        const lifecycleOutcome = await awaitDeadline(lifecycle, attemptDeadlineAt, this.#now);
+        if (lifecycleOutcome.kind === "deadline") {
+          deadlineObservedAt = lifecycleOutcome.observedAt;
+          workerClosed = true;
+          await awaitCleanupGrace(Promise.resolve().then(() => started.handle.cancel(`attempt deadline ${attemptDeadlineAt} exceeded`)));
+        } else {
+          [result] = lifecycleOutcome.value;
+          workerClosed = true;
         }
-      })();
-      const raceOutcome = await awaitAttemptResultOrDeadline(
-        started.handle.result(),
-        attemptDeadlineAt,
-        this.#now,
-      );
-      if (raceOutcome.kind === "deadline") {
-        // The Attempt exceeded its declared budget. Cancel the worker's
-        // handle so it can free resources, record the timeout as a
-        // non-recoverable failure, and mark the Attempt terminal so the
-        // outer catch does not double-emit attempt.failed (#16).
-        try {
-          await started.handle.cancel(`attempt deadline ${attemptDeadlineAt} exceeded`);
-        } catch {
-          // Cancellation is best-effort; the Attempt is failed regardless.
+      }
+      if (deadlineObservedAt === undefined) {
+        const snapshotOutcome = await awaitDeadline(
+          this.#workspaceProvider.snapshot(workspace),
+          attemptDeadlineAt,
+          this.#now,
+        );
+        if (snapshotOutcome.kind === "deadline") {
+          deadlineObservedAt = snapshotOutcome.observedAt;
+          workerClosed = true;
+        } else {
+          after = CrewWorkspaceSnapshotSchema.parse(snapshotOutcome.value);
+          changeViolations = workspaceChangeViolations(work, workspace, before, after);
         }
+      }
+      if (deadlineObservedAt !== undefined) {
+        // Close the latch before publishing failure. Late Guard/observation
+        // callbacks and late startup handles are now cleanup-only.
         await append(
           "attempt.failed",
-          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${raceOutcome.observedAt}`, recoverable: false },
+          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false },
           { taskId, attemptId, actor: workerActor },
-          raceOutcome.observedAt,
+          deadlineObservedAt,
         );
         terminalAttemptEvent = true;
         errorMessage = `attempt deadline ${attemptDeadlineAt} exceeded`;
-        // The workspace is left in whatever state the worker had reached.
+        // Snapshot is useful evidence, but must not turn a bounded attempt
+        // into an unbounded wait on a slow workspace provider.
         try {
-          after = CrewWorkspaceSnapshotSchema.parse(await this.#workspaceProvider.snapshot(workspace));
-          changeViolations = workspaceChangeViolations(work, workspace, before, after);
+          const snapshot = await awaitOptionalGrace(this.#workspaceProvider.snapshot(workspace));
+          if (snapshot !== undefined) {
+            after = CrewWorkspaceSnapshotSchema.parse(snapshot);
+            changeViolations = workspaceChangeViolations(work, workspace, before, after);
+          }
         } catch {
           // Snapshot failure remains represented by the original error.
         }
-        // The `finished` block below is skipped because `result` is
-        // still undefined; the receipt builder falls through to the
-        // error-message branch which carries the timeout reason.
-      } else {
-        result = raceOutcome.result;
       }
-      await collecting;
-      after = CrewWorkspaceSnapshotSchema.parse(await this.#workspaceProvider.snapshot(workspace));
-      changeViolations = workspaceChangeViolations(work, workspace, before, after);
-
-      if (result !== undefined && result.status === "finished" && changeViolations.length === 0) {
+      if (deadlineObservedAt === undefined && result !== undefined && result.status === "finished" && changeViolations.length === 0) {
         await append(
           "attempt.finished",
           // WorkerResult deliberately admits a fuller operator-facing summary
@@ -1225,7 +1349,7 @@ export class CrewSupervisor {
           { resultSummary: result.summary.slice(0, 2000), artifactRefs: result.artifacts },
           { taskId, attemptId, actor: workerActor },
         );
-      } else if (result !== undefined) {
+      } else if (deadlineObservedAt === undefined && result !== undefined) {
         const reason = changeViolations.length > 0
           ? changeViolations.join("; ")
           : result.summary;
@@ -1251,6 +1375,7 @@ export class CrewSupervisor {
         }
       }
     } catch (error) {
+      workerClosed = true;
       errorMessage = safeError(error);
       if (attemptStarted && !terminalAttemptEvent) {
         try {
@@ -1270,19 +1395,30 @@ export class CrewSupervisor {
       }
       if (workspace !== undefined && after === undefined) {
         try {
-          after = CrewWorkspaceSnapshotSchema.parse(await this.#workspaceProvider.snapshot(workspace));
-          if (before !== undefined) changeViolations = workspaceChangeViolations(work, workspace, before, after);
+          let snapshot: CrewWorkspaceSnapshot | undefined;
+          if (activeAttemptDeadlineAt === undefined) {
+            snapshot = await awaitOptionalGrace(this.#workspaceProvider.snapshot(workspace));
+          } else {
+            const snapshotOutcome = await awaitDeadline(
+              this.#workspaceProvider.snapshot(workspace),
+              activeAttemptDeadlineAt,
+              this.#now,
+            );
+            if (snapshotOutcome.kind === "completed") snapshot = snapshotOutcome.value;
+          }
+          if (snapshot !== undefined) {
+            after = CrewWorkspaceSnapshotSchema.parse(snapshot);
+            if (before !== undefined) changeViolations = workspaceChangeViolations(work, workspace, before, after);
+          }
         } catch {
           // Snapshot failure remains represented by the original error.
         }
       }
     } finally {
       if (resolution !== undefined) {
-        try {
-          await resolution.close();
-        } catch (error) {
+        await awaitCleanupGrace(resolution.close().catch((error) => {
           errorMessage ??= safeError(error);
-        }
+        }));
       }
       releaseCrewStream();
     }
