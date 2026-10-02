@@ -56,7 +56,8 @@
   },
   "devDependencies": {
     "@types/node": "26.2.0",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "yaml": "2.9.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
