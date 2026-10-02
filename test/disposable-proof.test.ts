@@ -10,6 +10,7 @@ import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js
 import {
   assertDerivativeIsOutside,
   candidateIdentityDifferences,
+  DerivativeCleanupError,
   DerivativeContainmentError,
   DerivativeEscapeError,
   requireProven,
@@ -305,6 +306,60 @@ test("failure case 5: a derivative that cannot be destroyed fails the proof clos
   assert.deepEqual(refused.candidateDifferences, []);
   assert.equal(refused.candidateAfter!.digest, before.digest);
   assert.equal(await readFile(join(root, "src/board.ts"), "utf8"), CANDIDATE_SOURCE);
+});
+
+test("a surviving derivative invalidates the proof on every uid and its residual is removed after inspection", async (t) => {
+  const root = await makeCandidate();
+  const reapRoot = await makeReapRoot();
+  let residualPath = "";
+  t.after(async () => {
+    if (residualPath) await rm(residualPath, { recursive: true, force: true });
+    await rm(reapRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const probe = new GitCandidateIdentityProbe();
+  const baseFactory = new TempDirectoryDerivativeFactory({ reapRoot });
+  const factory = {
+    id: "test:surviving-derivative",
+    create: (candidate: Parameters<typeof baseFactory.create>[0]) => baseFactory.create(candidate),
+    destroy: async (derivative: DisposableDerivative) => {
+      // Keep the real temporary derivative on disk. This deterministic factory
+      // seam exercises the same residual detection as a real removal failure,
+      // without depending on uid-sensitive directory permissions.
+      residualPath = dirname(derivative.root);
+      throw new DerivativeCleanupError("deliberately left derivative for the portable cleanup proof", residualPath);
+    },
+    sweepAbandoned: () => baseFactory.sweepAbandoned(),
+  };
+  const before = await probe.pin(root);
+
+  const receipt = await runDisposableProof<string>({
+    candidateRoot: root,
+    probe,
+    factory,
+    mutate: async (derivative) => {
+      await derivative.mutate("src/board.ts", CANARY_MUTATION, "RH-14 canary mutation");
+    },
+    proof: async (derivative) => readFile(derivative.resolve("src/board.ts"), "utf8"),
+  });
+
+  const refused = invalidated(receipt);
+  assert.deepEqual(refused.invalidations.map((item) => item.code), ["cleanup-failed"]);
+  assert.equal("result" in refused, false, "a surviving mutated copy cannot yield a proof result");
+  assert.throws(() => requireProven(receipt), /cleanup-failed/);
+  assert.equal(refused.derivative.destroyed, false);
+  assert.equal(refused.derivative.residualPath, residualPath);
+  assert.equal(existsSync(residualPath), true, "the residual is a real temporary directory");
+  assert.equal(await readFile(join(residualPath, "root/src/board.ts"), "utf8"), CANARY_MUTATION);
+  assert.deepEqual(refused.candidateDifferences, []);
+  assert.equal(refused.candidateAfter!.digest, before.digest);
+  assert.equal(await readFile(join(root, "src/board.ts"), "utf8"), CANDIDATE_SOURCE);
+
+  // The deliberate leak is evidence only for this test. Remove it after
+  // inspecting the receipt and verify the actual derivative is gone.
+  await rm(residualPath, { recursive: true, force: true });
+  assert.equal(existsSync(residualPath), false);
 });
 
 test("failure case 6: a candidate that changes mid-proof invalidates the receipt instead of reporting it", async (t) => {

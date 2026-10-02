@@ -220,6 +220,82 @@ test("benchmark comparison requires same case and base with distinct variants", 
   assert.equal(comparison.metrics.reasoningTokens?.delta, -15);
 });
 
+test("comparison checks supplied runtime controls even for a single attempt", () => {
+  const baseline = BenchmarkRunSchema.parse(run({ variantId: "baseline" }));
+  const observed = {
+    attemptId: "attempt:1",
+    workerProviderId: "worker:a",
+    model: "fake-model",
+    effortLevel: "medium",
+  };
+  for (const controls of [
+    [{ ...observed, workerProviderId: "worker:b" }],
+    [{ ...observed, model: "different-model" }],
+    [{ ...observed, effortLevel: "high" }],
+    [{ ...observed, model: undefined }],
+    [{ ...observed, attemptId: "attempt:unrelated" }],
+    [],
+    [observed, observed],
+  ]) {
+    const candidate = BenchmarkRunSchema.parse(run({
+      variantId: "candidate",
+      attemptRuntimeControls: controls,
+    }));
+    assert.throws(
+      () => compareBenchmarkRuns(baseline, candidate),
+      /consistent observed runtime controls/,
+      JSON.stringify(controls),
+    );
+  }
+  const candidate = BenchmarkRunSchema.parse(run({
+    variantId: "candidate",
+    attemptRuntimeControls: [observed],
+  }));
+  assert.equal(compareBenchmarkRuns(baseline, candidate).comparable, true);
+});
+
+test("comparison refuses runtime controls attributed to an unexecuted attempt", () => {
+  const baseline = BenchmarkRunSchema.parse(run({ variantId: "baseline" }));
+  const candidate = BenchmarkRunSchema.parse(run({
+    variantId: "candidate",
+    outcome: "failed",
+    verified: false,
+    attemptIds: [],
+    attemptRuntimeControls: [{
+      attemptId: "attempt:unexecuted",
+      workerProviderId: "worker:a",
+      model: "fake-model",
+      effortLevel: "medium",
+    }],
+  }));
+  assert.throws(
+    () => compareBenchmarkRuns(baseline, candidate),
+    /consistent observed runtime controls/,
+  );
+  assert.equal(compareBenchmarkRuns(baseline, {
+    ...candidate,
+    attemptRuntimeControls: [],
+  }).comparable, true);
+});
+
+test("comparison requires a one-to-one set of execution and observed attempt identities", () => {
+  const baseline = BenchmarkRunSchema.parse(run({ variantId: "baseline" }));
+  const candidate = BenchmarkRunSchema.parse(run({
+    variantId: "candidate",
+    attemptIds: ["attempt:1", "attempt:1"],
+    attemptRuntimeControls: ["attempt:1", "attempt:unrelated"].map((attemptId) => ({
+      attemptId,
+      workerProviderId: "worker:a",
+      model: "fake-model",
+      effortLevel: "medium",
+    })),
+  }));
+  assert.throws(
+    () => compareBenchmarkRuns(baseline, candidate),
+    /consistent observed runtime controls/,
+  );
+});
+
 test("comparison rejects mixed or missing runtime controls across repairs", () => {
   const baseline = BenchmarkRunSchema.parse(run({
     variantId: "baseline",

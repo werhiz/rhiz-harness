@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { acceptanceReadiness, emptyBoard, executionActorIds, projectEvent } from "./board.js";
 import type { EventLedger } from "./ledger.js";
 import type { HarnessEvent, WorkContract } from "./schemas.js";
 import { z } from "zod";
@@ -270,23 +271,6 @@ export class RouterPolicyDeniedError extends RouterError {
   }
 }
 
-const ATTEMPT_KEY_TYPES = new Set([
-  "attempt.started",
-  "attempt.activity-observed",
-  "attempt.blocked",
-  "attempt.finished",
-  "attempt.failed",
-]);
-const VERIFICATION_KEY_TYPES = new Set([
-  "verification.started",
-  "verification.result",
-]);
-const REVIEW_KEY_TYPES = new Set([
-  "review.started",
-  "review.finding",
-  "review.result",
-]);
-
 interface WorkerOutcomeBucket {
   attempts: number;
   successes: number;
@@ -324,63 +308,16 @@ function safePercentile(values: readonly number[], percentile: number): number |
   return sorted[rank]!;
 }
 
-function detectEventWorkerId(event: HarnessEvent): string | null {
-  switch (event.type) {
-    case "task.assigned":
-      return event.payload.worker.id;
-    case "attempt.started":
-      return event.payload.worker.id;
-    case "attempt.activity-observed":
-    case "attempt.blocked":
-    case "attempt.finished":
-    case "attempt.failed":
-      return event.actor.id;
-    case "verification.started":
-    case "verification.result":
-    case "review.started":
-    case "review.finding":
-    case "review.result":
-      return event.actor.id;
-    default:
-      return null;
-  }
+function elapsedMs(startedAt: string, endedAt: string): number | null {
+  const elapsed = Date.parse(endedAt) - Date.parse(startedAt);
+  // Source clocks can disagree; ingestion delay is never execution duration.
+  return Number.isSafeInteger(elapsed) && elapsed >= 0 ? elapsed : null;
 }
 
-function detectEventDurationMs(event: HarnessEvent): number | null {
-  if (!event.occurredAt || !event.recordedAt) return null;
-  const occurred = Date.parse(event.occurredAt);
-  const recorded = Date.parse(event.recordedAt);
-  if (Number.isNaN(occurred) || Number.isNaN(recorded)) return null;
-  const diff = recorded - occurred;
-  return diff >= 0 ? diff : null;
-}
-
-function applyEventToBucket(bucket: WorkerOutcomeBucket, event: HarnessEvent): void {
-  if (event.type === "attempt.started") bucket.attempts += 1;
-  if (bucket.lastSeenAt === null || event.occurredAt > bucket.lastSeenAt) {
-    bucket.lastSeenAt = event.occurredAt;
+function observeTime(bucket: WorkerOutcomeBucket, occurredAt: string): void {
+  if (bucket.lastSeenAt === null || Date.parse(occurredAt) > Date.parse(bucket.lastSeenAt)) {
+    bucket.lastSeenAt = occurredAt;
   }
-  if (event.type === "attempt.finished") {
-    bucket.successes += 1;
-    const duration = detectEventDurationMs(event);
-    if (duration !== null) bucket.durations.push(duration);
-  } else if (event.type === "attempt.failed") {
-    bucket.failures += 1;
-    const duration = detectEventDurationMs(event);
-    if (duration !== null) bucket.durations.push(duration);
-  } else if (event.type === "verification.result") {
-    bucket.confidenceSignals.push(event.payload.status === "pass" ? 1 : 0);
-  } else if (event.type === "review.result") {
-    bucket.confidenceSignals.push(event.payload.status === "pass" ? 1 : 0);
-  }
-}
-
-function isCountedType(event: HarnessEvent): boolean {
-  return (
-    ATTEMPT_KEY_TYPES.has(event.type)
-    || VERIFICATION_KEY_TYPES.has(event.type)
-    || REVIEW_KEY_TYPES.has(event.type)
-  );
 }
 
 function evidenceFromBucket(workerId: string, bucket: WorkerOutcomeBucket): RouterEvidence {
@@ -396,7 +333,7 @@ function evidenceFromBucket(workerId: string, bucket: WorkerOutcomeBucket): Rout
     successRate,
     medianCostUsd: bucket.costs.length === 0 ? null : safeMedian(bucket.costs),
     p95CostUsd: bucket.costs.length === 0 ? null : safePercentile(bucket.costs, 0.95),
-    medianDurationMs: bucket.durations.length === 0 ? null : safeMedian(bucket.durations),
+    medianDurationMs: bucket.durations.length === 0 ? null : Math.round(safeMedian(bucket.durations)!),
     p95DurationMs: bucket.durations.length === 0 ? null : safePercentile(bucket.durations, 0.95),
     confidence,
     lastSeenAt: bucket.lastSeenAt,
@@ -409,10 +346,11 @@ async function collectEvents(
   maxEventsPerStream: number,
 ): Promise<HarnessEvent[]> {
   const collected: HarnessEvent[] = [];
-  for (const streamId of streamIds) {
+  for (const streamId of new Set(streamIds)) {
     let count = 0;
     for await (const event of ledger.read(streamId)) {
-      if (!isCountedType(event)) continue;
+      // Board needs the contract, authorship and lifecycle context as well as
+      // outcome events. A bounded prefix may be unresolved, never assumed done.
       collected.push(event);
       count += 1;
       if (count >= maxEventsPerStream) break;
@@ -427,13 +365,98 @@ function deriveEvidenceFromEvents(
 ): readonly RouterEvidence[] {
   const buckets = new Map<string, WorkerOutcomeBucket>();
   const allowed = workerIds === undefined ? null : new Set(workerIds);
+  const works = new Map<string, {
+    events: HarnessEvent[];
+    streamIds: Set<string>;
+    eventBodies: Map<string, string>;
+    conflictingEventIds: Set<string>;
+  }>();
   for (const event of events) {
-    const workerId = detectEventWorkerId(event);
-    if (workerId === null) continue;
-    if (allowed !== null && !allowed.has(workerId)) continue;
-    const bucket = buckets.get(workerId) ?? emptyBucket();
-    applyEventToBucket(bucket, event);
-    buckets.set(workerId, bucket);
+    const work = works.get(event.workId) ?? {
+      events: [],
+      streamIds: new Set<string>(),
+      eventBodies: new Map<string, string>(),
+      conflictingEventIds: new Set<string>(),
+    };
+    work.streamIds.add(event.streamId);
+    const body = JSON.stringify(event);
+    const previousBody = work.eventBodies.get(event.id);
+    if (previousBody === undefined) {
+      work.eventBodies.set(event.id, body);
+      work.events.push(event);
+    } else if (previousBody !== body) {
+      work.conflictingEventIds.add(event.id);
+    }
+    works.set(event.workId, work);
+  }
+
+  for (const work of works.values()) {
+    // Work has one canonical event stream. If callers supply multiple streams
+    // for the same Work, their histories may be partial or conflicting; do
+    // not stitch them together or let duplicate stream views earn credit.
+    if (work.streamIds.size !== 1 || work.conflictingEventIds.size > 0) continue;
+    let board = emptyBoard();
+    const admitted: HarnessEvent[] = [];
+    for (const event of work.events) {
+      const next = projectEvent(board, event);
+      if (next.violations.length === board.violations.length) admitted.push(event);
+      board = next;
+    }
+
+    // Board alone decides acceptance. Learning additionally requires actual
+    // independent verification, even if a Work policy permits self-checks or
+    // acceptance without verification.
+    const readiness = acceptanceReadiness(board);
+    const proof = board.verifications.find((item) => item.eventId === readiness.verificationEventId);
+    const executors = executionActorIds(board);
+    const independentlyAccepted = board.state === "accepted"
+      && readiness.ready
+      && proof !== undefined
+      && proof.contractRevision === board.contractRevision
+      && proof.status === "pass"
+      && !executors.has(proof.actor.id);
+    const latestByTask = new Map<string, string>();
+    for (const event of admitted) {
+      if (event.type === "attempt.started" && event.taskId && event.attemptId) {
+        latestByTask.set(event.taskId, event.attemptId);
+      }
+    }
+    const headCheckpoint = board.integration?.headProof
+      ? board.integration.checkpoints[board.integration.headProof.checkpointId]
+      : undefined;
+
+    for (const attempt of Object.values(board.attempts)) {
+      const timeline = admitted.filter((event) => event.attemptId === attempt.id && event.taskId === attempt.taskId);
+      const start = timeline.find((event) => event.type === "attempt.started");
+      if (!start) continue;
+      const terminal = timeline.find((event) => event.type === "attempt.finished" || event.type === "attempt.failed");
+      const isCurrent = attempt.contractRevision === board.contractRevision
+        && latestByTask.get(attempt.taskId) === attempt.id;
+      const success = independentlyAccepted && isCurrent && attempt.state === "finished"
+        && (headCheckpoint === undefined || headCheckpoint.attemptId === attempt.id);
+      const failure = attempt.state === "failed"
+        || (board.state === "rejected" && isCurrent && attempt.state === "finished");
+      const duration = terminal ? elapsedMs(start.occurredAt, terminal.occurredAt) : null;
+
+      // A handed-off Attempt is shared evidence for its unique executors. It
+      // cannot establish isolated causal performance for any one participant.
+      for (const workerId of new Set(attempt.executionProvenance.map((actor) => actor.id))) {
+        if (allowed !== null && !allowed.has(workerId)) continue;
+        const bucket = buckets.get(workerId) ?? emptyBucket();
+        bucket.attempts += 1;
+        if (success) bucket.successes += 1;
+        if (failure) bucket.failures += 1;
+        if (success || failure) bucket.confidenceSignals.push(success ? 1 : 0);
+        if (duration !== null) bucket.durations.push(duration);
+        for (const event of timeline) observeTime(bucket, event.occurredAt);
+        if (success || failure) {
+          for (const event of admitted) {
+            if (event.type === "work.accepted" || event.type === "work.rejected") observeTime(bucket, event.occurredAt);
+          }
+        }
+        buckets.set(workerId, bucket);
+      }
+    }
   }
   return [...buckets.entries()]
     .map(([workerId, bucket]) => evidenceFromBucket(workerId, bucket))

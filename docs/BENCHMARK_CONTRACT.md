@@ -50,6 +50,15 @@ At minimum support:
 
 Comparisons should measure the system, not merely one lucky run. Repeated trials are required for statistical claims.
 
+## Competitive experiments
+
+The [Competitive Benchmark Program](COMPETITIVE_BENCHMARKS.md) applies this
+contract to named external systems. It records source-backed capabilities as
+experiment proposals, not as reproduced Rhiz results or claims of superiority.
+Use controlled harness experiments when runtime controls can be matched; use
+product outcome experiments when they cannot, and disclose the differences.
+No live paid benchmark results are currently claimed.
+
 ## Supporting metrics
 
 Record when available:
