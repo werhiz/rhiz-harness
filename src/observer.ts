@@ -243,6 +243,16 @@ export function benchmarkRunIdentity(run: BenchmarkRun): string {
   return canonicalJson(run);
 }
 
+/** Code-point order. Never locale-aware, so output is identical on every machine. */
+export function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Chronological order by parsed instant, so offsets such as +05:00 sort correctly; ties by id. */
+function compareInstants(a: string, b: string): number {
+  return Date.parse(a) - Date.parse(b);
+}
+
 function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
 }
@@ -356,9 +366,9 @@ function cohortsOf(runs: readonly BenchmarkRun[], taskClasses: Map<string, strin
     });
   }
   return cohorts.sort((a, b) =>
-    a.taskClass.localeCompare(b.taskClass) ||
-    (a.workerProviderId ?? "").localeCompare(b.workerProviderId ?? "") ||
-    (a.model ?? "").localeCompare(b.model ?? ""));
+    compareText(a.taskClass, b.taskClass) ||
+    compareText(a.workerProviderId ?? "", b.workerProviderId ?? "") ||
+    compareText(a.model ?? "", b.model ?? ""));
 }
 
 function wasteOf(events: readonly HarnessEvent[], runs: readonly BenchmarkRun[]): Waste {
@@ -367,7 +377,12 @@ function wasteOf(events: readonly HarnessEvent[], runs: readonly BenchmarkRun[])
   const verifiedWorks = new Set<string>();
   const decidedWorks = new Set<string>();
   for (const event of events) {
-    if (event.type === "verification.result" && event.payload.status === "pass") verifiedWorks.add(event.workId);
+    // Events arrive in chronological order, so the last result seen is the
+    // Work's current verification state; a later failure clears an earlier pass.
+    if (event.type === "verification.result") {
+      if (event.payload.status === "pass") verifiedWorks.add(event.workId);
+      else verifiedWorks.delete(event.workId);
+    }
     if (event.type === "work.accepted" || event.type === "work.rejected" || event.type === "work.cancelled") {
       decidedWorks.add(event.workId);
     }
@@ -462,7 +477,7 @@ function cohortGapFindings(cohorts: readonly Cohort[], config: ObserverConfig): 
     const ranked = [...list].sort((a, b) =>
       (b.verifiedCompletionRate! - a.verifiedCompletionRate!) ||
       ((a.interventionsPerVerifiedOutcome ?? Infinity) - (b.interventionsPerVerifiedOutcome ?? Infinity)) ||
-      cohortName(a).localeCompare(cohortName(b)));
+      compareText(cohortName(a), cohortName(b)));
     const best = ranked[0]!;
     const worst = ranked.at(-1)!;
     const gap = best.verifiedCompletionRate! - worst.verifiedCompletionRate!;
@@ -531,7 +546,7 @@ function quietCriterionFindings(events: readonly HarnessEvent[], runs: readonly 
     }
   }
   const findings: ObserverFinding[] = [];
-  for (const [criterionId, entry] of [...stats].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [criterionId, entry] of [...stats].sort(([a], [b]) => compareText(a, b))) {
     // A criterion with an executed negative control has shown it can fail.
     // Silence from it is a passing system, not an inert check.
     if (entry.failures > 0 || entry.proven) continue;
@@ -569,7 +584,7 @@ function repeatedContextFindings(events: readonly HarnessEvent[], runs: readonly
     }
   }
   const findings: ObserverFinding[] = [];
-  for (const [marker, entry] of [...markers].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [marker, entry] of [...markers].sort(([a], [b]) => compareText(a, b))) {
     if (entry.works.size < config.minimumRepeatedContextWorks) continue;
     const caseIds = caseIdsForWorks(runs, entry.works);
     findings.push(finding({
@@ -630,7 +645,7 @@ function recurringReviewFindings(events: readonly HarnessEvent[], runs: readonly
     groups.set(key, entry);
   }
   const findings: ObserverFinding[] = [];
-  for (const [key, entry] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [key, entry] of [...groups].sort(([a], [b]) => compareText(a, b))) {
     if (entry.works.size < config.minimumRecurringFindingWorks) continue;
     findings.push(finding({
       kind: "recurring-review-finding",
@@ -665,7 +680,7 @@ function interventionHotspotFindings(runs: readonly BenchmarkRun[], config: Obse
     }
   });
   const findings: ObserverFinding[] = [];
-  for (const [kind, entry] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [kind, entry] of [...groups].sort(([a], [b]) => compareText(a, b))) {
     if (entry.runs.size < config.minimumInterventionHotspotRuns) continue;
     findings.push(finding({
       kind: "intervention-hotspot",
@@ -696,7 +711,7 @@ function capabilityFindings(runs: readonly BenchmarkRun[], config: ObserverConfi
     groups.set(digest, entry);
   }
   const findings: ObserverFinding[] = [];
-  for (const [digest, entry] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [digest, entry] of [...groups].sort(([a], [b]) => compareText(a, b))) {
     if (entry.verifiedCases.size < config.minimumCapabilityVerifiedCases) continue;
     const allCases = sortedUnique([...entry.verifiedCases, ...entry.failedCases]);
     findings.push(finding({
@@ -744,7 +759,7 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
   }
   const duplicateEventsIgnored = (input.events?.length ?? 0) - uniqueEvents.size;
   const events = [...uniqueEvents.values()].sort((a, b) =>
-    a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
+    compareInstants(a.occurredAt, b.occurredAt) || compareText(a.id, b.id));
   // A run is an execution, named by its attempts. The same receipt read twice
   // is one run. Two different receipts claiming one attempt is conflicting
   // evidence and fails closed; otherwise a copied receipt with one field
@@ -766,11 +781,11 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
   }
   const duplicateRunsIgnored = (input.runs?.length ?? 0) - uniqueRuns.size;
   const runs = [...uniqueRuns.values()].sort((a, b) =>
-    a.benchmarkCaseId.localeCompare(b.benchmarkCaseId) ||
-    (a.variantId ?? "").localeCompare(b.variantId ?? "") ||
-    a.startedAt.localeCompare(b.startedAt) ||
-    (a.workId ?? "").localeCompare(b.workId ?? "") ||
-    a.attemptIds.join(",").localeCompare(b.attemptIds.join(",")));
+    compareText(a.benchmarkCaseId, b.benchmarkCaseId) ||
+    compareText(a.variantId ?? "", b.variantId ?? "") ||
+    compareInstants(a.startedAt, b.startedAt) ||
+    compareText(a.workId ?? "", b.workId ?? "") ||
+    compareText(a.attemptIds.join(","), b.attemptIds.join(",")));
 
   const taskClasses = taskClassByWork(events);
   const cohorts = cohortsOf(runs, taskClasses);

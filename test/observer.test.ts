@@ -384,3 +384,45 @@ test("one execution copied with a field changed fails closed instead of counting
   assert.throws(() => observeFactory({ runs: [solo, copy] }), /claim attempt solo/);
   assert.equal(observeFactory({ runs: [solo, solo] }).window.duplicateRunsIgnored, 1);
 });
+
+test("the observation is identical under every locale", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const script = `
+    import { observeFactory } from "./dist/src/observer.js";
+    import { benchRun } from "./dist/test/helpers.js";
+    const runs = [];
+    for (const [worker, verified] of [["worker:åa", true], ["worker:ab", true], ["worker:zz", false]]) {
+      for (let i = 0; i < 3; i += 1) runs.push(benchRun({ benchmarkCaseId: worker + ":" + i, workId: worker + ":w" + i, workerProviderId: worker, verified }));
+    }
+    process.stdout.write(JSON.stringify(observeFactory({ runs })));
+  `;
+  const outputs = ["en_US.UTF-8", "sv_SE.UTF-8"].map((locale) => {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: locale, LANG: locale },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  });
+  assert.equal(outputs[0], outputs[1]);
+  const finding = JSON.parse(outputs[0]!).findings.find((item: { kind: string }) => item.kind === "cohort-gap");
+  assert.match(finding.title, /^worker:ab /);
+});
+
+test("the observation window is chronological across timestamp offsets", () => {
+  const early = event("attempt.failed", { reason: "a", recoverable: true }, { taskId: "t", attemptId: "a", occurredAt: "2026-01-01T10:00:00+05:00" });
+  const late = event("attempt.failed", { reason: "b", recoverable: true }, { taskId: "t", attemptId: "b", occurredAt: "2026-01-01T06:00:00Z" });
+  const observation = observeFactory({ events: [late, early] });
+  assert.equal(observation.window.firstOccurredAt, "2026-01-01T10:00:00+05:00");
+  assert.equal(observation.window.lastOccurredAt, "2026-01-01T06:00:00Z");
+});
+
+test("a Work whose latest verification failed is not counted as verified and awaiting a decision", () => {
+  const pass = verification("work:1", { "criterion:tests": "pass" });
+  const fail = verification("work:1", { "criterion:tests": "fail" });
+  const events = [
+    { ...pass, occurredAt: "2026-01-01T00:00:00.000Z" },
+    { ...fail, occurredAt: "2026-01-02T00:00:00.000Z" },
+  ];
+  assert.equal(observeFactory({ events }).waste.verifiedButUndecidedWorks, 0);
+});

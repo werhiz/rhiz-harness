@@ -126,7 +126,9 @@ test("observe leaves no lock, snapshot directory, or other file behind in the Le
     rmSync(join(ledgerDir, "snapshots"), { recursive: true, force: true });
     const before = readdirSync(ledgerDir).sort();
     const result = factory(["observe", "--ledger", ledgerDir]);
-    assert.equal(result.status, 0, result.stderr);
+    // An empty Ledger is refused, and refusing it still writes nothing.
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /holds no events/);
     assert.deepEqual(readdirSync(ledgerDir).sort(), before);
   } finally {
     rmSync(root, { recursive: true, force: true });

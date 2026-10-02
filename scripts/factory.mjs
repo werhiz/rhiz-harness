@@ -74,6 +74,7 @@ async function readLedger(directory) {
     try {
       const events = [];
       for await (const record of ledger.records()) events.push(record.event);
+      if (events.length === 0) throw new UsageError(`Ledger at ${resolve(directory)} holds no events`);
       return events;
     } finally {
       await ledger.close();
