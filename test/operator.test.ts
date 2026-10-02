@@ -201,7 +201,11 @@ test("a failing independent review after a passing one blocks acceptance and wri
 
 test("a failing review blocks acceptance even when the contract does not require review", async () => {
   const ledger = await ledgerWith(verifiedWork());
-  await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "fail", summary: "wrong file", now, idFactory });
+  const status = await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "fail", summary: "wrong file", now, idFactory });
+  // State and acceptance readiness must agree: a refused Work never reads ready.
+  assert.equal(status.state, "reviewing");
+  assert.equal(status.readiness.ready, false);
+  assert.equal(status.nextAction, "review");
   await assert.rejects(
     acceptOperatorWork({ ledger, streamId: STREAM, actor: human, reason: "ok", now, idFactory }),
     /review of the current contract revision failed/,

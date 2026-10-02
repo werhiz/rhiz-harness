@@ -188,7 +188,7 @@ function nextActionFor(
   }
   if (ready) return { nextAction: "accept", nextActionReason: "independently verified and ready for acceptance" };
   if (reasons.some((reason) => reason.includes("latest independent review") && reason.includes("failed"))) {
-    return { nextAction: "review", nextActionReason: "the latest independent review failed; repair the Work or obtain a passing independent review" };
+    return { nextAction: "review", nextActionReason: "the latest independent review failed; obtain a passing independent review, or amend or reject the Work" };
   }
   const reviewMissing = reasons.some((reason) => reason.includes("independent passing review"));
   if (reviewMissing) return { nextAction: "review", nextActionReason: "verified, waiting on an independent review" };

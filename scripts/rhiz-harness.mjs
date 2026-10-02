@@ -101,28 +101,37 @@ async function reviewerSpend(repo, workId) {
   let names = [];
   try { names = await readdir(directory); } catch (error) { if (error?.code !== "ENOENT") throw error; }
   let total = 0;
+  const unreadable = [];
   for (const name of names.filter((item) => item.endsWith(".json"))) {
-    const record = await readJson(join(directory, name));
-    if (typeof record.costUsd === "number") total += record.costUsd;
+    try {
+      const record = await readJson(join(directory, name));
+      if (typeof record.costUsd === "number") total += record.costUsd;
+    } catch (error) {
+      // One bad receipt must not hide every Work; it is reported, not counted.
+      unreadable.push({ path: join(directory, name), error: error instanceof Error ? error.message : String(error) });
+    }
   }
-  return total;
+  return { total, unreadable };
 }
 
 async function loadWorks(repo) {
   const { ledgers, unreadable } = await readRepositoryWorkLedgers(repo.commonDir);
   const works = [];
+  const unreadableReceipts = [];
   for (const ledger of ledgers) {
     for (const workId of ledger.workIds) {
       const events = ledger.events.filter((event) => event.workId === workId && event.streamId === streamIdForWork(workId));
       if (events.length === 0) continue;
       const status = summarizeOperatorWork(events);
-      const reviewerCostUsd = await reviewerSpend(repo, workId);
+      const spend = await reviewerSpend(repo, workId);
+      const reviewerCostUsd = spend.total;
+      unreadableReceipts.push(...spend.unreadable);
       const lastEventAt = events.reduce((latest, event) => (event.occurredAt > latest ? event.occurredAt : latest), "");
       works.push({ status, reviewerCostUsd, ledgerDirectory: ledger.directory, lastEventAt });
     }
   }
   works.sort((left, right) => right.lastEventAt.localeCompare(left.lastEventAt));
-  return { works, unreadable };
+  return { works, unreadable, unreadableReceipts };
 }
 
 function pickWork(works, query, wanted) {
@@ -258,7 +267,7 @@ async function resume(repo, query, values) {
 }
 
 async function status(repo, query, values) {
-  const { works, unreadable } = await loadWorks(repo);
+  const { works, unreadable, unreadableReceipts } = await loadWorks(repo);
   const selected = query === undefined ? works : [pickWork(works, query)];
   const digest = {
     ...summarizeOperatorWorks(selected.map((item) => item.status)),
@@ -270,8 +279,9 @@ async function status(repo, query, values) {
       digest,
       works: selected.map((item) => ({ ...item.status, reviewerCostUsd: item.reviewerCostUsd })),
       unreadable,
+      unreadableReviewReceipts: unreadableReceipts,
     }, null, 2)}\n`);
-    return unreadable.length > 0 ? 2 : 0;
+    return unreadable.length + unreadableReceipts.length > 0 ? 2 : 0;
   }
   if (selected.length === 0) process.stdout.write("no Work in this repository yet\n");
   for (const item of selected) printStatus(item.status, item.reviewerCostUsd);
@@ -284,7 +294,8 @@ async function status(repo, query, values) {
     `  reviewer spend ${money(digest.reviewerCostUsd)}\n`,
   );
   for (const item of unreadable) process.stdout.write(`UNREADABLE Ledger ${item.directory}: ${item.error}\n`);
-  return unreadable.length > 0 ? 2 : 0;
+  for (const item of unreadableReceipts) process.stdout.write(`UNREADABLE review receipt ${item.path}: ${item.error}\n`);
+  return unreadable.length + unreadableReceipts.length > 0 ? 2 : 0;
 }
 
 // The Ledger the Work was discovered in is the one written to. A receipt is

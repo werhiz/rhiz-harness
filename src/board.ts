@@ -719,6 +719,9 @@ function deriveState(board: BoardProjection): WorkState {
   if (board.activeVerification?.contractRevision === board.contractRevision) return "verifying";
 
   const latestReview = latestIndependentReview(board);
+  // A failed independent review speaks for the revision whether or not one
+  // was required. Acceptance refuses it, so the state must not read done.
+  if (latestReview?.status === "fail") return "reviewing";
   if (board.contract?.verificationPolicy.reviewRequired && latestReview !== undefined) {
     if (latestReview.status === "pass") {
       if (authorshipUnproven(board) !== null) return "unverifiable";
