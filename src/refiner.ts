@@ -248,6 +248,30 @@ export async function analyzeClosedWork(
   return analyzeClosedWorkFromEvents(workId, events, config);
 }
 
+/**
+ * Human decisions a run asked for beyond the two judgment calls every Work
+ * needs: stating it and accepting it. Counted by event type, not by actor,
+ * because supervisors legitimately record routine lifecycle events (task
+ * creation, assignment) under the creating human's ActorRef; those are
+ * automation acting for the person, not the person acting.
+ */
+export const HUMAN_INTERVENTION_EVENT_TYPES = Object.freeze([
+  "work.amended",
+  "decision.resolved",
+  "authority.granted",
+  "authority.denied",
+  "review.started",
+  "work.parked",
+  "work.released",
+  "work.cancelled",
+  "work.rejected",
+] as const);
+
+export function countHumanInterventions(events: readonly HarnessEvent[]): number {
+  const types: readonly string[] = HUMAN_INTERVENTION_EVENT_TYPES;
+  return events.filter((event) => event.actor.kind === "human" && types.includes(event.type)).length;
+}
+
 export function streamIdForWork(workId: string): string {
   const direct = `stream:${workId}`;
   if (direct.length <= 200) return direct;
@@ -277,7 +301,17 @@ export function analyzeClosedWorkFromEvents(
 
   const classifications: (FailureTaxonomy | SuccessTaxonomy)[] = [];
   if (outcome === "accepted") {
-    classifications.push("high-quality-first-attempt");
+    // Acceptance after a failed attempt or a failed verification is a
+    // recovery, not a first-attempt success. Calling every accepted Work
+    // first-attempt quality would teach the Harness its repair loop never ran.
+    const attemptCount = new Set(
+      workEvents.filter((event) => event.type === "attempt.started").map((event) => event.attemptId),
+    ).size;
+    const recovered = attemptCount > 1
+      || workEvents.some((event) => event.type === "attempt.failed")
+      || workEvents.some((event) => event.type === "verification.result" && event.payload.status === "fail");
+    classifications.push(recovered ? "successful-recovery" : "high-quality-first-attempt");
+    if (countHumanInterventions(workEvents) === 0) classifications.push("zero-human-intervention");
   } else {
     if (workEvents.some((event) => event.type === "attempt.failed")) {
       classifications.push("runtime-failure");
@@ -308,6 +342,9 @@ export function analyzeClosedWorkFromEvents(
   }
   if (classifications.includes("runtime-failure")) {
     candidateProposalKinds.push("worker-profile", "recovery-behavior");
+  }
+  if (classifications.includes("successful-recovery")) {
+    candidateProposalKinds.push("recovery-behavior");
   }
   if (classifications.includes("low-context-success") || classifications.includes("strong-context-selection")) {
     candidateProposalKinds.push("context-strategy");

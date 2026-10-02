@@ -17,8 +17,11 @@ import {
   preserveCandidateRemotely,
 } from "../dist/adapters/git/index.js";
 import { DurableEventLedger } from "../dist/adapters/local/durable-ledger.js";
+import { readRepositoryWorkEvents } from "../dist/adapters/local/work-ledgers.js";
 import { LocalCommandVerifierProvider } from "../dist/adapters/local/command-verifier.js";
 import { projectBoard } from "../dist/src/board.js";
+import { closeOrphanedAttempts } from "../dist/src/operator.js";
+import { streamIdForWork } from "../dist/src/refiner.js";
 import { ContextBridge } from "../dist/src/context-bridge.js";
 import { CrewSupervisor, parseCrewPlan } from "../dist/src/crew.js";
 import {
@@ -52,7 +55,12 @@ function git(cwd, args) {
 function usage() {
   return [
     "Usage:",
-    "  npm run work:repository -- --repo <path> --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>] [--ledger <dir>] [--output <receipt.json>] [--benchmark-case <id>] [--benchmark-variant <id>]",
+    "  npm run work:repository -- --repo <path> --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>] [--ledger <dir>] [--output <receipt.json>] [--resume true] [--benchmark-case <id>] [--benchmark-variant <id>]",
+    "",
+    "--resume true continues the same Work in its existing Ledger: an attempt",
+    "whose process ended without a terminal event is closed as a recoverable",
+    "failure, and the remaining attempt budget is spent. Terminal or verified",
+    "Work is refused; there is nothing left to execute.",
     "",
     "The durable event Ledger is preserved under the repository's Git metadata",
     "by default. --ledger supplies an explicit base directory; benchmark runs",
@@ -312,7 +320,23 @@ for (const provider of workers.list()) {
     }),
   );
 }
-const router = new RouterBridge({ registry: routerRegistry, ledger });
+// Accepted outcomes from this repository's other Work are what the Router
+// learns from. Each Work owns its own Ledger, so without this source the
+// Router would only ever see the stream it is about to create.
+const routerEvidenceSources = { works: 0, unreadable: [] };
+const router = new RouterBridge({
+  registry: routerRegistry,
+  ledger,
+  evidenceEvents: async () => {
+    const prior = await readRepositoryWorkEvents(gitCommonDir, { excludeDirectories: [ledgerRoot] });
+    routerEvidenceSources.works = new Set(prior.events.map((event) => event.workId)).size;
+    routerEvidenceSources.unreadable = prior.unreadable;
+    for (const item of prior.unreadable) {
+      process.stderr.write(`router evidence: Ledger ${item.directory} is unreadable and was not counted: ${item.error}\n`);
+    }
+    return prior.events;
+  },
+});
 
 const contextFiles = {};
 for (const resource of work.context.resources) {
@@ -451,9 +475,39 @@ let priorAttemptEvidence = [];
 let mission;
 let workspace;
 
+// Resume continues the Work this Ledger already holds. The Ledger, not this
+// process, says how many attempts were spent and whether any is still open.
+const resuming = args.resume === "true";
+if (args.resume !== undefined && args.resume !== "true") throw new Error("--resume accepts only true");
+if (resuming && benchmarkCaseId !== null) throw new Error("--resume cannot be combined with a benchmark run");
+let firstAttemptNumber = 1;
+let closedOrphanedAttemptIds = [];
+if (resuming) {
+  const streamId = streamIdForWork(work.id);
+  const existing = projectBoard(await ledger.replay(streamId));
+  if (!existing.contract) throw new Error(`--resume found no Work ${work.id} in ${ledgerRoot}`);
+  if (JSON.stringify(existing.contract) !== JSON.stringify(work)) {
+    throw new Error("--resume requires the exact contract the Work was opened with; amend the Work instead");
+  }
+  if (["accepted", "rejected", "cancelled"].includes(existing.state)) {
+    throw new Error(`Work ${work.id} is ${existing.state}; there is nothing to resume`);
+  }
+  if (existing.state === "ready" || existing.state === "reviewing") {
+    throw new Error(`Work ${work.id} is verified and ${existing.state}; review or accept it rather than resuming`);
+  }
+  closedOrphanedAttemptIds = await closeOrphanedAttempts({
+    ledger,
+    streamId,
+    actor: { id: "service:repository-runner-resume", kind: "service" },
+  });
+  const spent = Object.keys(projectBoard(await ledger.replay(streamId)).attempts).length;
+  if (spent >= attemptBudget) throw new Error(`Work ${work.id} has spent its attempt budget of ${attemptBudget}`);
+  firstAttemptNumber = spent + 1;
+}
+
 try {
   repositoryRun: {
-  for (let attemptNumber = 1; attemptNumber <= attemptBudget; attemptNumber += 1) {
+  for (let attemptNumber = firstAttemptNumber; attemptNumber <= attemptBudget; attemptNumber += 1) {
     run = await new CrewSupervisor({
       plan: parseCrewPlan({
         id: `crew:${work.id}:attempt-${attemptNumber}`.slice(0, 200),
@@ -469,7 +523,7 @@ try {
             // The Work is opened once, by the first attempt. Every later
             // attempt joins that same open Work rather than declaring a
             // second one.
-            continuesWork: attemptNumber > 1,
+            continuesWork: resuming || attemptNumber > 1,
             priorAttemptEvidence,
           },
         ],
@@ -721,7 +775,10 @@ try {
 
   const events = await ledger.replay(mission.streamId);
   persistedBoard = projectBoard(events);
-  assert.equal(persistedBoard.state, "ready");
+  // A verified candidate whose Work requires independent review waits in
+  // "reviewing" until a passing review is recorded; otherwise it is "ready".
+  const verifiedState = work.verificationPolicy.reviewRequired ? "reviewing" : "ready";
+  assert.equal(persistedBoard.state, verifiedState);
   assert.equal(persistedBoard.violations.length, 0);
 
   const sourceRefHead = git(repositoryRoot, ["rev-parse", candidateRef]);
@@ -735,7 +792,7 @@ try {
   });
   try {
     const replayed = projectBoard(await reopened.replay(mission.streamId));
-    assert.equal(replayed.state, "ready");
+    assert.equal(replayed.state, verifiedState);
     assert.equal(
       replayed.integration?.checkpoints[`checkpoint:${work.id}`]?.checkpoint.head,
       candidate.head,
@@ -763,6 +820,7 @@ try {
     // only the attempt that happened to pass.
     attempts,
     attemptBudget,
+    resume: resuming ? { firstAttemptNumber, closedOrphanedAttemptIds } : null,
     // Durable replay location. The default lives under Git metadata; an
     // explicit --ledger selects the base for isolated benchmark run directories.
     ledgerRoot,
@@ -776,6 +834,7 @@ try {
       // Refiner consumes closed Work. `ready` is explicitly not closed, so
       // this successful run has no outcome analysis until acceptance.
       refiner: null,
+      routerEvidence: routerEvidenceSources,
       refinerProposalEventIds: events
         .filter((event) => event.type === "refiner.proposed")
         .map((event) => event.id),

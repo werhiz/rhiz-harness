@@ -152,6 +152,21 @@ Routing cannot bypass Work authority or verification requirements.
 
 Evidence-to-learning proposal lifecycle. Refiner produces reviewable promotion candidates rather than silently changing permanent policy.
 
+### `operator`
+
+The operator loop over one Work stream, with no host dependency:
+
+- `summarizeOperatorWork` and `summarizeOperatorWorks` give status, next action, and metrics. The
+  metrics are attempts, repairs, recovery, estimated cost, and human interventions per accepted
+  outcome.
+- `recordOperatorReview` records an independent review.
+- `acceptOperatorWork` records a human Board acceptance, then runs Refiner analysis and derives Router
+  evidence.
+- `closeOrphanedAttempts` handles resume recovery.
+
+Every write is projected through the Board before it is appended, so a refused decision never reaches
+the Ledger.
+
 ### `integration`
 
 Work-level integration control, Attempt leases, parking/release behavior, and durable integration checkpoints.
@@ -211,6 +226,11 @@ Exports the local command verifier implementation for deterministic read-only co
 ### `/durable-ledger`
 
 Exports `DurableEventLedger`, the current local file-backed hash-chained Ledger.
+
+`readDurableLedgerEvents(directory)` reads a Ledger's committed events without taking the writer
+lock. It verifies the hash chain and never writes. `readRepositoryWorkLedgers(gitCommonDir)` (local
+adapter `work-ledgers`) discovers every repository Work Ledger and reports unreadable ones
+separately.
 
 Typical use:
 

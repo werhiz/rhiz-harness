@@ -36,18 +36,21 @@
     "proof:falsifiability": "node --test dist/test/proofs/*.test.js",
     "check:ci-parity": "node scripts/check-ci-parity.mjs",
     "benchmark:compare": "npm run build && node scripts/compare-benchmark-runs.mjs",
-    "check:ci-trigger-budget": "node scripts/check-ci-trigger-budget.mjs"
+    "check:ci-trigger-budget": "node scripts/check-ci-trigger-budget.mjs",
+    "operator": "npm run build && node scripts/rhiz-harness.mjs"
   },
   "files": [
     "dist/src",
     "dist/adapters",
     "scripts/run-repository-work.mjs",
+    "scripts/rhiz-harness.mjs",
     "README.md",
     "NOTICE",
     "THIRD_PARTY_NOTICES.md"
   ],
   "bin": {
-    "rhiz-harness-repository-work": "scripts/run-repository-work.mjs"
+    "rhiz-harness-repository-work": "scripts/run-repository-work.mjs",
+    "rhiz-harness": "scripts/rhiz-harness.mjs"
   },
   "dependencies": {
     "zod": "4.4.3"
@@ -116,6 +119,10 @@
     "./durable-ledger": {
       "types": "./dist/adapters/local/durable-ledger.d.ts",
       "import": "./dist/adapters/local/durable-ledger.js"
+    },
+    "./work-ledgers": {
+      "types": "./dist/adapters/local/work-ledgers.d.ts",
+      "import": "./dist/adapters/local/work-ledgers.js"
     }
   },
   "types": "./dist/src/index.d.ts"

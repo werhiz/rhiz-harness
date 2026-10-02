@@ -38,6 +38,7 @@ Authority order for any conflict:
 | [0022](0022-symlink-representation-in-disposable-derivatives.md) | Symlink representation in disposable derivatives | accepted |
 | [0023](0023-calibrated-integration-horizon.md) | The integration horizon is calibrated, enforced, and cannot forgive missing durability | proposed |
 | [0024](0024-review-convergence-allowance.md) | A change under open review may answer its review past the size horizon | proposed |
+| [0026](0026-operator-loop-and-acceptance-driven-learning.md) | The operator loop (start, status, resume, review, accept), and acceptance as the start of Router and Refiner learning | accepted |
 
 Lessons derived from real work live in `../lessons/`. Independent reviews and integration analyses
 live in `../reviews/`. Both record evidence. Either becomes authority only when an ADR, Rule, or

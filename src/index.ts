@@ -15,6 +15,7 @@ export * from "./host.js";
 export * from "./integration.js";
 export * from "./intent-compiler.js";
 export * from "./ledger.js";
+export * from "./operator.js";
 export * from "./refiner-bridge.js";
 export * from "./refiner.js";
 export * from "./router-bridge.js";

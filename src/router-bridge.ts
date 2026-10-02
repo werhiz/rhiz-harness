@@ -1,6 +1,7 @@
-import type { ActorRef } from "./schemas.js";
+import type { ActorRef, HarnessEvent } from "./schemas.js";
 import type { EventLedger } from "./ledger.js";
 import {
+  computeRouterEvidenceFromEvents,
   routeWorker,
   routerDecisionToEvent,
   type RouterDecision,
@@ -72,6 +73,7 @@ export class RouterBridge {
   readonly #policy: RouterPolicy | RouterPolicyInput | undefined;
   readonly #idFactory: () => string;
   readonly #now: () => Date;
+  readonly #evidenceEvents: (() => Promise<readonly HarnessEvent[]>) | undefined;
 
   constructor(options: RouterBridgeOptions) {
     this.#registry = options.registry;
@@ -79,6 +81,7 @@ export class RouterBridge {
     this.#policy = options.policy;
     this.#idFactory = options.idFactory ?? (() => globalThis.crypto.randomUUID());
     this.#now = options.now ?? (() => new Date());
+    this.#evidenceEvents = options.evidenceEvents;
   }
 
   /** The registry the bridge owns. Useful for tests and for adapter setup. */
@@ -99,12 +102,19 @@ export class RouterBridge {
     streamId: string;
     actor: ActorRef;
   }): Promise<RouterDecision> {
+    // Without an evidence source the Router reads only the streams it is
+    // named, and this bridge names none, so selection would never see a past
+    // outcome. Accepted history from other Work arrives through this seam.
+    const evidence = this.#evidenceEvents === undefined
+      ? undefined
+      : computeRouterEvidenceFromEvents(await this.#evidenceEvents());
     const decision = await routeWorker(
       this.#registry,
       this.#ledger,
       {
         contract: input.work,
         ...(this.#policy === undefined ? {} : { policy: this.#policy }),
+        ...(evidence === undefined ? {} : { evidence }),
       },
       this.#now,
     );
@@ -126,4 +136,10 @@ export interface RouterBridgeOptions {
   policy?: RouterPolicy | RouterPolicyInput;
   idFactory?: () => string;
   now?: () => Date;
+  /**
+   * Canonical events from prior Work streams. The Router credits only
+   * attempts that were independently verified and accepted on the Board, so
+   * passing raw history cannot reward a self-report.
+   */
+  evidenceEvents?: () => Promise<readonly HarnessEvent[]>;
 }
