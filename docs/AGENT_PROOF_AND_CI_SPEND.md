@@ -37,7 +37,7 @@ Every automatic workflow must also:
 - set top-level permissions to exactly `contents: read`, with no job-level
   permissions.
 - mention `secrets`, in any letter case, in no string that evaluates an
-  expression, and in no key. The automatic `GITHUB_TOKEN` remains available
+  expression, and declare no key named `secrets` (as in `secrets: inherit`). The automatic `GITHUB_TOKEN` remains available
   to every job, limited to read access by the permissions above.
 - call no reusable workflow.
 
