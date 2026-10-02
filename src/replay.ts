@@ -224,6 +224,12 @@ export function summarizeReplayExperiment(
         return refuse(`${arm} arm ran ${JSON.stringify(observed)}, but earlier pairs' ${arm} arm ran ${JSON.stringify(established)}`);
       }
     }
+    // The experiment's design is exactly trialsPerArm pairs per case. Arms
+    // are pooled across cases, so a surplus pair would weight its case more
+    // heavily and let re-running a favourable case decide the verdict.
+    if ((accepted.get(pair.baseline.benchmarkCaseId) ?? 0) >= spec.trialsPerArm) {
+      return refuse(`case ${pair.baseline.benchmarkCaseId} already has the ${spec.trialsPerArm} paired trials the experiment asks for; a surplus trial would weight that case more heavily`);
+    }
     armControls.baseline ??= controlsOf(pair.baseline);
     armControls.candidate ??= controlsOf(pair.candidate);
     for (const attempt of attempts) countedAttempts.add(attempt);

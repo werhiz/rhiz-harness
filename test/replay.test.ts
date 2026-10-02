@@ -341,3 +341,14 @@ test("lower completion with fewer interventions is regressed, and says why", () 
   assert.equal(result.verdict, "regressed");
   assert.ok(result.reasons.some((reason) => /completion decides/.test(reason)));
 });
+
+test("re-running a favourable case cannot outweigh the others", () => {
+  const helps = (trial: number) => pair("case:1", trial, { verified: false }, {});
+  const hurts = pair("case:2", 0, {}, { verified: false });
+  const balanced = summarizeReplayExperiment(spec({ trialsPerArm: 1 }), [helps(0), hurts]);
+  assert.equal(balanced.verdict, "no-difference");
+  const padded = summarizeReplayExperiment(spec({ trialsPerArm: 1 }), [helps(0), helps(1), helps(2), helps(3), helps(4), hurts]);
+  assert.equal(padded.verdict, "invalid");
+  assert.equal(padded.refusedPairs.length, 4);
+  assert.match(padded.refusedPairs[0]!.reason, /surplus trial/);
+});

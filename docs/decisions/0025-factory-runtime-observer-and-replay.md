@@ -46,13 +46,14 @@ Add two portable modules. Both are pure projections over existing evidence.
 - **No denominator of zero.** Guard `observer/no-verified-outcome-means-no-north-star`.
 - **A proven check is not inert.** A criterion with an executed negative control is never called quiet. Guard `observer/falsified-criterion-is-not-quiet`.
 - **Refused trials are reported, never dropped.** Guard `replay/refused-pair-is-reported-never-dropped`.
+- **Every case weighs the same.** A case takes exactly `trialsPerArm` pairs; a surplus pair is refused, so re-running a favourable case cannot outweigh the others. Guard `replay/cases-weigh-equally`.
 - **Missing trials do not shrink the experiment.** Guard `replay/missing-trials-are-insufficient`.
-- **Intervention floors never decide.** Interventions per verified outcome decides a replay verdict only when both arms counted interventions completely. A runner-observed count is a floor. Guard `replay/intervention-floors-never-decide`.
+- **Intervention floors never decide.** Interventions per verified outcome decides a replay verdict, or breaks a tie between Observer cohorts, only when both sides counted interventions completely. A runner-observed count is a floor. Guard `replay/intervention-floors-never-decide`.
 - **One execution counts once.** A trial is named by its attempts. An attempt that appears twice, in one pair or across pairs, is refused, so a copied receipt with one field changed, or one execution relabelled as the other arm, cannot pass as a second trial. An arm with no attempts never executed and is refused. Guard `replay/one-trial-counts-once`.
 - **Every varied dimension varies.** A pair that leaves any of the experiment's permitted dimensions unchanged is refused; an A/A pair is the extreme case. The result records what each arm actually ran (`armControls`) and prints it. Guard `replay/a-a-pair-is-not-evidence`.
 - **Each arm is one configuration.** A pair whose variant or permitted-dimension values differ from the arm established by earlier pairs is refused. Guard `replay/arms-hold-one-configuration`.
 - **Duplicates are counted once.** The Observer collapses repeated runs and repeated Ledger events, and reports how many (`duplicateRunsIgnored`, `duplicateEventsIgnored`). Two different events sharing one id fail closed, and so do two different runs claiming one attempt. Guards `observer/conflicting-event-ids-fail-closed`, `observer/conflicting-run-attempts-fail-closed`.
-- **Deterministic.** The same evidence in any order, on any machine, yields the same observation with stable finding ids. Text is ordered by code point, never by locale, and timestamps by parsed instant, so offsets sort correctly. A test runs the Observer under two locales and requires identical output.
+- **Deterministic.** The same evidence in any order, on any machine, yields the same observation with stable finding ids. Text is ordered by UTF-16 code unit, never by locale, and timestamps by parsed instant, so offsets sort correctly. A test runs the Observer under two locales and requires identical output.
 
 ### Not decided here
 

@@ -426,3 +426,27 @@ test("a Work whose latest verification failed is not counted as verified and awa
   ];
   assert.equal(observeFactory({ events }).waste.verifiedButUndecidedWorks, 0);
 });
+
+test("an intervention floor never picks the cohort a routing finding recommends", () => {
+  const observed = { wallClock: "runner-measured", humanInterventions: "runner-observed", usage: "provider-reported" };
+  const cohort = (worker: string, verified: boolean, extra: Record<string, unknown>) =>
+    [0, 1, 2].map((i) => benchRun({ benchmarkCaseId: `${worker}:${i}`, workId: `${worker}:w${i}`, workerProviderId: worker, model: `m-${worker}`, verified, ...extra }));
+  const runs = [
+    ...cohort("worker:a", true, { measurementCoverage: observed }),
+    ...cohort("worker:b", true, { humanInterventions: [intervention("status-check", 1)] }),
+    ...cohort("worker:c", false, {}),
+  ];
+  const gap = observeFactory({ runs }).findings.find((finding) => finding.kind === "cohort-gap");
+  assert.ok(gap);
+  // With the floor ignored, the tie between a and b falls to name order.
+  assert.match(gap.title, /^worker:a /);
+  const reversed = observeFactory({
+    runs: [
+      ...cohort("worker:b", true, { measurementCoverage: observed }),
+      ...cohort("worker:a", true, { humanInterventions: [intervention("status-check", 1)] }),
+      ...cohort("worker:c", false, {}),
+    ],
+  }).findings.find((finding) => finding.kind === "cohort-gap");
+  // A floor of zero for b must not beat a's complete count of one.
+  assert.match(reversed!.title, /^worker:a /);
+});

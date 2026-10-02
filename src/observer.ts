@@ -243,7 +243,7 @@ export function benchmarkRunIdentity(run: BenchmarkRun): string {
   return canonicalJson(run);
 }
 
-/** Code-point order. Never locale-aware, so output is identical on every machine. */
+/** UTF-16 code-unit order. Never locale-aware, so output is identical on every machine. */
 export function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -476,7 +476,11 @@ function cohortGapFindings(cohorts: readonly Cohort[], config: ObserverConfig): 
     if (list.length < 2) continue;
     const ranked = [...list].sort((a, b) =>
       (b.verifiedCompletionRate! - a.verifiedCompletionRate!) ||
-      ((a.interventionsPerVerifiedOutcome ?? Infinity) - (b.interventionsPerVerifiedOutcome ?? Infinity)) ||
+      // Interventions break a completion tie only between two complete
+      // censuses; a runner-observed floor must never pick the recommendation.
+      (a.interventionCoverage === "complete" && b.interventionCoverage === "complete"
+        ? (a.interventionsPerVerifiedOutcome ?? Infinity) - (b.interventionsPerVerifiedOutcome ?? Infinity)
+        : 0) ||
       compareText(cohortName(a), cohortName(b)));
     const best = ranked[0]!;
     const worst = ranked.at(-1)!;

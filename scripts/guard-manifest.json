@@ -490,6 +490,13 @@
       "file": "src/observer.ts",
       "remove": "        throw new Error(`two different benchmark runs claim attempt ${attempt}`);\n",
       "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "replay/cases-weigh-equally",
+      "why": "Arms pool across cases; a surplus pair for one case would weight it more heavily, so re-running a favourable case could decide the verdict.",
+      "file": "src/replay.ts",
+      "remove": "      return refuse(`case ${pair.baseline.benchmarkCaseId} already has the ${spec.trialsPerArm} paired trials the experiment asks for; a surplus trial would weight that case more heavily`);\n",
+      "testFile": "dist/test/replay.test.js"
     }
   ]
 }
