@@ -438,8 +438,9 @@ test("an intervention floor never picks the cohort a routing finding recommends"
   ];
   const gap = observeFactory({ runs }).findings.find((finding) => finding.kind === "cohort-gap");
   assert.ok(gap);
-  // With the floor ignored, the tie between a and b falls to name order.
-  assert.match(gap.title, /^worker:a /);
+  // A floor is an unknown count, so the tied cohort with a complete count wins,
+  // whichever way the names sort.
+  assert.match(gap.title, /^worker:b /);
   const reversed = observeFactory({
     runs: [
       ...cohort("worker:b", true, { measurementCoverage: observed }),
@@ -449,4 +450,28 @@ test("an intervention floor never picks the cohort a routing finding recommends"
   }).findings.find((finding) => finding.kind === "cohort-gap");
   // A floor of zero for b must not beat a's complete count of one.
   assert.match(reversed!.title, /^worker:a /);
+});
+
+test("adding a floor cohort never reorders the complete cohorts a routing finding chooses between", () => {
+  const observed = { wallClock: "runner-measured", humanInterventions: "runner-observed", usage: "provider-reported" };
+  const cohort = (worker: string, verified: boolean, extra: Record<string, unknown> = {}) =>
+    [0, 1, 2].map((i) => benchRun({ benchmarkCaseId: `${worker}:${i}`, workId: `${worker}:w${i}`, workerProviderId: worker, model: "m", verified, ...extra }));
+  const base = [
+    ...cohort("worker:z", true),
+    ...cohort("worker:a", true, { humanInterventions: [intervention("status-check", 1)] }),
+    ...cohort("worker:d", false),
+  ];
+  const recommended = (runs: BenchmarkRun[]) =>
+    observeFactory({ runs }).findings.find((finding) => finding.kind === "cohort-gap")!.replay!.candidateControls.workerProviderId;
+  assert.equal(recommended(base), "worker:z");
+  assert.equal(recommended([...base, ...cohort("worker:m", true, { measurementCoverage: observed })]), "worker:z");
+});
+
+test("a completion gap exactly at the threshold counts, whatever the floating-point rounding", () => {
+  const cohort = (worker: string, verifiedCount: number, total: number) =>
+    Array.from({ length: total }, (_, i) => benchRun({ benchmarkCaseId: `${worker}:${i}`, workId: `${worker}:w${i}`, workerProviderId: worker, model: "m", verified: i < verifiedCount }));
+  for (const [high, low, total] of [[5, 4, 5], [3, 1, 10], [6, 4, 10], [5, 3, 10]] as const) {
+    const observation = observeFactory({ runs: [...cohort("worker:hi", high, total), ...cohort("worker:lo", low, total)] });
+    assert.equal(observation.findings.filter((finding) => finding.kind === "cohort-gap").length, 1, `${high}/${total} vs ${low}/${total}`);
+  }
 });

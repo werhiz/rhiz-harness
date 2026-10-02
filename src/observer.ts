@@ -474,18 +474,24 @@ function cohortGapFindings(cohorts: readonly Cohort[], config: ObserverConfig): 
   }
   for (const [taskClass, list] of byClass) {
     if (list.length < 2) continue;
+    // One transitive key per cohort, so adding a cohort never reorders the
+    // others. Interventions rank a cohort only when it counted them
+    // completely; a floor or unreported count ranks as unknown, after every
+    // complete count at the same completion rate.
+    const interventionKey = (cohort: Cohort) =>
+      cohort.interventionCoverage === "complete" && cohort.interventionsPerVerifiedOutcome !== null
+        ? cohort.interventionsPerVerifiedOutcome
+        : Infinity;
     const ranked = [...list].sort((a, b) =>
       (b.verifiedCompletionRate! - a.verifiedCompletionRate!) ||
-      // Interventions break a completion tie only between two complete
-      // censuses; a runner-observed floor must never pick the recommendation.
-      (a.interventionCoverage === "complete" && b.interventionCoverage === "complete"
-        ? (a.interventionsPerVerifiedOutcome ?? Infinity) - (b.interventionsPerVerifiedOutcome ?? Infinity)
-        : 0) ||
+      (interventionKey(a) === interventionKey(b) ? 0 : interventionKey(a) < interventionKey(b) ? -1 : 1) ||
       compareText(cohortName(a), cohortName(b)));
     const best = ranked[0]!;
     const worst = ranked.at(-1)!;
     const gap = best.verifiedCompletionRate! - worst.verifiedCompletionRate!;
-    if (gap < config.minimumCompletionGap) continue;
+    // Compare in whole basis points: 1.0 - 0.8 is 0.19999999999999996 in
+    // floating point, and an exact 20-point gap must count as 20 points.
+    if (Math.round(gap * 10_000) < Math.round(config.minimumCompletionGap * 10_000)) continue;
     const candidateControls: Record<string, string> = {};
     const permitted: BenchmarkControlDimension[] = [];
     if (best.workerProviderId !== worst.workerProviderId && best.workerProviderId) {

@@ -32,15 +32,31 @@ function usage() {
   ].join("\n");
 }
 
-function options(argv, name) {
-  const values = [];
-  argv.forEach((arg, index) => {
-    if (arg === `--${name}` && argv[index + 1] !== undefined) values.push(argv[index + 1]);
-  });
-  return values;
-}
-
 class UsageError extends Error {}
+
+// Every argument must be a known flag, and every valued flag needs its value.
+// A misspelled or bare flag that was silently skipped would publish an
+// observation without the evidence the operator named.
+const VALUED_FLAGS = { observe: ["ledger", "runs"], replay: ["experiment", "pairs"] };
+
+function parseArgs(command, argv) {
+  const values = Object.fromEntries((VALUED_FLAGS[command] ?? []).map((name) => [name, []]));
+  let json = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    const name = arg.startsWith("--") ? arg.slice(2) : null;
+    if (name === null || !(name in values)) throw new UsageError(`unknown argument ${arg}\n${usage()}`);
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith("--")) throw new UsageError(`--${name} needs a value\n${usage()}`);
+    values[name].push(value);
+    index += 1;
+  }
+  return { values, json };
+}
 
 function toRun(raw) {
   return parseBenchmarkRun(raw?.benchmarkRun ?? raw);
@@ -85,11 +101,18 @@ async function readLedger(directory) {
 }
 
 const [command, ...argv] = process.argv.slice(2);
-const json = argv.includes("--json");
+let parsed;
+try {
+  parsed = parseArgs(command, argv);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
+const { values, json } = parsed;
 
 if (command === "observe") {
-  const ledgers = options(argv, "ledger");
-  const runFiles = options(argv, "runs");
+  const ledgers = values.ledger;
+  const runFiles = values.runs;
   if (ledgers.length === 0 && runFiles.length === 0) {
     console.error(usage());
     process.exit(2);
@@ -99,8 +122,13 @@ if (command === "observe") {
   let observation;
   try {
     events = (await Promise.all(ledgers.map(readLedger))).flat();
-    runs = (await Promise.all(runFiles.map(readRuns))).flat();
-    if (runFiles.length > 0 && runs.length === 0) throw new UsageError("the --runs inputs contain no benchmark runs");
+    // Each named input must hold runs; an empty one beside a full one is
+    // still evidence the operator expected and did not get.
+    const perInput = await Promise.all(runFiles.map(readRuns));
+    perInput.forEach((inputRuns, index) => {
+      if (inputRuns.length === 0) throw new UsageError(`--runs ${runFiles[index]} contains no benchmark runs`);
+    });
+    runs = perInput.flat();
     observation = observeFactory({ events, runs });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -108,9 +136,9 @@ if (command === "observe") {
   }
   console.log(json ? JSON.stringify(observation, null, 2) : formatFactoryObservation(observation));
 } else if (command === "replay") {
-  const [experimentPath] = options(argv, "experiment");
-  const [pairsPath] = options(argv, "pairs");
-  if (!experimentPath || !pairsPath) {
+  const [experimentPath] = values.experiment;
+  const [pairsPath] = values.pairs;
+  if (!experimentPath || !pairsPath || values.experiment.length > 1 || values.pairs.length > 1) {
     console.error(usage());
     process.exit(2);
   }

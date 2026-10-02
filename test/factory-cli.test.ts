@@ -165,7 +165,7 @@ test("observe refuses runs inputs that hold no runs, and conflicting evidence, w
     writeFileSync(join(root, "empty.json"), "[]");
     const empty = factory(["observe", "--runs", join(root, "empty.json")]);
     assert.equal(empty.status, 2);
-    assert.match(empty.stderr, /contain no benchmark runs/);
+    assert.match(empty.stderr, /contains no benchmark runs/);
 
     writeFileSync(join(root, "conflict.json"), JSON.stringify([
       benchRun({ attemptIds: ["x"] }),
@@ -181,6 +181,26 @@ test("observe refuses runs inputs that hold no runs, and conflicting evidence, w
     const malformed = factory(["replay", "--experiment", join(root, "experiment.json"), "--pairs", join(root, "pairs.json")]);
     assert.equal(malformed.status, 2);
     assert.doesNotMatch(malformed.stderr, /\n\s+at /);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a bare or misspelled flag is refused instead of silently dropping evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "rhiz-factory-cli-"));
+  try {
+    writeFileSync(join(root, "runs.json"), JSON.stringify([benchRun()]));
+    writeFileSync(join(root, "empty.json"), "[]");
+    for (const args of [
+      ["observe", "--runs", join(root, "runs.json"), "--ledger"],
+      ["observe", "--runs", join(root, "runs.json"), "--ledgr", "/nonexistent"],
+      ["observe", "--runs", join(root, "runs.json"), "stray"],
+      ["observe", "--runs", join(root, "runs.json"), "--runs", join(root, "empty.json")],
+    ]) {
+      const result = factory(args);
+      assert.equal(result.status, 2, args.join(" "));
+      assert.doesNotMatch(result.stdout, /Observed/);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

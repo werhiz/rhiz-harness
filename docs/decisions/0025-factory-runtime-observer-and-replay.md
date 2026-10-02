@@ -40,7 +40,7 @@ Add two portable modules. Both are pure projections over existing evidence.
 
 ### Invariants
 
-- **Observation writes nothing.** The CLI verifies a private copy of the Ledger file, so it takes no lock and creates no file in the Ledger directory. A path with no Ledger, a Ledger that fails verification, or `--runs` inputs that hold no runs, and a Ledger that holds no events, are errors, never an empty report. Tests prove both.
+- **Observation writes nothing.** The CLI verifies a private copy of the Ledger file, so it takes no lock and creates no file in the Ledger directory. A path with no Ledger, a Ledger that fails verification, or `--runs` inputs that hold no runs, and a Ledger that holds no events, are errors, never an empty report, and so is an unknown or bare command-line flag. Tests prove both.
 - **Learning proposes; named authorities promote.** A finding carries a proposal kind, never a promotion. A quiet criterion is reported for falsification, never for removal.
 - **Success means verified and accepted.** A run counts toward verified outcomes only when verification passed and it ended `verified` or `accepted`, as the Benchmark Contract defines success. A run that verified and then failed, was interrupted, or was rejected does not count. Guard `observer/success-is-verified-and-accepted`.
 - **No denominator of zero.** Guard `observer/no-verified-outcome-means-no-north-star`.
@@ -48,7 +48,7 @@ Add two portable modules. Both are pure projections over existing evidence.
 - **Refused trials are reported, never dropped.** Guard `replay/refused-pair-is-reported-never-dropped`.
 - **Every case weighs the same.** A case takes exactly `trialsPerArm` pairs; a surplus pair is refused, so re-running a favourable case cannot outweigh the others. Guard `replay/cases-weigh-equally`.
 - **Missing trials do not shrink the experiment.** Guard `replay/missing-trials-are-insufficient`.
-- **Intervention floors never decide.** Interventions per verified outcome decides a replay verdict, or breaks a tie between Observer cohorts, only when both sides counted interventions completely. A runner-observed count is a floor. Guard `replay/intervention-floors-never-decide`.
+- **Intervention floors never decide.** Interventions per verified outcome decides a replay verdict, or ranks an Observer cohort, only when it was counted completely. A runner-observed count is a floor and ranks as unknown, after every complete count at the same completion rate; cohorts are ranked by one transitive key, so adding a cohort never reorders the others. Guard `observer/floors-never-rank-cohorts`. Guard `replay/intervention-floors-never-decide`.
 - **One execution counts once.** A trial is named by its attempts. An attempt that appears twice, in one pair or across pairs, is refused, so a copied receipt with one field changed, or one execution relabelled as the other arm, cannot pass as a second trial. An arm with no attempts never executed and is refused. Guard `replay/one-trial-counts-once`.
 - **Every varied dimension varies.** A pair that leaves any of the experiment's permitted dimensions unchanged is refused; an A/A pair is the extreme case. The result records what each arm actually ran (`armControls`) and prints it. Guard `replay/a-a-pair-is-not-evidence`.
 - **Each arm is one configuration.** A pair whose variant or permitted-dimension values differ from the arm established by earlier pairs is refused. Guard `replay/arms-hold-one-configuration`.
@@ -63,5 +63,5 @@ Scorer plugins, model-backed judges, task-class routing changes, a console, and 
 
 - The intelligence loop gains its population stage, and Refiner gains evidence that spans Works.
 - Any team running the Harness gets the same report about its own repository, and the same experiment format to test a proposed fix. That is the basis for comparable, reproducible results across teams.
-- Thresholds are configuration, not truth. Defaults are deliberately conservative: three runs per cohort, a 20-point completion gap, five evaluations across two Works for a quiet criterion. They should be recalibrated against real dogfood populations, as ADR 0023 did for the horizon.
+- Thresholds are configuration, not truth. Defaults are deliberately conservative: three runs per cohort, a 20-point completion gap (compared in whole basis points, so an exact gap counts), five evaluations across two Works for a quiet criterion. They should be recalibrated against real dogfood populations, as ADR 0023 did for the horizon.
 - Cohort findings compare different cases and say so. Only a replay experiment holds the case constant.
