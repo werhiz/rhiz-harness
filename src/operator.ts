@@ -155,7 +155,9 @@ export function summarizeOperatorWork(events: readonly HarnessEvent[]): Operator
       && (event.type === "work.created" || event.type === "work.accepted")).length,
     elapsedMs: elapsed(events),
   };
-  const { nextAction, nextActionReason } = nextActionFor(board, readiness.ready, readiness.reasons, active, budget);
+  const { nextAction, nextActionReason } = nextActionFor(
+    board, readiness.ready, readiness.reasons, active, budget, readiness.verificationEventId,
+  );
   return {
     workId,
     streamId,
@@ -182,6 +184,7 @@ function nextActionFor(
   reasons: readonly string[],
   active: number,
   budget: number | null,
+  verificationEventId: string | undefined,
 ): { nextAction: OperatorNextAction; nextActionReason: string } {
   if (board.state === "accepted" || board.state === "rejected" || board.state === "cancelled") {
     return { nextAction: "none", nextActionReason: `Work is ${board.state}` };
@@ -190,8 +193,13 @@ function nextActionFor(
   if (reasons.some((reason) => reason.includes("latest independent review") && reason.includes("failed"))) {
     return { nextAction: "review", nextActionReason: "the latest independent review failed; obtain a passing independent review, or amend or reject the Work" };
   }
+  // A required review is missing even before execution or verification.
+  // Only the Board's qualifying verification can make review the next step;
+  // otherwise the CLI refuses both review (no target) and resume (wrong action).
   const reviewMissing = reasons.some((reason) => reason.includes("independent passing review"));
-  if (reviewMissing) return { nextAction: "review", nextActionReason: "verified, waiting on an independent review" };
+  if (reviewMissing && verificationEventId !== undefined && active === 0) {
+    return { nextAction: "review", nextActionReason: "verified, waiting on an independent review" };
+  }
   if (active > 0) return { nextAction: "resume", nextActionReason: `${active} attempt(s) have no terminal event` };
   const spent = Object.keys(board.attempts).length;
   if (budget !== null && spent >= budget) {
