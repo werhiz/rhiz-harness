@@ -365,3 +365,22 @@ test("two different events that share an id fail closed", () => {
   const forged = event("attempt.failed", { reason: "different", recoverable: true }, { id: "event:same", taskId: "t", attemptId: "a" });
   assert.throws(() => observeFactory({ events: [original, forged] }), /share id event:same/);
 });
+
+test("a verified run that ended failed, interrupted, or rejected is not a verified outcome", () => {
+  const observation = observeFactory({
+    runs: [
+      benchRun({ outcome: "failed", verified: true, attemptIds: ["a1"] }),
+      benchRun({ benchmarkCaseId: "case:2", outcome: "rejected", verified: true, attemptIds: ["a2"] }),
+      benchRun({ benchmarkCaseId: "case:3", attemptIds: ["a3"] }),
+    ],
+  });
+  assert.equal(observation.northStar.verifiedOutcomes, 1);
+  assert.equal(observation.waste.unverifiedRuns, 2);
+});
+
+test("one execution copied with a field changed fails closed instead of counting twice", () => {
+  const solo = benchRun({ attemptIds: ["solo"] });
+  const copy = benchRun({ attemptIds: ["solo"], endedAt: "2026-09-01T00:11:00.000Z" });
+  assert.throws(() => observeFactory({ runs: [solo, copy] }), /claim attempt solo/);
+  assert.equal(observeFactory({ runs: [solo, solo] }).window.duplicateRunsIgnored, 1);
+});

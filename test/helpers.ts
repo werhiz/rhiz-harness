@@ -254,7 +254,11 @@ export function sandboxCapableCatalog(...providers: WorkerProvider[]): WorkerCat
 }
 
 /** A schema-valid BenchmarkRun that passes the comparison controls against a sibling variant. */
+let benchRunCounter = 0;
 export function benchRun(overrides: Record<string, unknown> = {}): BenchmarkRun {
+  // Every call is a distinct execution, as in production, unless the test
+  // names the attempts itself.
+  benchRunCounter += 1;
   const verified = overrides.verified ?? true;
   return parseBenchmarkRun({
     benchmarkCaseId: "case:1",
@@ -265,7 +269,7 @@ export function benchRun(overrides: Record<string, unknown> = {}): BenchmarkRun 
     harnessVersion: "0.0.1-kernel.0",
     variantId: "baseline",
     workId: "work:1",
-    attemptIds: ["attempt:1"],
+    attemptIds: [`attempt:bench:${benchRunCounter}`],
     baseIdentity: "git:base",
     resultIdentity: "git:result",
     hostId: "host:local",

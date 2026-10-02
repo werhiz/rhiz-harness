@@ -279,8 +279,18 @@ export function interventionCoverageOf(runs: readonly BenchmarkRun[]): Intervent
   return [...states][0] as InterventionCoverage;
 }
 
+/**
+ * An independently verified successful outcome, as the Benchmark Contract
+ * defines it: verification passed and the run ended verified or accepted. A
+ * run that verified and then failed, was interrupted, or was rejected is not
+ * a success, and the repository runner does emit that shape.
+ */
+export function isVerifiedSuccess(run: BenchmarkRun): boolean {
+  return run.verified && (run.outcome === "verified" || run.outcome === "accepted");
+}
+
 export function northStarOf(runs: readonly BenchmarkRun[]): NorthStar {
-  const verifiedOutcomes = runs.filter((run) => run.verified).length;
+  const verifiedOutcomes = runs.filter(isVerifiedSuccess).length;
   const humanInterventions = runs.reduce((sum, run) => sum + run.humanInterventions.length, 0);
   const clericalInterventions = runs.reduce(
     (sum, run) => sum + run.humanInterventions.filter((intervention) => intervention.clerical).length,
@@ -352,7 +362,7 @@ function cohortsOf(runs: readonly BenchmarkRun[], taskClasses: Map<string, strin
 }
 
 function wasteOf(events: readonly HarnessEvent[], runs: readonly BenchmarkRun[]): Waste {
-  const unverified = runs.filter((run) => !run.verified);
+  const unverified = runs.filter((run) => !isVerifiedSuccess(run));
   const unverifiedCosts = unverified.flatMap((run) => (run.usage?.costUsd === undefined ? [] : [run.usage.costUsd]));
   const verifiedWorks = new Set<string>();
   const decidedWorks = new Set<string>();
@@ -682,7 +692,7 @@ function capabilityFindings(runs: readonly BenchmarkRun[], config: ObserverConfi
     if (!digest) continue;
     const entry = groups.get(digest) ?? { verifiedCases: new Set<string>(), failedCases: new Set<string>(), runs: 0 };
     entry.runs += 1;
-    (run.verified ? entry.verifiedCases : entry.failedCases).add(run.benchmarkCaseId);
+    (isVerifiedSuccess(run) ? entry.verifiedCases : entry.failedCases).add(run.benchmarkCaseId);
     groups.set(digest, entry);
   }
   const findings: ObserverFinding[] = [];
@@ -735,8 +745,25 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
   const duplicateEventsIgnored = (input.events?.length ?? 0) - uniqueEvents.size;
   const events = [...uniqueEvents.values()].sort((a, b) =>
     a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
+  // A run is an execution, named by its attempts. The same receipt read twice
+  // is one run. Two different receipts claiming one attempt is conflicting
+  // evidence and fails closed; otherwise a copied receipt with one field
+  // changed would count one execution several times. A run with no attempts
+  // never executed and is identified by its full content.
   const uniqueRuns = new Map<string, BenchmarkRun>();
-  for (const run of input.runs ?? []) uniqueRuns.set(benchmarkRunIdentity(run), run);
+  const runByAttempt = new Map<string, string>();
+  for (const run of input.runs ?? []) {
+    const identity = benchmarkRunIdentity(run);
+    if (uniqueRuns.has(identity)) continue;
+    for (const attempt of run.attemptIds) {
+      const claimed = runByAttempt.get(attempt);
+      if (claimed !== undefined && claimed !== identity) {
+        throw new Error(`two different benchmark runs claim attempt ${attempt}`);
+      }
+    }
+    for (const attempt of run.attemptIds) runByAttempt.set(attempt, identity);
+    uniqueRuns.set(identity, run);
+  }
   const duplicateRunsIgnored = (input.runs?.length ?? 0) - uniqueRuns.size;
   const runs = [...uniqueRuns.values()].sort((a, b) =>
     a.benchmarkCaseId.localeCompare(b.benchmarkCaseId) ||

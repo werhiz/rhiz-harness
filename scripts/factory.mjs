@@ -95,15 +95,16 @@ if (command === "observe") {
   }
   let events;
   let runs;
+  let observation;
   try {
     events = (await Promise.all(ledgers.map(readLedger))).flat();
     runs = (await Promise.all(runFiles.map(readRuns))).flat();
+    if (runFiles.length > 0 && runs.length === 0) throw new UsageError("the --runs inputs contain no benchmark runs");
+    observation = observeFactory({ events, runs });
   } catch (error) {
-    if (!(error instanceof UsageError)) throw error;
-    console.error(error.message);
+    console.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
   }
-  const observation = observeFactory({ events, runs });
   console.log(json ? JSON.stringify(observation, null, 2) : formatFactoryObservation(observation));
 } else if (command === "replay") {
   const [experimentPath] = options(argv, "experiment");
@@ -112,12 +113,17 @@ if (command === "observe") {
     console.error(usage());
     process.exit(2);
   }
-  const experiment = ReplayExperimentSpecSchema.parse(JSON.parse(await readFile(resolve(experimentPath), "utf8")));
-  const pairs = JSON.parse(await readFile(resolve(pairsPath), "utf8")).map((pair) => ({
-    baseline: toRun(pair.baseline),
-    candidate: toRun(pair.candidate),
-  }));
-  const result = summarizeReplayExperiment(experiment, pairs);
+  let result;
+  try {
+    const experiment = ReplayExperimentSpecSchema.parse(JSON.parse(await readFile(resolve(experimentPath), "utf8")));
+    const raw = JSON.parse(await readFile(resolve(pairsPath), "utf8"));
+    if (!Array.isArray(raw)) throw new UsageError("--pairs must be a JSON array of {baseline, candidate}");
+    const pairs = raw.map((pair) => ({ baseline: toRun(pair?.baseline), candidate: toRun(pair?.candidate) }));
+    result = summarizeReplayExperiment(experiment, pairs);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
   console.log(json ? JSON.stringify(result, null, 2) : formatReplayResult(result));
   // A result nobody may claim is not a passing command.
   if (result.verdict === "invalid" || result.verdict === "insufficient-evidence") process.exitCode = 1;

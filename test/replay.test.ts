@@ -316,3 +316,28 @@ test("the result records and prints what each arm actually ran", () => {
   });
   assert.match(formatReplayResult(result), /baseline {2}ran \{"variantId":"baseline","model":"model-a"\}/);
 });
+
+test("a run that verified and then failed or was rejected is not a success", () => {
+  for (const outcome of ["failed", "rejected", "interrupted"]) {
+    const result = summarizeReplayExperiment(
+      spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 2 }),
+      [0, 1].map((trial) => pair("case:1", trial, { verified: false, outcome: "failed" }, { verified: true, outcome })),
+    );
+    assert.equal(result.candidate.verifiedCompletionRate, 0, outcome);
+    assert.notEqual(result.verdict, "improved", outcome);
+  }
+});
+
+test("lower completion with fewer interventions is regressed, and says why", () => {
+  const result = summarizeReplayExperiment(
+    spec({ benchmarkCaseIds: ["case:1"], trialsPerArm: 4 }),
+    [0, 1, 2, 3].map((trial) => pair(
+      "case:1",
+      trial,
+      { humanInterventions: [intervention(trial), intervention(trial + 10), intervention(trial + 20)] },
+      { verified: trial !== 3 },
+    )),
+  );
+  assert.equal(result.verdict, "regressed");
+  assert.ok(result.reasons.some((reason) => /completion decides/.test(reason)));
+});

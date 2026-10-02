@@ -462,6 +462,20 @@
       "file": "src/observer.ts",
       "remove": "      throw new Error(`two different Ledger events share id ${event.id}`);\n",
       "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "observer/success-is-verified-and-accepted",
+      "why": "A run that verified and then failed, was interrupted, or was rejected is not a successful outcome under the Benchmark Contract; counting it inflates the North Star and can make replay call a failing candidate improved.",
+      "file": "src/observer.ts",
+      "remove": " && (run.outcome === \"verified\" || run.outcome === \"accepted\")",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "observer/conflicting-run-attempts-fail-closed",
+      "why": "Two different receipts claiming one attempt would count a single execution several times and can carry a finding on one run.",
+      "file": "src/observer.ts",
+      "remove": "        throw new Error(`two different benchmark runs claim attempt ${attempt}`);\n",
+      "testFile": "dist/test/observer.test.js"
     }
   ]
 }

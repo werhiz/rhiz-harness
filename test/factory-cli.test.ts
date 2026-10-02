@@ -156,3 +156,30 @@ test("observe reports a damaged Ledger and an empty runs directory instead of cr
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("observe refuses runs inputs that hold no runs, and conflicting evidence, with a message", () => {
+  const root = mkdtempSync(join(tmpdir(), "rhiz-factory-cli-"));
+  try {
+    writeFileSync(join(root, "empty.json"), "[]");
+    const empty = factory(["observe", "--runs", join(root, "empty.json")]);
+    assert.equal(empty.status, 2);
+    assert.match(empty.stderr, /contain no benchmark runs/);
+
+    writeFileSync(join(root, "conflict.json"), JSON.stringify([
+      benchRun({ attemptIds: ["x"] }),
+      benchRun({ attemptIds: ["x"], endedAt: "2026-09-01T00:11:00.000Z" }),
+    ]));
+    const conflict = factory(["observe", "--runs", join(root, "conflict.json")]);
+    assert.equal(conflict.status, 2);
+    assert.match(conflict.stderr, /claim attempt x/);
+    assert.doesNotMatch(conflict.stderr, /\n\s+at /);
+
+    writeFileSync(join(root, "experiment.json"), "{}");
+    writeFileSync(join(root, "pairs.json"), "not json");
+    const malformed = factory(["replay", "--experiment", join(root, "experiment.json"), "--pairs", join(root, "pairs.json")]);
+    assert.equal(malformed.status, 2);
+    assert.doesNotMatch(malformed.stderr, /\n\s+at /);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

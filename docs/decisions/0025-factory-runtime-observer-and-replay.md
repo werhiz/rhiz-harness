@@ -40,8 +40,9 @@ Add two portable modules. Both are pure projections over existing evidence.
 
 ### Invariants
 
-- **Observation writes nothing.** The CLI verifies a private copy of the Ledger file, so it takes no lock and creates no file in the Ledger directory. A path with no Ledger, a Ledger that fails verification, or a runs directory with no runs is an error, never an empty report. Tests prove both.
+- **Observation writes nothing.** The CLI verifies a private copy of the Ledger file, so it takes no lock and creates no file in the Ledger directory. A path with no Ledger, a Ledger that fails verification, or `--runs` inputs that hold no runs are an error, never an empty report. Tests prove both.
 - **Learning proposes; named authorities promote.** A finding carries a proposal kind, never a promotion. A quiet criterion is reported for falsification, never for removal.
+- **Success means verified and accepted.** A run counts toward verified outcomes only when verification passed and it ended `verified` or `accepted`, as the Benchmark Contract defines success. A run that verified and then failed, was interrupted, or was rejected does not count. Guard `observer/success-is-verified-and-accepted`.
 - **No denominator of zero.** Guard `observer/no-verified-outcome-means-no-north-star`.
 - **A proven check is not inert.** A criterion with an executed negative control is never called quiet. Guard `observer/falsified-criterion-is-not-quiet`.
 - **Refused trials are reported, never dropped.** Guard `replay/refused-pair-is-reported-never-dropped`.
@@ -50,7 +51,7 @@ Add two portable modules. Both are pure projections over existing evidence.
 - **One execution counts once.** A trial is named by its attempts. An attempt that appears twice, in one pair or across pairs, is refused, so a copied receipt with one field changed, or one execution relabelled as the other arm, cannot pass as a second trial. An arm with no attempts never executed and is refused. Guard `replay/one-trial-counts-once`.
 - **Every varied dimension varies.** A pair that leaves any of the experiment's permitted dimensions unchanged is refused; an A/A pair is the extreme case. The result records what each arm actually ran (`armControls`) and prints it. Guard `replay/a-a-pair-is-not-evidence`.
 - **Each arm is one configuration.** A pair whose variant or permitted-dimension values differ from the arm established by earlier pairs is refused. Guard `replay/arms-hold-one-configuration`.
-- **Duplicates are counted once.** The Observer collapses repeated runs and repeated Ledger events, and reports how many (`duplicateRunsIgnored`, `duplicateEventsIgnored`). Two different events sharing one id fail closed. Guard `observer/conflicting-event-ids-fail-closed`.
+- **Duplicates are counted once.** The Observer collapses repeated runs and repeated Ledger events, and reports how many (`duplicateRunsIgnored`, `duplicateEventsIgnored`). Two different events sharing one id fail closed, and so do two different runs claiming one attempt. Guards `observer/conflicting-event-ids-fail-closed`, `observer/conflicting-run-attempts-fail-closed`.
 - **Deterministic.** The same evidence in any order yields the same observation, with stable finding ids.
 
 ### Not decided here

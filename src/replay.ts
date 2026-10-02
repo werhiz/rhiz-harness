@@ -53,7 +53,7 @@ export const ReplayVerdictSchema = z.enum([
   "improved",
   "regressed",
   "no-difference",
-  /** Verified completion and interventions moved in opposite directions. */
+  /** Verified completion rose, but so did human interventions per verified outcome. */
   "mixed",
 ]);
 export type ReplayVerdict = z.infer<typeof ReplayVerdictSchema>;
@@ -152,7 +152,10 @@ function verdictOf(baseline: ReplayArmSummary, candidate: ReplayArmSummary, reas
   const ratioDelta = ratiosComparable
     ? candidate.interventionsPerVerifiedOutcome! - baseline.interventionsPerVerifiedOutcome!
     : 0;
-  if (rateC < rateB) return "regressed";
+  if (rateC < rateB) {
+    if (ratioDelta < 0) reasons.push("interventions per verified outcome fell, but verified completion fell too; completion decides");
+    return "regressed";
+  }
   if (rateC === rateB && ratioDelta > 0) return "regressed";
   if (rateC > rateB && ratioDelta <= 0) return "improved";
   if (rateC === rateB && ratioDelta < 0) return "improved";
