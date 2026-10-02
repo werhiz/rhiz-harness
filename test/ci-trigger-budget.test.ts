@@ -61,6 +61,11 @@ const UNSAFE: Record<string, [(kernel: string) => string, RegExp]> = {
   "secret by index": [(k) => replaceOnce(k, NPM_CI, "run: echo ${{ secrets['TOKEN'] }}"), /references secrets/],
   "all secrets serialized": [(k) => replaceOnce(k, NPM_CI, "run: echo ${{ toJSON(secrets) }}"), /references secrets/],
   "escaped secret": [(k) => replaceOnce(k, NPM_CI, 'run: "echo ${{ \\x73ecrets.TOKEN }}"'), /references secrets/],
+  "upper-case secrets context": [(k) => replaceOnce(k, NPM_CI, 'run: echo "${{ SECRETS.TOKEN }}"'), /references secrets/],
+  "mixed-case secrets context": [(k) => replaceOnce(k, NPM_CI, 'run: echo "${{ Secrets.TOKEN }}"'), /references secrets/],
+  "closing braces inside a string literal": [(k) => replaceOnce(k, NPM_CI, `run: echo "\${{ format('}}') || secrets.TOKEN }}"`), /references secrets/],
+  "closing braces inside a format argument": [(k) => replaceOnce(k, NPM_CI, `run: echo "\${{ format('{0}', '}}') && secrets.TOKEN }}"`), /references secrets/],
+  "alias": [(k) => replaceOnce(k, "permissions:\n  contents: read\n", "x-perm: &p\n  contents: read\npermissions: *p\n"), /kernel\.yml is not clean YAML/],
   "extra top-level write permission": [(k) => replaceOnce(k, "permissions:\n  contents: read\n", "permissions:\n  contents: read\n  pull-requests: write\n"), /exactly contents: read/],
   "write-all": [(k) => replaceOnce(k, "permissions:\n  contents: read\n", "permissions: write-all\n"), /exactly contents: read/],
   "job-level permissions": [(k) => replaceOnce(k, RUNS_ON, `    permissions:\n      contents: write\n${RUNS_ON}`), /sets job-level permissions/],
@@ -75,6 +80,13 @@ for (const [name, [mutate, reason]] of Object.entries(UNSAFE)) {
     assert.match(result.stderr, reason);
   });
 }
+
+test("free single-label and arm runners are accepted", () => {
+  for (const runner of ["[ubuntu-latest]", "ubuntu-24.04-arm"]) {
+    const result = budget((k) => replaceOnce(k, RUNS_ON, `    runs-on: ${runner}\n`));
+    assert.equal(result.status, 0, `${runner}: ${result.stderr}`);
+  }
+});
 
 test("prose that mentions secrets is not a secret reference", () => {
   const result = budget((k) => replaceOnce(k, NPM_CI, `${NPM_CI}\n        # No secrets here.`).replace("name: Checkout", "name: Checkout without secrets"));

@@ -6,9 +6,8 @@
 // GitHub-hosted runners only, exactly `contents: read`, no secrets, no
 // reusable workflows.
 //
-// It judges the parsed YAML, never the text. Flow collections, quoted or
-// escaped keys, and complex keys all decode to the same structure GitHub
-// reads, so a disguised key cannot pass where a plain one fails. Duplicate
+// It judges the decoded YAML, never the raw text, so flow collections, quoted
+// or escaped keys, and complex keys are checked by what they decode to. Duplicate
 // keys and any YAML the parser reports as an error or warning are refused.
 //
 // Scope, stated so nobody over-reads a pass: on a pull_request event GitHub
@@ -43,7 +42,7 @@ const DECIDED_TRIGGERS = {
 // Larger runners (e.g. macos-14-xlarge, ubuntu-22.04-64core) bill per minute
 // even here, and any other label can route to a self-hosted machine.
 const FREE_HOSTED_RUNNERS = new Set([
-  "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04",
+  "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04", "ubuntu-24.04-arm", "ubuntu-22.04-arm",
   "windows-latest", "windows-2025", "windows-2022",
   "macos-latest", "macos-15", "macos-14",
 ]);
@@ -52,7 +51,12 @@ function parseWorkflow(file, source) {
   const document = parseDocument(source, { uniqueKeys: true, prettyErrors: false });
   const issues = [...document.errors, ...document.warnings];
   if (issues.length > 0) throw new Error(`${file} is not clean YAML: ${issues[0].message}`);
-  const value = document.toJS({ maxAliasCount: 0 });
+  let value;
+  try {
+    value = document.toJS({ maxAliasCount: 0 });
+  } catch (error) {
+    throw new Error(`${file} is not clean YAML: ${error instanceof Error ? error.message : String(error)}`);
+  }
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${file} is not a mapping`);
   return value;
 }
@@ -85,7 +89,8 @@ function forkSafetyProblems(file, workflow) {
       }
       if ("uses" in job) problems.push(`job ${name} calls a reusable workflow`);
       if ("permissions" in job) problems.push(`job ${name} sets job-level permissions`);
-      if (typeof job["runs-on"] !== "string" || !FREE_HOSTED_RUNNERS.has(job["runs-on"])) {
+      const label = Array.isArray(job["runs-on"]) && job["runs-on"].length === 1 ? job["runs-on"][0] : job["runs-on"];
+      if (typeof label !== "string" || !FREE_HOSTED_RUNNERS.has(label)) {
         problems.push(`job ${name} runs-on ${JSON.stringify(job["runs-on"] ?? null)} is not a free GitHub-hosted runner label`);
       }
       for (const step of Array.isArray(job.steps) ? job.steps : []) {
@@ -96,13 +101,17 @@ function forkSafetyProblems(file, workflow) {
       }
     }
   }
+  // Any string that evaluates an expression and mentions secrets is refused,
+  // in any letter case, wherever in the string the mention sits. GitHub
+  // resolves context names case-insensitively and skips quoted literals when
+  // it looks for the closing braces, so matching inside one ${{ }} span can be
+  // fooled; matching the whole string cannot.
   for (const text of strings(workflow)) {
-    if (text === "secrets") {
+    if (/^secrets$/i.test(text)) {
       problems.push("declares a secrets key");
       break;
     }
-    const expressions = text.match(/\$\{\{[\s\S]*?\}\}/g) ?? [];
-    if (expressions.some((expression) => /\bsecrets\b/.test(expression))) {
+    if (text.includes("${{") && /secrets/i.test(text)) {
       problems.push("references secrets in an expression");
       break;
     }
@@ -134,7 +143,7 @@ try {
     }
   }
   if (problems.length > 0) throw new Error(problems.join("; "));
-  console.log("GitHub Actions trigger budget: PASS (decided triggers; automatic workflows use free hosted runners, read-only, secret-free)");
+  console.log("GitHub Actions trigger budget: PASS (decided triggers; automatic workflows use free hosted runners, read-only token, no secrets references)");
 } catch (error) {
   console.error(`GitHub Actions trigger budget: FAIL: ${error.message}`);
   process.exitCode = 1;

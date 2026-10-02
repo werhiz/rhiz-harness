@@ -27,16 +27,18 @@ settings carry the guarantee instead:
 
 `scripts/check-ci-trigger-budget.mjs`, run first by `npm run check`, prevents
 the other failure: a maintainer merging an unsafe workflow by accident. It
-judges the parsed YAML, not the text, so flow-style mappings, quoted or
-escaped keys, and complex keys are checked as GitHub would read them, and
-duplicate keys are refused. It holds each workflow to its recorded triggers.
+judges the decoded YAML, not the raw text, so flow-style mappings, quoted or
+escaped keys, and complex keys are checked by what they decode to. Duplicate
+keys, aliases, custom tags, and multi-document files are refused. It holds each workflow to its recorded triggers.
 Every automatic workflow must also:
 
-- run only on free standard GitHub-hosted labels. Larger runners bill even on
-  a public repository.
+- run only on free standard GitHub-hosted labels, as one label. Larger runners
+  bill even on a public repository, and matrix-chosen runners are refused.
 - set top-level permissions to exactly `contents: read`, with no job-level
   permissions.
-- use no `secrets` in any expression or key.
+- mention `secrets`, in any letter case, in no string that evaluates an
+  expression, and in no key. The automatic `GITHUB_TOKEN` remains available
+  to every job, limited to read access by the permissions above.
 - call no reusable workflow.
 
 `test/ci-trigger-budget.test.ts` plants each known bypass and requires the
