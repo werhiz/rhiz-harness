@@ -385,6 +385,34 @@
       "file": "src/horizon.ts",
       "remove": "  if (signals.diffLines >= limit) return undefined;\n",
       "testFile": "dist/test/horizon-enforcement.test.js"
+    },
+    {
+      "id": "observer/no-verified-outcome-means-no-north-star",
+      "why": "Dividing interventions by zero verified outcomes reports a flattering zero or infinity; a population that verified nothing has no North Star value.",
+      "file": "src/observer.ts",
+      "remove": "verifiedOutcomes === 0 ? null : ",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "observer/falsified-criterion-is-not-quiet",
+      "why": "A criterion with an executed negative control has shown it can fail; calling it inert would propose weakening a proven check.",
+      "file": "src/observer.ts",
+      "remove": "    if (entry.failures > 0 || entry.proven) continue;\n",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "replay/refused-pair-is-reported-never-dropped",
+      "why": "An experiment that silently discards pairs failing its controls can prove anything; a refused pair must make the result unclaimable.",
+      "file": "src/replay.ts",
+      "remove": "      refusedPairs.push({ index, benchmarkCaseId: pair.baseline.benchmarkCaseId, reason: outcome.reason });\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/missing-trials-are-insufficient",
+      "why": "A case with fewer paired trials than the experiment asked for would otherwise shrink the denominator and still yield a verdict.",
+      "file": "src/replay.ts",
+      "remove": "  } else if (trialsByCase.some((entry) => entry.accepted < entry.required)) {\n    verdict = \"insufficient-evidence\";\n    const short = trialsByCase.filter((entry) => entry.accepted < entry.required);\n    reasons.push(`${short.length} case(s) have fewer than ${spec.trialsPerArm} paired trials`);\n",
+      "testFile": "dist/test/replay.test.js"
     }
   ]
 }

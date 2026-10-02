@@ -36,7 +36,9 @@
     "proof:falsifiability": "node --test dist/test/proofs/*.test.js",
     "check:ci-parity": "node scripts/check-ci-parity.mjs",
     "benchmark:compare": "npm run build && node scripts/compare-benchmark-runs.mjs",
-    "check:ci-trigger-budget": "node scripts/check-ci-trigger-budget.mjs"
+    "check:ci-trigger-budget": "node scripts/check-ci-trigger-budget.mjs",
+    "factory:observe": "npm run build && node scripts/factory.mjs observe",
+    "factory:replay": "npm run build && node scripts/factory.mjs replay"
   },
   "files": [
     "dist/src",
