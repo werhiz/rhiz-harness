@@ -248,9 +248,9 @@
     },
     {
       "id": "crew/authority-evidence-reaches-the-ledger-from-the-seam",
-      "why": "The seam's typed authority report is the only channel by which an OS refusal becomes a durable fact. Without this append the boundary still holds but the refusal is unevidenced, which is the half of issue #11 about proof rather than prevention.",
+      "why": "A typed authority report from the worker enforcement seam must become durable Ledger and Board evidence. The attempt-closed check prevents late observations from appending after the Attempt is closed; omitting this append loses both granted and denied decisions.",
       "file": "src/crew.ts",
-      "remove": "          if (observation.authority !== undefined) {\n            await append(\n              observation.authority.decision === \"granted\" ? \"authority.granted\" : \"authority.denied\",\n              {\n                policy: work.authority,\n                reason: `${observation.authority.reason} [boundary: ${observation.authority.boundary}]`,\n              },\n              { taskId, attemptId, actor: workerActor },\n            );\n          }\n",
+      "remove": "            if (observation.authority !== undefined) {\n              if (attemptClosed()) return;\n              await append(\n                observation.authority.decision === \"granted\" ? \"authority.granted\" : \"authority.denied\",\n                {\n                  policy: work.authority,\n                  reason: `${observation.authority.reason} [boundary: ${observation.authority.boundary}]`,\n                },\n                { taskId, attemptId, actor: workerActor },\n              );\n            }\n",
       "testFile": "dist/test/worker-containment.test.js"
     },
     {
