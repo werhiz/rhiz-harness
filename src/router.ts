@@ -448,6 +448,11 @@ function deriveEvidenceFromEvents(
         if (failure) bucket.failures += 1;
         if (success || failure) bucket.confidenceSignals.push(success ? 1 : 0);
         if (duration !== null) bucket.durations.push(duration);
+        // Only a provider-reported measurement is a cost. The estimate the
+        // Router wrote when it chose this worker never enters evidence it
+        // will later choose from.
+        const observed = terminal?.type === "attempt.finished" ? terminal.payload.observedUsage?.costUsd : undefined;
+        if (observed !== undefined && attempt.executionProvenance.length === 1) bucket.costs.push(observed);
         for (const event of timeline) observeTime(bucket, event.occurredAt);
         if (success || failure) {
           for (const event of admitted) {

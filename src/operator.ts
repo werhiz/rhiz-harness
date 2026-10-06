@@ -1,7 +1,7 @@
 import { acceptanceReadiness, projectBoard, type BoardProjection } from "./board.js";
 import type { EventLedger } from "./ledger.js";
 import type { RefinerBridge } from "./refiner-bridge.js";
-import { countHumanInterventions, type RefinerAnalysis } from "./refiner.js";
+import { countHumanInterventions, deriveWorkRecord, type RefinerAnalysis } from "./refiner.js";
 import { computeRouterEvidenceFromEvents, type RouterEvidence } from "./router.js";
 import {
   ActorRefSchema,
@@ -9,6 +9,7 @@ import {
   type ActorRef,
   type EvidenceRef,
   type HarnessEvent,
+  type ObservedUsage,
   type RefinerProposal,
   type WorkState,
 } from "./schemas.js";
@@ -40,8 +41,14 @@ export interface OperatorWorkMetrics {
   repairAttempts: number;
   /** A failed attempt or failed verification that the Work later got past. */
   recovered: boolean;
+  /** Accepted after one attempt with nothing failed. The opposite of `recovered`, never both. */
+  firstAttemptSuccess: boolean;
   /** Router estimates recorded at selection time. An estimate, never a bill. */
   estimatedCostUsd: number;
+  /** Spend a provider reported, summed. Null when no provider reported any; null is not zero. */
+  observedCostUsd: number | null;
+  /** How many attempts or reviews carried a provider-reported usage. */
+  observedUsageReports: number;
   contextTokens: number;
   /** Human decisions beyond stating the Work and accepting it. See HUMAN_INTERVENTION_EVENT_TYPES. */
   humanInterventions: number;
@@ -82,7 +89,9 @@ export interface OperatorDigest {
   readyToAccept: number;
   recovered: number;
   repairAttempts: number;
+  firstAttemptSuccesses: number;
   estimatedCostUsd: number;
+  observedCostUsd: number | null;
   humanInterventions: number;
   humanDecisions: number;
   /** The North Star: human interventions per accepted outcome. Null before the first one. */
@@ -130,22 +139,22 @@ export function summarizeOperatorWork(events: readonly HarnessEvent[]): Operator
   const active = attempts.length - finished - failed;
   const budget = board.contract?.workerPolicy.maxAttempts ?? null;
   const readiness = acceptanceReadiness(board);
-  const verificationFailed = board.verifications.some((item) => item.status === "fail");
   const reviewRequired = board.contract?.verificationPolicy.reviewRequired ?? false;
   const outcome: OperatorWorkMetrics["outcome"] = board.state === "accepted" || board.state === "rejected" || board.state === "cancelled"
     ? board.state
     : "open";
+  const record = deriveWorkRecord(events);
   const metrics: OperatorWorkMetrics = {
     outcome,
     attempts: attempts.length,
     failedAttempts: failed,
     repairAttempts: Math.max(0, attempts.length - 1),
-    // The same definition the Refiner uses, so status and learning agree.
-    recovered: outcome === "accepted" && (attempts.length > 1 || failed > 0 || verificationFailed),
-    estimatedCostUsd: events.reduce(
-      (total, event) => total + (event.type === "router.decision-made" ? event.payload.expectedCostUsd : 0),
-      0,
-    ),
+    // The Refiner's own derivation, so status and learning cannot disagree.
+    recovered: record.recovered,
+    firstAttemptSuccess: record.firstAttemptSuccess,
+    estimatedCostUsd: record.estimatedCostUsd,
+    observedCostUsd: record.observedCostUsd,
+    observedUsageReports: record.observedUsageReports,
     contextTokens: events.reduce(
       (total, event) => total + (event.type === "context.pack-selected" ? event.payload.totalTokens : 0),
       0,
@@ -222,7 +231,11 @@ export function summarizeOperatorWorks(statuses: readonly OperatorWorkStatus[]):
     readyToAccept: statuses.filter((item) => item.nextAction === "accept").length,
     recovered: statuses.filter((item) => item.metrics.recovered).length,
     repairAttempts: statuses.reduce((total, item) => total + item.metrics.repairAttempts, 0),
+    firstAttemptSuccesses: statuses.filter((item) => item.metrics.firstAttemptSuccess).length,
     estimatedCostUsd: statuses.reduce((total, item) => total + item.metrics.estimatedCostUsd, 0),
+    observedCostUsd: statuses.some((item) => item.metrics.observedCostUsd !== null)
+      ? statuses.reduce((total, item) => total + (item.metrics.observedCostUsd ?? 0), 0)
+      : null,
     humanInterventions,
     humanDecisions,
     interventionsPerAcceptedOutcome: accepted === 0 ? null : humanInterventions / accepted,
@@ -265,6 +278,8 @@ export interface OperatorReviewInput extends OperatorWriteOptions {
   summary: string;
   findings?: readonly { severity: "info" | "low" | "medium" | "high" | "critical"; summary: string }[];
   evidence?: readonly EvidenceRef[];
+  /** What the reviewing provider reported spending. Omit when it reported nothing. */
+  observedUsage?: ObservedUsage;
 }
 
 /** Record one complete, independent review lifecycle against the current contract revision. */
@@ -329,7 +344,13 @@ export async function recordOperatorReview(input: OperatorReviewInput): Promise<
       id: `event:review:${idFactory()}`,
       type: "review.result",
       evidence: [...(input.evidence ?? [])],
-      payload: { reviewId, contractRevision, status: input.status, summary: input.summary.slice(0, 2000) },
+      payload: {
+        reviewId,
+        contractRevision,
+        status: input.status,
+        summary: input.summary.slice(0, 2000),
+        ...(input.observedUsage ? { observedUsage: input.observedUsage } : {}),
+      },
     }),
   ];
   await appendAdmitted(input.ledger, events, candidates);

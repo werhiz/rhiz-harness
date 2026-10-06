@@ -157,12 +157,16 @@ Evidence-to-learning proposal lifecycle. Refiner produces reviewable promotion c
 The operator loop over one Work stream, with no host dependency:
 
 - `summarizeOperatorWork` and `summarizeOperatorWorks` give status, next action, and metrics. The
-  metrics are attempts, repairs, recovery, estimated cost, and human interventions per accepted
-  outcome.
+  metrics keep four facts apart: first-attempt success versus recovery, human interventions per
+  accepted outcome, and estimated cost (a Router prediction) versus observed cost (usage a provider
+  reported, `null` when none was). The Refiner's `deriveWorkRecord` is their single derivation, and
+  `RefinerAnalysis.record` carries the same record into learning.
 - `recordOperatorReview` records an independent review.
 - `acceptOperatorWork` records a human Board acceptance, then runs Refiner analysis and derives Router
   evidence.
-- `closeOrphanedAttempts` handles resume recovery.
+- `closeOrphanedAttempts` handles resume recovery. The runner keeps the verifier's refusal text per
+  failed verification (`adapters/local/verifier-refusals`), bound to the Ledger's own failing
+  `verification.result`, so a resumed run and the independent reviewer both see earlier refusals.
 
 Every write is projected through the Board before it is appended, so a refused decision never reaches
 the Ledger.

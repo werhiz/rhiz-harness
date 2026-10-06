@@ -101,6 +101,31 @@ export const RefinerProposalReviewSchema = z.object({
 }).strict();
 export type RefinerProposalReview = z.infer<typeof RefinerProposalReviewSchema>;
 
+/**
+ * What one Work cost the people and the providers, kept as four separate facts
+ * because they answer four different questions and none may stand in for
+ * another:
+ *
+ * - `firstAttemptSuccess`: accepted with one attempt and no failed attempt or
+ *   failed verification. A repaired Work is `recovered`, never this.
+ * - `recovered`: accepted after a failed attempt, a failed verification, or a
+ *   repair attempt.
+ * - `humanInterventions`: human decisions beyond stating and accepting the Work.
+ * - `estimatedCostUsd` versus `observedCostUsd`: a Router estimate is a
+ *   prediction made before the work; observed is what a provider reported
+ *   afterwards. Observed is null, not zero, when nothing was reported.
+ */
+export const WorkRecordSchema = z.object({
+  attempts: z.number().int().nonnegative(),
+  firstAttemptSuccess: z.boolean(),
+  recovered: z.boolean(),
+  humanInterventions: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+  observedCostUsd: z.number().nonnegative().nullable(),
+  observedUsageReports: z.number().int().nonnegative(),
+}).strict();
+export type WorkRecord = z.infer<typeof WorkRecordSchema>;
+
 export const RefinerAnalysisSchema = z.object({
   workId: id,
   outcome: z.enum(["accepted", "rejected", "cancelled", "failed"]),
@@ -108,6 +133,8 @@ export const RefinerAnalysisSchema = z.object({
   candidateProposalKinds: z.array(z.string()),
   ledgerEventCount: z.number().int().nonnegative(),
   ledgerSpanMs: z.number().int().nonnegative(),
+  /** Optional so analyses written before the record existed still parse; every analysis produced now carries it. */
+  record: WorkRecordSchema.optional(),
 }).strict();
 export type RefinerAnalysis = z.infer<typeof RefinerAnalysisSchema>;
 
@@ -272,6 +299,39 @@ export function countHumanInterventions(events: readonly HarnessEvent[]): number
   return events.filter((event) => event.actor.kind === "human" && types.includes(event.type)).length;
 }
 
+/** The one derivation of a Work's record; the Refiner and the operator status both read it. */
+export function deriveWorkRecord(workEvents: readonly HarnessEvent[]): WorkRecord {
+  const attempts = new Set(
+    workEvents.filter((event) => event.type === "attempt.started").map((event) => event.attemptId),
+  ).size;
+  const accepted = workEvents.some((event) => event.type === "work.accepted");
+  const repaired = attempts > 1
+    || workEvents.some((event) => event.type === "attempt.failed")
+    || workEvents.some((event) => event.type === "verification.result" && event.payload.status === "fail");
+  let estimatedCostUsd = 0;
+  let observedCostUsd = 0;
+  let observedUsageReports = 0;
+  for (const event of workEvents) {
+    if (event.type === "router.decision-made") estimatedCostUsd += event.payload.expectedCostUsd;
+    if (event.type === "attempt.finished" || event.type === "review.result") {
+      const usage = event.payload.observedUsage;
+      if (usage !== undefined) {
+        observedUsageReports += 1;
+        observedCostUsd += usage.costUsd ?? 0;
+      }
+    }
+  }
+  return {
+    attempts,
+    firstAttemptSuccess: accepted && !repaired,
+    recovered: accepted && repaired,
+    humanInterventions: countHumanInterventions(workEvents),
+    estimatedCostUsd,
+    observedCostUsd: observedUsageReports === 0 ? null : observedCostUsd,
+    observedUsageReports,
+  };
+}
+
 export function streamIdForWork(workId: string): string {
   const direct = `stream:${workId}`;
   if (direct.length <= 200) return direct;
@@ -283,7 +343,7 @@ export function analyzeClosedWorkFromEvents(
   workId: string,
   events: readonly HarnessEvent[],
   _config: RefinerConfig = DEFAULT_REFINER_CONFIG,
-): RefinerAnalysis {
+): RefinerAnalysis & { record: WorkRecord } {
   const workEvents = events.filter((event) => event.workId === workId);
   const accepted = workEvents.find((event) => event.type === "work.accepted");
   const rejected = workEvents.find((event) => event.type === "work.rejected");
@@ -304,13 +364,8 @@ export function analyzeClosedWorkFromEvents(
     // Acceptance after a failed attempt or a failed verification is a
     // recovery, not a first-attempt success. Calling every accepted Work
     // first-attempt quality would teach the Harness its repair loop never ran.
-    const attemptCount = new Set(
-      workEvents.filter((event) => event.type === "attempt.started").map((event) => event.attemptId),
-    ).size;
-    const recovered = attemptCount > 1
-      || workEvents.some((event) => event.type === "attempt.failed")
-      || workEvents.some((event) => event.type === "verification.result" && event.payload.status === "fail");
-    classifications.push(recovered ? "successful-recovery" : "high-quality-first-attempt");
+    const record = deriveWorkRecord(workEvents);
+    classifications.push(record.recovered ? "successful-recovery" : "high-quality-first-attempt");
     if (countHumanInterventions(workEvents) === 0) classifications.push("zero-human-intervention");
   } else {
     if (workEvents.some((event) => event.type === "attempt.failed")) {
@@ -358,6 +413,7 @@ export function analyzeClosedWorkFromEvents(
     candidateProposalKinds,
     ledgerEventCount: workEvents.length,
     ledgerSpanMs: spanMs,
+    record: deriveWorkRecord(workEvents),
   };
 }
 
