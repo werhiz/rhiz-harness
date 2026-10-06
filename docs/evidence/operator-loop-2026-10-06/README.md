@@ -13,7 +13,7 @@ receipt shows the Router reading the accepted first Work (`second-work-start.jso
 | Codex CLI 0.154.0 (ChatGPT login), model pinned to `gpt-5.5` by `codex-gpt55.sh` | worker | ran (real) |
 | Claude Code 2.1.290 login (`claude -p`) | independent reviewer | ran (real); reported USD 0.1883 |
 | MiniMax `opencode-go/minimax-m3` through OpenCode (`mm-reviewer.sh`) | independent reviewer | ran (real); reported no usage, so observed spend is "not reported" for it |
-| none | | no provider was BENCHMARK NOT RUN |
+| (none) | | No provider was BENCHMARK NOT RUN: all three were available and ran |
 
 Earlier transcripts are kept because they are true and instructive:
 
@@ -29,6 +29,14 @@ derived from that Ledger), `receipt.json` (last runner receipt), `second-work-st
 
 Honest limits: the live journey's killed attempt left no verifier refusal, so the carried-refusal
 property is proven by `test/operator-resume-journey.test.ts` (real processes, a fake Codex App Server
-that refuses once and then hangs, killed with SIGKILL) and by the A/B in the PR, not by this transcript.
+that refuses once and then hangs, killed with SIGKILL) and by an A/B run on this tree: with the carry line in `scripts/run-repository-work.mjs` replaced by an empty list, that test fails; restored, it passes.
 The Codex worker reports no token usage, so worker spend is unobserved; Router `medianCostUsd` stays
 null rather than reading the estimate.
+
+Build disclosure: the journey ran at code commit `280e83a` plus the `c8e9f96` display fix. A later
+independent review (see the PR) changed what `status` prints: the receipt-derived "reviewer spend" line
+was removed because the Ledger already holds provider-reported spend (`observed ...`), so the
+transcript's `reviewer spend $0.0000` lines, which disagree with `observed $0.1883`, come from the
+build that was reviewed and corrected. Journey semantics and the Ledger are unchanged by those fixes.
+Absolute paths in the transcripts and receipts are shown with `~` for the operator's home directory.
+The Ledger file is verbatim and hash-chained, so it is not edited.

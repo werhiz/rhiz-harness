@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -251,5 +251,37 @@ test("operator CLI: --help as the first argument prints usage and exits 0, as an
     const result = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
     assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
     assert.match(result.stdout, /Usage: rhiz-harness <command>/);
+  }
+});
+
+test("operator CLI: review refuses a diff too large to read whole, and reports a refusal file it did not carry", () => {
+  const f = fixture();
+  try {
+    const id = "work:operator-review-limits";
+    const w = f.writeWork(id, true);
+    const started = cliRun(f, ["start", "--contract", w.contract, "--verify", w.verify, "--json"]);
+    assert.equal(started.status, 0, started.stderr);
+    const commonDir = git(f.repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const ledgerDir = join(commonDir, "rhiz-harness", "ledgers", "work-operator-review-limits");
+    const reviewerPath = f.reviewer("review-pass.sh", "pass");
+
+    // A reviewer that saw only a prefix must not be able to pass the whole.
+    const tooLarge = spawnSync(process.execPath, [cli, "review", id, "--reviewer-command", reviewerPath, "--repo", f.repo], {
+      encoding: "utf8", env: { ...process.env, RHIZ_CODEX_COMMAND: f.codex, RHIZ_REVIEW_MAX_DIFF_BYTES: "5" },
+    });
+    assert.notEqual(tooLarge.status, 0);
+    assert.match(tooLarge.stderr, /over the 5 byte limit/);
+    assert.equal(json(cliRun(f, ["status", id, "--json"])).works[0].review.count, 0, "nothing was recorded");
+
+    // A damaged refusal file is reported to the person and in the receipt, never silently dropped.
+    mkdirSync(join(ledgerDir, "verifier-refusals"), { recursive: true });
+    writeFileSync(join(ledgerDir, "verifier-refusals", "junk.json"), "{not json");
+    const reviewed = cliRun(f, ["review", id, "--reviewer-command", reviewerPath, "--json"]);
+    assert.equal(reviewed.status, 0, reviewed.stderr);
+    const out = json(reviewed);
+    assert.equal(out.review.refusalsRejected.length, 1);
+    assert.match(out.review.refusalsRejected[0].reason, /unreadable/);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
   }
 });

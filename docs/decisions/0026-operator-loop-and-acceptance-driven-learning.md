@@ -126,9 +126,13 @@ outcome. It also reports `humanDecisions`, which counts every human decision inc
 judgment calls, and decisions per accepted outcome, so a reader can see that acceptance still needs a
 person.
 
-Cost appears as the sum of Router `expectedCostUsd`, labelled as an estimate. A reviewer that
-reports its spend, such as the Claude reviewer's `total_cost_usd`, records it in the review receipt.
-`status` sums those receipts as `reviewerCostUsd`, a measured spend shown next to the estimate.
+Cost appears in two places that are never merged. The sum of Router `expectedCostUsd` is an
+estimate. A provider that reports its spend, such as the Claude reviewer's `total_cost_usd`, records
+it on the Ledger as `observedUsage` on `review.result` (or `attempt.finished`); `status` and the
+Refiner's Work record read it from there, show `not reported` when nothing was reported, and never
+turn a tokens-only report into a cost of zero. The Refiner owns the one derivation of the Work
+record (`deriveWorkRecord`): first-attempt success, recovery (a failed attempt, verification, or
+independent review that the Work got past), human interventions, estimated cost, observed cost.
 
 ## Consequences
 

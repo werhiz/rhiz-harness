@@ -3,7 +3,7 @@
   "workId": "work:live-slugify",
   "candidateHead": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
   "reviewer": {
-    "id": "reviewer:command:/Users/werhiz/Developer/rhiz-harness-op3/docs/evidence/operator-loop-2026-10-06/mm-reviewer.sh",
+    "id": "reviewer:command:~/Developer/rhiz-harness-op3/docs/evidence/operator-loop-2026-10-06/mm-reviewer.sh",
     "kind": "verifier"
   },
   "model": null,

@@ -40,6 +40,6 @@ work:live-slugify  accepted  next: none  (Work is accepted)
 
 2 Work  1 accepted  0 rejected  1 open  0 ready to accept  1 recovered  interventions/accepted 0.00  decisions/accepted 3.00  reviewer spend $0.1883
 [exit 0]
-$ node api.mjs /Users/werhiz/Developer/rhiz-harness-op3/docs/evidence/operator-loop-2026-10-06/ledger-events.jsonl
+$ node api.mjs ~/Developer/rhiz-harness-op3/docs/evidence/operator-loop-2026-10-06/ledger-events.jsonl
 api ok {"state":"accepted","record":{"attempts":2,"firstAttemptSuccess":false,"recovered":true,"humanInterventions":0,"estimatedCostUsd":0,"observedCostUsd":0.18830100000000002,"observedUsageReports":1},"routerWorkers":["worker:codex-app-server"]}
 [exit 0]

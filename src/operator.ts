@@ -47,7 +47,9 @@ export interface OperatorWorkMetrics {
   estimatedCostUsd: number;
   /** Spend a provider reported, summed. Null when no provider reported any; null is not zero. */
   observedCostUsd: number | null;
-  /** How many attempts or reviews carried a provider-reported usage. */
+  /** How many provider reports carried a cost, which is how many the sum covers. */
+  observedCostReports: number;
+  /** How many attempts or reviews carried any provider-reported usage, tokens-only included. */
   observedUsageReports: number;
   contextTokens: number;
   /** Human decisions beyond stating the Work and accepting it. See HUMAN_INTERVENTION_EVENT_TYPES. */
@@ -154,6 +156,7 @@ export function summarizeOperatorWork(events: readonly HarnessEvent[]): Operator
     firstAttemptSuccess: record.firstAttemptSuccess,
     estimatedCostUsd: record.estimatedCostUsd,
     observedCostUsd: record.observedCostUsd,
+    observedCostReports: record.observedCostReports,
     observedUsageReports: record.observedUsageReports,
     contextTokens: events.reduce(
       (total, event) => total + (event.type === "context.pack-selected" ? event.payload.totalTokens : 0),

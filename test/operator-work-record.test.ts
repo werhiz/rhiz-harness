@@ -156,3 +156,38 @@ test("router: evidence cost comes only from provider-reported attempt usage, nev
   const withUsage = computeRouterEvidenceFromEvents([...reported, estimate, ...passingVerificationSequence(), event("work.accepted", { reason: "ok", contractRevision: 1 })]);
   assert.equal(withUsage.find((item) => item.workerId === worker.id)?.medianCostUsd, 0.07);
 });
+
+test("record: a tokens-only provider report is observed usage but never a cost of zero", async () => {
+  const contract = work({ verificationPolicy: { required: true, independentActor: true, reviewRequired: true, falsifiabilityExemptions: [] } });
+  const ledger = await ledgerWith([...successfulExecution(contract), ...passingVerificationSequence()]);
+  await recordOperatorReview({
+    ledger, streamId: STREAM, reviewer, status: "pass", summary: "fine", now, idFactory,
+    observedUsage: { source: "provider-reported", inputTokens: 900, outputTokens: 60 },
+  });
+  const record = deriveWorkRecord(await ledger.replay(STREAM));
+  assert.equal(record.observedUsageReports, 1);
+  assert.equal(record.observedCostReports, 0);
+  assert.equal(record.observedCostUsd, null, "no provider reported a cost, so none was observed");
+});
+
+test("record: observed cost sums only the reports that carried a cost and says how many that is", () => {
+  const costed = (costUsd: number, id: string) => event("review.result", {
+    reviewId: id, contractRevision: 1, status: "pass", summary: "ok", observedUsage: { source: "provider-reported", costUsd },
+  }, { actor: reviewer });
+  const tokensOnly = event("review.result", {
+    reviewId: "review:t", contractRevision: 1, status: "pass", summary: "ok", observedUsage: { source: "provider-reported", inputTokens: 10 },
+  }, { actor: reviewer });
+  const record = deriveWorkRecord([costed(0.1, "review:a"), costed(0.2, "review:b"), tokensOnly]);
+  assert.equal(record.observedUsageReports, 3);
+  assert.equal(record.observedCostReports, 2);
+  assert.ok(Math.abs((record.observedCostUsd ?? 0) - 0.3) < 1e-9);
+});
+
+test("record: an independent review that failed once makes the accepted Work a recovery, not a first-attempt success", () => {
+  const failedReview = event("review.result", { reviewId: "review:f", contractRevision: 1, status: "fail", summary: "defect" }, { actor: reviewer });
+  const events = acceptedEvents([failedReview]);
+  const record = deriveWorkRecord(events);
+  assert.equal(record.recovered, true);
+  assert.equal(record.firstAttemptSuccess, false);
+  assert.ok(analyzeClosedWorkFromEvents("work:1", events).classifications.includes("successful-recovery"));
+});

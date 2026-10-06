@@ -7,7 +7,7 @@
 // and the last run receipt, under <git-common-dir>/rhiz-harness/operator/.
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,7 +27,8 @@ import { parseWorkContract } from "../dist/src/schemas.js";
 
 const RUNNER = fileURLToPath(new URL("./run-repository-work.mjs", import.meta.url));
 const MAX_BUFFER = 64 * 1024 * 1024;
-const MAX_REVIEW_DIFF_BYTES = 200_000;
+// A review that saw only a prefix of the diff cannot honestly pass the whole of it.
+const MAX_REVIEW_DIFF_BYTES = Number(process.env.RHIZ_REVIEW_MAX_DIFF_BYTES) > 0 ? Number(process.env.RHIZ_REVIEW_MAX_DIFF_BYTES) : 200_000;
 
 function usage() {
   return [
@@ -95,44 +96,20 @@ async function readJsonIfPresent(path) {
   }
 }
 
-// Actual spend a reviewer reported, from the review receipts this CLI wrote.
-// Router cost on the Board is an estimate; this is a measurement.
-async function reviewerSpend(repo, workId) {
-  const directory = join(operatorDir(repo, workId), "reviews");
-  let names = [];
-  try { names = await readdir(directory); } catch (error) { if (error?.code !== "ENOENT") throw error; }
-  let total = 0;
-  const unreadable = [];
-  for (const name of names.filter((item) => item.endsWith(".json"))) {
-    try {
-      const record = await readJson(join(directory, name));
-      if (typeof record.costUsd === "number") total += record.costUsd;
-    } catch (error) {
-      // One bad receipt must not hide every Work; it is reported, not counted.
-      unreadable.push({ path: join(directory, name), error: error instanceof Error ? error.message : String(error) });
-    }
-  }
-  return { total, unreadable };
-}
-
 async function loadWorks(repo) {
   const { ledgers, unreadable } = await readRepositoryWorkLedgers(repo.commonDir);
   const works = [];
-  const unreadableReceipts = [];
   for (const ledger of ledgers) {
     for (const workId of ledger.workIds) {
       const events = ledger.events.filter((event) => event.workId === workId && event.streamId === streamIdForWork(workId));
       if (events.length === 0) continue;
       const status = summarizeOperatorWork(events);
-      const spend = await reviewerSpend(repo, workId);
-      const reviewerCostUsd = spend.total;
-      unreadableReceipts.push(...spend.unreadable);
       const lastEventAt = events.reduce((latest, event) => (event.occurredAt > latest ? event.occurredAt : latest), "");
-      works.push({ status, reviewerCostUsd, ledgerDirectory: ledger.directory, lastEventAt, events });
+      works.push({ status, ledgerDirectory: ledger.directory, lastEventAt, events });
     }
   }
   works.sort((left, right) => right.lastEventAt.localeCompare(left.lastEventAt));
-  return { works, unreadable, unreadableReceipts };
+  return { works, unreadable };
 }
 
 function pickWork(works, query, wanted) {
@@ -170,7 +147,7 @@ function money(value) {
   return `$${value.toFixed(value < 1 ? 4 : 2)}`;
 }
 
-function printStatus(status, reviewerCostUsd = 0) {
+function printStatus(status) {
   const lines = [
     `${status.workId}  ${status.state}  next: ${status.nextAction}  (${status.nextActionReason})`,
     `  attempts ${status.attempts.total}${status.attempts.budget === null ? "" : `/${status.attempts.budget}`}` +
@@ -180,8 +157,7 @@ function printStatus(status, reviewerCostUsd = 0) {
       `  decisions ${status.metrics.humanDecisions}  interventions ${status.metrics.humanInterventions}` +
       `  first-attempt ${status.metrics.firstAttemptSuccess ? "yes" : "no"}` +
       `  est. cost ${money(status.metrics.estimatedCostUsd)} (estimate)` +
-      `  observed ${status.metrics.observedCostUsd === null ? "not reported" : `${money(status.metrics.observedCostUsd)} (${status.metrics.observedUsageReports} provider report(s))`}` +
-      `  reviewer spend ${money(reviewerCostUsd)}` +
+      `  observed ${status.metrics.observedCostUsd === null ? "not reported" : `${money(status.metrics.observedCostUsd)} (${status.metrics.observedCostReports} provider cost report(s))`}` +
       `  elapsed ${Math.round(status.metrics.elapsedMs / 1000)}s`,
   ];
   if (status.violations > 0) lines.push(`  Board violations ${status.violations}`);
@@ -271,35 +247,30 @@ async function resume(repo, query, values) {
 }
 
 async function status(repo, query, values) {
-  const { works, unreadable, unreadableReceipts } = await loadWorks(repo);
+  const { works, unreadable } = await loadWorks(repo);
   const selected = query === undefined ? works : [pickWork(works, query)];
-  const digest = {
-    ...summarizeOperatorWorks(selected.map((item) => item.status)),
-    reviewerCostUsd: selected.reduce((total, item) => total + item.reviewerCostUsd, 0),
-  };
+  const digest = summarizeOperatorWorks(selected.map((item) => item.status));
   if (values.json) {
     process.stdout.write(`${JSON.stringify({
       schema: "rhiz/operator-status/v1",
       digest,
-      works: selected.map((item) => ({ ...item.status, reviewerCostUsd: item.reviewerCostUsd })),
+      works: selected.map((item) => item.status),
       unreadable,
-      unreadableReviewReceipts: unreadableReceipts,
     }, null, 2)}\n`);
-    return unreadable.length + unreadableReceipts.length > 0 ? 2 : 0;
+    return unreadable.length > 0 ? 2 : 0;
   }
   if (selected.length === 0) process.stdout.write("no Work in this repository yet\n");
-  for (const item of selected) printStatus(item.status, item.reviewerCostUsd);
+  for (const item of selected) printStatus(item.status);
   const perOutcome = digest.interventionsPerAcceptedOutcome;
   process.stdout.write(
     `\n${digest.works} Work  ${digest.accepted} accepted  ${digest.rejected} rejected  ${digest.open} open` +
     `  ${digest.readyToAccept} ready to accept  ${digest.recovered} recovered` +
     `  interventions/accepted ${perOutcome === null ? "n/a" : perOutcome.toFixed(2)}` +
     `  decisions/accepted ${digest.decisionsPerAcceptedOutcome === null ? "n/a" : digest.decisionsPerAcceptedOutcome.toFixed(2)}` +
-    `  reviewer spend ${money(digest.reviewerCostUsd)}\n`,
+    `  observed spend ${digest.observedCostUsd === null ? "not reported" : money(digest.observedCostUsd)}\n`,
   );
   for (const item of unreadable) process.stdout.write(`UNREADABLE Ledger ${item.directory}: ${item.error}\n`);
-  for (const item of unreadableReceipts) process.stdout.write(`UNREADABLE review receipt ${item.path}: ${item.error}\n`);
-  return unreadable.length + unreadableReceipts.length > 0 ? 2 : 0;
+  return unreadable.length > 0 ? 2 : 0;
 }
 
 // The Ledger the Work was discovered in is the one written to. A receipt is
@@ -317,7 +288,7 @@ async function withLedger(work, action) {
 }
 
 function refusalHistory(reading) {
-  if (reading.refusals.length === 0 && reading.missing.length === 0) return [];
+  if (reading.refusals.length === 0 && reading.missing.length === 0 && reading.rejected.length === 0) return [];
   return [
     "",
     "Earlier independent verification REFUSED prior attempts of this Work. The candidate below is the",
@@ -328,10 +299,11 @@ function refusalHistory(reading) {
       ...refusal.checks.map((check) => `  - ${check.checkId} ${check.status}: ${JSON.stringify(check.summary)}`),
     ]),
     ...(reading.missing.length > 0 ? [`Refusal text was not retained for: ${reading.missing.join(", ")}`] : []),
+    ...(reading.rejected.length > 0 ? [`${reading.rejected.length} refusal file(s) were damaged or did not match the Ledger and were NOT carried.`] : []),
   ];
 }
 
-function reviewPrompt(contract, diff, truncated, history = []) {
+function reviewPrompt(contract, diff, history = []) {
   return [
     "You are an independent code reviewer. You did not write this change.",
     "Judge only whether the diff accomplishes the objective within its write scope, meets every",
@@ -342,7 +314,7 @@ function reviewPrompt(contract, diff, truncated, history = []) {
     `Non-goals:\n${contract.nonGoals.map((item) => `- ${item}`).join("\n") || "- none"}`,
     ...history,
     "",
-    `Diff${truncated ? " (truncated)" : ""}:`,
+    "Diff:",
     "```diff",
     diff,
     "```",
@@ -411,11 +383,13 @@ async function review(repo, query, values) {
   requireCommit(repo, target.head);
   const contract = parseWorkContract(await readJson(join(dir, "contract.json")));
   const fullDiff = git(repo.root, ["diff", "--no-ext-diff", `${target.base}..${target.head}`]);
-  const truncated = Buffer.byteLength(fullDiff) > MAX_REVIEW_DIFF_BYTES;
-  const diff = truncated ? fullDiff.slice(0, MAX_REVIEW_DIFF_BYTES) : fullDiff;
+  if (Buffer.byteLength(fullDiff) > MAX_REVIEW_DIFF_BYTES) {
+    throw new Error(`the candidate diff is ${Buffer.byteLength(fullDiff)} bytes, over the ${MAX_REVIEW_DIFF_BYTES} byte limit a reviewer can read whole; a pass on a prefix would be recorded as a pass on all of it. Split the Work, or review the diff by hand and record that decision.`);
+  }
+  const diff = fullDiff;
   const startedAt = Date.now();
   const refusals = await readVerifierRefusals({ ledgerDirectory: work.ledgerDirectory, workId, events: work.events });
-  const result = runReviewer(values, reviewPrompt(contract, diff, truncated, refusalHistory(refusals)), repo.root);
+  const result = runReviewer(values, reviewPrompt(contract, diff, refusalHistory(refusals)), repo.root);
   const status = await withLedger(work, (ledger) => recordOperatorReview({
     ledger,
     streamId: work.status.streamId,
@@ -434,18 +408,22 @@ async function review(repo, query, values) {
     model: result.model,
     costUsd: result.costUsd,
     durationMs: Date.now() - startedAt,
-    diffTruncated: truncated,
+    refusalsCarried: refusals.refusals.length,
+    refusalsMissing: refusals.missing,
+    refusalsRejected: refusals.rejected,
     verdict: result.verdict,
   };
   await mkdir(join(dir, "reviews"), { recursive: true });
-  await writeFile(join(dir, "reviews", `${new Date().toISOString().replaceAll(":", "-")}.json`), `${JSON.stringify(record, null, 2)}\n`);
+  await writeFile(join(dir, "reviews", `${new Date().toISOString().replaceAll(":", "-")}.json`), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   if (values.json) {
     process.stdout.write(`${JSON.stringify({ review: record, status }, null, 2)}\n`);
   } else {
     process.stdout.write(`review ${result.verdict.status}  ${result.verdict.summary}\n`);
     for (const finding of result.verdict.findings) process.stdout.write(`  ${finding.severity}  ${finding.summary}\n`);
     if (result.costUsd !== null) process.stdout.write(`  reviewer cost ${money(result.costUsd)}\n`);
-    printStatus(status, (await reviewerSpend(repo, workId)).total);
+    for (const item of refusals.rejected) process.stdout.write(`  WARNING refusal file not carried: ${item.path}: ${item.reason}\n`);
+    for (const item of refusals.missing) process.stdout.write(`  WARNING refusal text not retained for ${item}\n`);
+    printStatus(status);
   }
   return result.verdict.status === "pass" ? 0 : 1;
 }
@@ -479,7 +457,7 @@ async function accept(repo, query, values) {
     return 0;
   }
   process.stdout.write(`accepted  ${workId}  by ${actor.id}\n`);
-  printStatus(result.status, (await reviewerSpend(repo, workId)).total);
+  printStatus(result.status);
   const analysis = result.learning.analysis;
   if (analysis) process.stdout.write(`  learned  ${analysis.classifications.join(", ") || "nothing new"}\n`);
   for (const proposal of result.learning.proposals) process.stdout.write(`  proposal ${proposal.kind}: ${proposal.title}\n`);

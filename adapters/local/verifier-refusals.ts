@@ -160,6 +160,13 @@ export async function readVerifierRefusals(input: {
     const { digest, ...body } = parsed;
     if (digestOf(body) !== digest) { rejected.push({ path, reason: "digest does not match its content" }); continue; }
     if (parsed.workId !== input.workId) continue; // another Work's refusal in a shared directory
+    // The file name is derived from the event it explains. A copy under any
+    // other name, however well its digest checks out, is not the file this
+    // module wrote and must not shadow the genuine one.
+    if (name !== fileNameFor(parsed.verificationResultEventId)) {
+      rejected.push({ path, reason: "file name does not match the verification event it claims to explain" });
+      continue;
+    }
     if (failing.get(parsed.verificationResultEventId) !== parsed.verificationId) {
       rejected.push({ path, reason: "does not match a failing verification.result of this Work in the Ledger" });
       continue;

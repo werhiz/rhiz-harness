@@ -108,8 +108,8 @@ export type RefinerProposalReview = z.infer<typeof RefinerProposalReviewSchema>;
  *
  * - `firstAttemptSuccess`: accepted with one attempt and no failed attempt or
  *   failed verification. A repaired Work is `recovered`, never this.
- * - `recovered`: accepted after a failed attempt, a failed verification, or a
- *   repair attempt.
+ * - `recovered`: accepted after a failed attempt, a failed verification, a
+ *   failed independent review, or a repair attempt.
  * - `humanInterventions`: human decisions beyond stating and accepting the Work.
  * - `estimatedCostUsd` versus `observedCostUsd`: a Router estimate is a
  *   prediction made before the work; observed is what a provider reported
@@ -121,7 +121,11 @@ export const WorkRecordSchema = z.object({
   recovered: z.boolean(),
   humanInterventions: z.number().int().nonnegative(),
   estimatedCostUsd: z.number().nonnegative(),
+  /** Sum of the provider-reported costs only. Null unless at least one report carried a cost. */
   observedCostUsd: z.number().nonnegative().nullable(),
+  /** Reports that carried a cost, so a reader knows how many the sum covers. */
+  observedCostReports: z.number().int().nonnegative(),
+  /** Reports of any kind, tokens-only ones included. */
   observedUsageReports: z.number().int().nonnegative(),
 }).strict();
 export type WorkRecord = z.infer<typeof WorkRecordSchema>;
@@ -307,9 +311,12 @@ export function deriveWorkRecord(workEvents: readonly HarnessEvent[]): WorkRecor
   const accepted = workEvents.some((event) => event.type === "work.accepted");
   const repaired = attempts > 1
     || workEvents.some((event) => event.type === "attempt.failed")
-    || workEvents.some((event) => event.type === "verification.result" && event.payload.status === "fail");
+    || workEvents.some((event) => event.type === "verification.result" && event.payload.status === "fail")
+    // An independent reviewer refusing the Work once is a refusal the Work then got past.
+    || workEvents.some((event) => event.type === "review.result" && event.payload.status === "fail");
   let estimatedCostUsd = 0;
   let observedCostUsd = 0;
+  let observedCostReports = 0;
   let observedUsageReports = 0;
   for (const event of workEvents) {
     if (event.type === "router.decision-made") estimatedCostUsd += event.payload.expectedCostUsd;
@@ -317,7 +324,10 @@ export function deriveWorkRecord(workEvents: readonly HarnessEvent[]): WorkRecor
       const usage = event.payload.observedUsage;
       if (usage !== undefined) {
         observedUsageReports += 1;
-        observedCostUsd += usage.costUsd ?? 0;
+        if (usage.costUsd !== undefined) {
+          observedCostReports += 1;
+          observedCostUsd += usage.costUsd;
+        }
       }
     }
   }
@@ -327,7 +337,9 @@ export function deriveWorkRecord(workEvents: readonly HarnessEvent[]): WorkRecor
     recovered: accepted && repaired,
     humanInterventions: countHumanInterventions(workEvents),
     estimatedCostUsd,
-    observedCostUsd: observedUsageReports === 0 ? null : observedCostUsd,
+    // A tokens-only report is not a cost of zero.
+    observedCostUsd: observedCostReports === 0 ? null : observedCostUsd,
+    observedCostReports,
     observedUsageReports,
   };
 }

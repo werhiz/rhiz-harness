@@ -129,3 +129,25 @@ test("refusals of every earlier attempt are returned oldest first and written on
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a copy under another file name is rejected even with a valid digest, and cannot shadow the genuine file", async () => {
+  const dir = directory();
+  try {
+    const result = failingResult("verification:1");
+    const genuine = buildVerifierRefusal({
+      workId: "work:1", attemptNumber: 1, attemptId: "attempt:1", verificationId: "verification:1",
+      verificationResultEventId: result.id, checks: [{ checkId: "check:b", status: "fail", summary: "genuine" }],
+    });
+    const path = await writeVerifierRefusal(dir, genuine);
+    const shadow = buildVerifierRefusal({
+      workId: "work:1", attemptNumber: 1, attemptId: "attempt:1", verificationId: "verification:1",
+      verificationResultEventId: result.id, checks: [{ checkId: "check:b", status: "fail", summary: "shadow" }],
+    });
+    writeFileSync(join(path, "..", "0000-shadow.json"), JSON.stringify(shadow));
+    const reading = await readVerifierRefusals({ ledgerDirectory: dir, workId: "work:1", events: [result] });
+    assert.deepEqual(reading.refusals.map((item) => item.checks[0]!.summary), ["genuine"]);
+    assert.match(reading.rejected[0]!.reason, /file name/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
