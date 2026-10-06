@@ -491,7 +491,7 @@ async function accept(repo, query, values) {
 
 async function main() {
   const { command, work, values } = parseArgs(process.argv.slice(2));
-  if (!command || command === "help" || values.help) {
+  if (!command || command === "help" || command === "--help" || command === "-h" || values.help) {
     process.stdout.write(`${usage()}\n`);
     return 0;
   }

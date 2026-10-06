@@ -245,3 +245,11 @@ test("operator CLI: start, status, review, accept, and the Router learns from th
     rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+test("operator CLI: --help as the first argument prints usage and exits 0, as an installed binary is first run", () => {
+  for (const args of [["--help"], ["-h"], ["help"], []]) {
+    const result = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
+    assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
+    assert.match(result.stdout, /Usage: rhiz-harness <command>/);
+  }
+});
