@@ -1,4 +1,4 @@
-# clean external package-consumer proof: npm pack of code head b1a32e10ac1b1d5024116e35d9d5525674ca8c95 (exit 0, 172 files; the evidence commit after it changes only docs/, which the package does not ship), npm install of that tarball into a brand-new project outside any repo (exit 0); zod resolved from the registry
+# clean external package-consumer proof: npm pack of code head 1a18ead1739b8f258d965e10c3586eb16079f63d (exit 0; the evidence commit after it changes only docs/, which the package does not ship), npm install of that tarball into a brand-new project outside any repo (exit 0); zod resolved from the registry
 $ npx --no-install rhiz-harness --help
 Usage: rhiz-harness <command> [work] [options]
 
@@ -33,13 +33,13 @@ prepare.json is optional trusted operator setup:
 $ npx --no-install rhiz-harness status --repo /private/tmp/claude-501/op3-journey/fx/repo
 work:live-slugify-2  reviewing  next: review  (verified, waiting on an independent review)
   attempts 1/3  failed 0  verification pass  review required
-  outcome open  recovered no  decisions 1  interventions 0  first-attempt no  est. cost $0.0000 (estimate)  observed not reported  reviewer spend $0.0000  elapsed 17s
+  outcome open  recovered no  decisions 1  interventions 0  first-attempt no  est. cost $0.0000 (estimate)  observed not reported  elapsed 17s
 work:live-slugify  accepted  next: none  (Work is accepted)
   attempts 2/3  failed 1  verification pass  review pass
-  outcome accepted  recovered yes  decisions 2  interventions 0  first-attempt no  est. cost $0.0000 (estimate)  observed $0.1883 (1 provider report(s))  reviewer spend $0.1883  elapsed 81s
+  outcome accepted  recovered yes  decisions 2  interventions 0  first-attempt no  est. cost $0.0000 (estimate)  observed $0.1883 (1 provider cost report(s))  elapsed 81s
 
-2 Work  1 accepted  0 rejected  1 open  0 ready to accept  1 recovered  interventions/accepted 0.00  decisions/accepted 3.00  reviewer spend $0.1883
+2 Work  1 accepted  0 rejected  1 open  0 ready to accept  1 recovered  interventions/accepted 0.00  decisions/accepted 3.00  observed spend $0.1883
 [exit 0]
 $ node api.mjs ~/Developer/rhiz-harness-op3/docs/evidence/operator-loop-2026-10-06/ledger-events.jsonl
-api ok {"state":"accepted","record":{"attempts":2,"firstAttemptSuccess":false,"recovered":true,"humanInterventions":0,"estimatedCostUsd":0,"observedCostUsd":0.18830100000000002,"observedUsageReports":1},"routerWorkers":["worker:codex-app-server"]}
+api ok {"state":"accepted","record":{"attempts":2,"firstAttemptSuccess":false,"recovered":true,"humanInterventions":0,"estimatedCostUsd":0,"observedCostUsd":0.18830100000000002,"observedCostReports":1,"observedUsageReports":1},"routerWorkers":["worker:codex-app-server"]}
 [exit 0]
