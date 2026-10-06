@@ -1,11 +1,57 @@
 # Agent proof and GitHub Actions spend
 
-**Decision (2026-09-28):** GitHub Actions workflows in this repository run by
-manual dispatch only. The organization exhausted its included Actions minutes
-and reached its configured spending cap. Routine PR and main pushes do not buy
-hosted proof. `scripts/check-ci-trigger-budget.mjs`, run first by
-`npm run check`, refuses a new automatic trigger or workflow without a new
-cost and outcome decision.
+**Decision (2026-10-01), superseding 2026-09-28 for this repository:** the
+repository is public, so GitHub-hosted Linux minutes cost nothing and outside
+contributors need hosted proof on their pull requests. Kernel CI therefore runs
+on every pull request and every push to `main`, and it still accepts manual
+dispatch. A newer push to the same pull request cancels its unfinished run.
+
+The Codex App Server canary stays manual-only. It needs a self-hosted machine
+holding operator credentials. Because no self-hosted runner is available to
+this public repository, the workflow cannot currently run here. The canary is
+proven by the operator running `npm run canary:codex` against the exact
+candidate, as the check agent below records.
+
+**What actually protects that machine from a fork.** On a `pull_request` event
+GitHub runs the workflow files from the pull request itself, so a fork can
+edit any workflow, and no check inside the repository can stop that. Two
+settings carry the guarantee instead:
+
+- Fork pull request workflows require maintainer approval for **all**
+  external contributors (`all_external_contributors`, set 2026-10-01). No
+  outside code runs until a maintainer has read it.
+- No self-hosted runner is registered to this repository. An
+  organization runner group must keep "allow public repositories" off. That
+  setting needs organization-admin access to read, and it has to be confirmed
+  there.
+
+`scripts/check-ci-trigger-budget.mjs`, run first by `npm run check`, prevents
+the other failure: a maintainer merging an unsafe workflow by accident. It
+judges the decoded YAML, not the raw text, so flow-style mappings, quoted or
+escaped keys, and complex keys are checked by what they decode to. Duplicate
+keys, aliases, custom tags, and multi-document files are refused. It holds each workflow to its recorded triggers.
+Every automatic workflow must also:
+
+- run only on free standard GitHub-hosted labels, as one label. Larger runners
+  bill even on a public repository, and matrix-chosen runners are refused.
+- set top-level permissions to exactly `contents: read`, with no job-level
+  permissions.
+- mention `secrets`, in any letter case, in no string that evaluates an
+  expression, and declare no key named `secrets` (as in `secrets: inherit`). The automatic `GITHUB_TOKEN` remains available
+  to every job, limited to read access by the permissions above.
+- call no reusable workflow.
+
+`test/ci-trigger-budget.test.ts` plants each known bypass and requires the
+gate to refuse it for the stated reason.
+
+**Decision (2026-09-28), now historical:** while the repository was private, the
+organization exhausted its included Actions minutes, so every workflow ran by
+manual dispatch only.
+
+Hosted Kernel CI now runs the build, the full test suite, the guard falsifiers,
+and the DSH SDK and product smoke runs. The check agent below remains the proof
+for what hosted CI cannot run: the darwin containment suites and the Codex
+canary.
 
 ## The check agent
 
@@ -32,9 +78,9 @@ exception that names the failed or unrun proof and the consequence of landing.
 Do not turn an agent's opinion or an empty GitHub check into a green test claim.
 
 One full proof per exact candidate is the default. Rerun a failed portion to
-diagnose a specific failure, and rerun after a code change. Manual Actions
-dispatch remains available when its particular host environment is necessary
-and the spend is deliberately approved. It is not the routine merge gate.
+diagnose a specific failure, and rerun after a code change. Hosted Kernel CI
+on the exact head is part of the merge gate; it does not replace the darwin and
+canary proof above.
 
 ## Cost and friction decisions
 
@@ -47,7 +93,8 @@ and a date to inspect the result again. The verdict is **keep**, **change**, or
 First case: in September 2026 hosted GitHub Actions minutes for this repository
 were measured against the proof they produced. A hosted check on PR #124
 failed before any job step, supplying no proof for that candidate at real
-cost. The decision here is to retire automatic Actions for rhiz-harness and
-use the independent check agent. Other repositories need their own review
+cost. The decision then was to retire automatic Actions for rhiz-harness and use
+the independent check agent; the 2026-10-01 public-repository decision above
+superseded it. Other repositories need their own review
 before a production deploy or payment audit is retired.
 

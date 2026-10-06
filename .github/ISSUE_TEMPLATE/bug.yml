@@ -1,0 +1,37 @@
+name: Bug
+description: Something behaves differently from its contract, documentation, or ADR.
+labels: [bug]
+body:
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: The exact Harness commit you ran.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should have happened, and which contract, doc, or ADR says so.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happened, with Ledger events or receipts if you have them. Remove secrets and private repository content.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimum reproduction
+      description: Commands or a test case. A failing test is the most useful form.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node and npm versions, host, worker provider, and model.

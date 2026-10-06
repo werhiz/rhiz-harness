@@ -399,6 +399,111 @@
       "file": "src/router.ts",
       "remove": "&& !executors.has(proof.actor.id);",
       "testFile": "dist/test/router.test.js"
+    },
+    {
+      "id": "ci/automatic-workflows-use-hosted-runners",
+      "why": "An automatic workflow on any label other than a free GitHub-hosted one either bills per minute on every pull request or can route a pull request's code to a self-hosted machine holding operator credentials.",
+      "file": "scripts/check-ci-trigger-budget.mjs",
+      "remove": "      if (typeof label !== \"string\" || !FREE_HOSTED_RUNNERS.has(label)) {\n        problems.push(`job ${name} runs-on ${JSON.stringify(job[\"runs-on\"] ?? null)} is not a free GitHub-hosted runner label`);\n      }\n",
+      "testFile": "dist/test/ci-trigger-budget.test.js"
+    },
+    {
+      "id": "ci/automatic-workflows-hold-no-secrets",
+      "why": "Any secrets reference in a workflow that pull requests trigger is a credential exposed to code the maintainers have not reviewed.",
+      "file": "scripts/check-ci-trigger-budget.mjs",
+      "remove": "    if (text.includes(\"${{\") && /secrets/i.test(text)) {\n      problems.push(\"references secrets in an expression\");\n      break;\n    }\n",
+      "testFile": "dist/test/ci-trigger-budget.test.js"
+    },
+    {
+      "id": "observer/no-verified-outcome-means-no-north-star",
+      "why": "Dividing interventions by zero verified outcomes reports a flattering zero or infinity; a population that verified nothing has no North Star value.",
+      "file": "src/observer.ts",
+      "remove": "verifiedOutcomes === 0 ? null : ",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "observer/falsified-criterion-is-not-quiet",
+      "why": "A criterion with an executed negative control has shown it can fail; calling it inert would propose weakening a proven check.",
+      "file": "src/observer.ts",
+      "remove": "    if (entry.failures > 0 || entry.proven) continue;\n",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "replay/refused-pair-is-reported-never-dropped",
+      "why": "An experiment that silently discards pairs failing its controls can prove anything; a refused pair must make the result unclaimable.",
+      "file": "src/replay.ts",
+      "remove": "      refusedPairs.push({ index, benchmarkCaseId: pair.baseline.benchmarkCaseId, reason });\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/missing-trials-are-insufficient",
+      "why": "A case with fewer paired trials than the experiment asked for would otherwise shrink the denominator and still yield a verdict.",
+      "file": "src/replay.ts",
+      "remove": "  } else if (trialsByCase.some((entry) => entry.accepted < entry.required)) {\n    verdict = \"insufficient-evidence\";\n    const short = trialsByCase.filter((entry) => entry.accepted < entry.required);\n    reasons.push(`${short.length} case(s) have fewer than ${spec.trialsPerArm} paired trials`);\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/one-trial-counts-once",
+      "why": "A trial supplied twice would let a single run satisfy trialsPerArm and carry a verdict on its own.",
+      "file": "src/replay.ts",
+      "remove": "      return refuse(\"an attempt in this pair is already counted, in this pair or an earlier one\");\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/a-a-pair-is-not-evidence",
+      "why": "A pair whose arms differ in nothing the experiment varies measures noise and would be scored as the change's effect.",
+      "file": "src/replay.ts",
+      "remove": "      return refuse(`the pair changes nothing on ${unchanged.join(\", \")}, which the experiment says it varies`);\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/arms-hold-one-configuration",
+      "why": "Arms that drift or swap between pairs compare nothing, yet would aggregate into a verdict.",
+      "file": "src/replay.ts",
+      "remove": "        return refuse(`${arm} arm ran ${JSON.stringify(observed)}, but earlier pairs' ${arm} arm ran ${JSON.stringify(established)}`);\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "replay/intervention-floors-never-decide",
+      "why": "A runner-observed intervention count is a floor; letting it decide would reward a change that moves work onto checks the runner cannot see.",
+      "file": "src/replay.ts",
+      "remove": "    baseline.interventionCoverage === \"complete\" &&\n    candidate.interventionCoverage === \"complete\" &&\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "observer/conflicting-event-ids-fail-closed",
+      "why": "Two different events claiming one id is corrupt evidence; folding either silently would let a forged or damaged Ledger shape the observation.",
+      "file": "src/observer.ts",
+      "remove": "      throw new Error(`two different Ledger events share id ${event.id}`);\n",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "observer/success-is-verified-and-accepted",
+      "why": "A run that verified and then failed, was interrupted, or was rejected is not a successful outcome under the Benchmark Contract; counting it inflates the North Star and can make replay call a failing candidate improved.",
+      "file": "src/observer.ts",
+      "remove": " && (run.outcome === \"verified\" || run.outcome === \"accepted\")",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "observer/conflicting-run-attempts-fail-closed",
+      "why": "Two different receipts claiming one attempt would count a single execution several times and can carry a finding on one run.",
+      "file": "src/observer.ts",
+      "remove": "        throw new Error(`two different benchmark runs claim attempt ${attempt}`);\n",
+      "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "replay/cases-weigh-equally",
+      "why": "Arms pool across cases; a surplus pair for one case would weight it more heavily, so re-running a favourable case could decide the verdict.",
+      "file": "src/replay.ts",
+      "remove": "      return refuse(`case ${pair.baseline.benchmarkCaseId} already has the ${spec.trialsPerArm} paired trials the experiment asks for; a surplus trial would weight that case more heavily`);\n",
+      "testFile": "dist/test/replay.test.js"
+    },
+    {
+      "id": "observer/floors-never-rank-cohorts",
+      "why": "A runner-observed intervention count is a floor; letting it rank cohorts would let a floor choose, or by its presence reorder, the worker a routing finding recommends.",
+      "file": "src/observer.ts",
+      "remove": "cohort.interventionCoverage === \"complete\" && ",
+      "testFile": "dist/test/observer.test.js"
     }
   ]
 }

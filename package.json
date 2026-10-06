@@ -37,6 +37,8 @@
     "check:ci-parity": "node scripts/check-ci-parity.mjs",
     "benchmark:compare": "npm run build && node scripts/compare-benchmark-runs.mjs",
     "check:ci-trigger-budget": "node scripts/check-ci-trigger-budget.mjs",
+    "factory:observe": "npm run build && node scripts/factory.mjs observe",
+    "factory:replay": "npm run build && node scripts/factory.mjs replay",
     "operator": "npm run build && node scripts/rhiz-harness.mjs"
   },
   "files": [
@@ -57,7 +59,8 @@
   },
   "devDependencies": {
     "@types/node": "26.2.0",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "yaml": "2.9.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

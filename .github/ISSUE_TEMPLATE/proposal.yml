@@ -1,0 +1,25 @@
+name: Proposal
+description: A new capability, adapter, scorer, detector, or architectural change.
+labels: [proposal]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and evidence
+      description: The failure, intervention, or missing measurement this addresses, with the evidence that it is real (runs, receipts, Observer findings).
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What changes, and which existing module (Board, Crew, Guard, Verify, Ledger, Router, Context, Rules, Refiner, Observer) owns it. Say why no existing seam suffices if you propose a new one.
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: How it will be proven
+      description: The test, falsifier, or replay experiment that would show it works, and what would show it does not.
+    validations:
+      required: true

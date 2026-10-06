@@ -1,10 +1,19 @@
 name: Kernel CI
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# One run per pull request or ref. A new push supersedes an unfinished run of
+# the same pull request; main pushes each keep their own run.
+concurrency:
+  group: kernel-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
