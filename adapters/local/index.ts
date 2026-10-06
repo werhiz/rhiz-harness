@@ -3,3 +3,5 @@ export * from "./command-verifier.js";
 export * from "./durable-ledger.js";
 export * from "./work-ledgers.js";
 export * from "./verifier-refusals.js";
+export * from "./http-effect-worker.js";
+export * from "./sandbox.js";

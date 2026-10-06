@@ -192,7 +192,7 @@
     },
     {
       "id": "disposable/an-unresolvable-symlink-refuses-the-derivative",
-      "why": "A broken or cyclic link has no kernel witness of where it lands, and computing where it WOULD land means reimplementing partial path resolution \u2014 a clever containment proof that will eventually be wrong. Without this refusal a broken link whose target would land outside is accepted on no evidence at all.",
+      "why": "A broken or cyclic link has no kernel witness of where it lands, and computing where it WOULD land means reimplementing partial path resolution — a clever containment proof that will eventually be wrong. Without this refusal a broken link whose target would land outside is accepted on no evidence at all.",
       "file": "src/disposable.ts",
       "remove": "  throw new DerivativeLinkEscapeError(\n    unresolvable === \"ENOENT\"\n      ? `symlink ${relPath} -> ${target} is broken; where it would resolve once its target exists cannot be proven, so the derivative is refused`\n      : `symlink ${relPath} -> ${target} cannot be resolved by the kernel (${unresolvable}); a link with no kernel witness of where it lands cannot be proven contained`,\n    relPath,\n    target,\n  );\n",
       "testFile": "dist/test/disposable-symlinks.test.js"
@@ -346,14 +346,14 @@
     },
     {
       "id": "crew/dependency-output-is-not-spliced-into-objective",
-      "why": "Constitution \u00a79 forbids prompt text as an enforcement boundary. A SHIP worker's free-text summary must not reach a downstream worker's instruction channel; the only path is the typed TaintedAttachment array, which the adapter renders as fenced data (#15).",
+      "why": "Constitution §9 forbids prompt text as an enforcement boundary. A SHIP worker's free-text summary must not reach a downstream worker's instruction channel; the only path is the typed TaintedAttachment array, which the adapter renders as fenced data (#15).",
       "file": "src/crew.ts",
       "remove": "        taintedAttachments: missionContext.taintedAttachments,\n",
       "testFile": "dist/test/crew.test.js"
     },
     {
       "id": "crew/attempt-respects-deadline",
-      "why": "Constitution \u00a710 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
+      "why": "Constitution §10 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
       "file": "src/crew.ts",
       "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false },\n          { taskId, attemptId, actor: workerActor },\n          deadlineObservedAt,\n        );\n",
       "testFile": "dist/test/crew-deadline.test.js"
@@ -504,6 +504,13 @@
       "file": "src/observer.ts",
       "remove": "cohort.interventionCoverage === \"complete\" && ",
       "testFile": "dist/test/observer.test.js"
+    },
+    {
+      "id": "guard/required-durable-admission-before-effect",
+      "why": "A permitted external mutation with a failed Ledger admission loses reconstructible authority evidence.",
+      "file": "src/guard.ts",
+      "remove": "      if (this.#options.requireRecordBeforeEffect) {\n        // Authorization may allow the action, but the required durable admission\n        // did not complete. Return a refusal without exposing the storage error.\n        return { ...evaluation, verdict: { ...evaluation.verdict, decision: \"forbid\",\n          rationale: \"Required Guard admission could not be recorded; execution refused.\",\n          ruleHits: [...evaluation.verdict.ruleHits, \"guard-record:required-write-failed\"] } };\n      }",
+      "testFile": "dist/test/http-effects.test.js"
     }
   ]
 }

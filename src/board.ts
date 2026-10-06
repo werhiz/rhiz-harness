@@ -190,6 +190,7 @@ export interface ProjectionViolation {
     | "review-not-active"
     | "acceptance-preconditions-not-met"
     | "invalid-work-lifecycle-transition"
+    | "invalid-work-correction"
     | "integration-already-initialized"
     | "integration-initialized-during-active-work"
     | "integration-not-initialized"
@@ -1127,6 +1128,13 @@ export function projectEvent(input: BoardProjection, event: HarnessEvent): Board
     case "work.cancelled": {
       if (event.payload.contractRevision !== board.contractRevision) {
         return violation(board, event, "revision-mismatch", `${event.type} references a stale contract revision`);
+      }
+      if (event.type === "work.rejected" && event.payload.correction) {
+        const ids = event.payload.correction.criterionIds;
+        if (event.actor.kind !== "human" || !event.evidence.length || hasActiveLifecycle(board) ||
+            new Set(ids).size !== ids.length || ids.some((id) => !board.contract?.acceptanceCriteria.some((criterion) => criterion.id === id))) {
+          return violation(board, event, "invalid-work-correction", "a correction requires an idle Work, human decision, evidence and current criteria");
+        }
       }
       return { ...board, state: event.type === "work.rejected" ? "rejected" : "cancelled" };
     }

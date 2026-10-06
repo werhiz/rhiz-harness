@@ -112,6 +112,27 @@ Keeping both layers prevents a single provider integration defect from becoming 
 
 ## Durable Guard records
 
+Crew requires its admission record before returning permission to perform a native
+effect. A failed Ledger append therefore returns `forbid` with
+`guard-record:required-write-failed`. Callers using advisory recording retain their
+existing behavior; they must not claim reconstructible effect admission.
+
+### Bound HTTP effects
+
+An isolated worker may receive an optional host broker port through Crew. It names
+an immutable HTTPS method, target and nonsecret headers. The Work must independently
+grant `http-effect:<METHOD>:<URL>` with `read` for GET or `external-mutate` for POST.
+Filesystem category authority grants no network or external-mutation permission.
+Guard checks the exact binding; the broker performs the request only after durable
+admission and a current Attempt lease. Human approval requirements remain refusals.
+
+Credentials stay in a host callback. The sandboxed worker has no direct network
+access and may invoke only the named effect. Redirects and automatic retries are
+disabled. A lost response after dispatch means unknown outcome, never evidence that
+no write happened. The contained HTTP worker reserves its private response artifact
+under Guard before mutation. Independent Verify and human acceptance remain separate
+from a successful HTTP response, and software acceptance asserts no customer Outcome.
+
 The live Guard decision may inspect raw arguments. Durable evidence stores a bounded summary:
 
 - argument keys;

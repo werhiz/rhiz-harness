@@ -27,9 +27,9 @@ reached Router or Refiner through a path a person could use.
 
 ## Decision
 
-### D1. Five operator verbs, one owner of each fact
+### D1. Operator verbs, one owner of each fact
 
-`rhiz-harness start | status | resume | review | accept` operate on repository Work.
+`rhiz-harness start | status | resume | review | accept | reject | harvest` operate on repository Work.
 
 | Verb | What it does | What owns the fact |
 | --- | --- | --- |
@@ -38,6 +38,8 @@ reached Router or Refiner through a path a person could use.
 | `resume` | Closes an attempt whose process ended without a terminal event as a recoverable failure, then spends the remaining budget on the same Work | Ledger attempt history |
 | `review` | Records one complete independent review lifecycle against the verified candidate diff | Board review lifecycle |
 | `accept` | Records the Board decision for a human actor, then hands the closed stream to Refiner and Router | Board acceptance |
+| `reject` | Records a human rejection with attributable cause, requested repair, current criteria and evidence, then requests Harvest | Board rejection, Refiner proposals |
+| `harvest` | Resumes proposal creation from a valid closed canonical stream, preserving existing proposals | Refiner, Ledger |
 
 The portable logic lives in `src/operator.ts` and imports no host. The CLI
 (`scripts/rhiz-harness.mjs`) is a local adapter. It keeps only the inputs needed to run the same
@@ -92,6 +94,18 @@ first-attempt success:
 - `zero-human-intervention` applies when no intervention event was recorded.
 
 Proposals stay reviewable `refiner.proposed` events. Nothing is promoted automatically.
+
+A typed human correction on `work.rejected` records an asserted cause, never an
+automatically proven diagnosis. The rejection commits before Refiner runs. Proposal
+identities bind Work, closure event and proposal kind, so interrupted Harvest can
+resume without duplicating its durable prefix. Refiner reads the canonical Ledger
+and rejects caller histories that are not its prefix. Proposal evidence excludes
+Refiner's own events, preventing self-referential learning on retry.
+
+A consumer correlation reference propagates from `work.created` through execution
+and learning. Resume inherits the original reference and refuses an explicit
+conflicting one before changing the Ledger. Correlation conveys no approval,
+identity, deduplication or Outcome authority.
 
 ### D4. The Router reads accepted outcomes from every Work in the repository
 

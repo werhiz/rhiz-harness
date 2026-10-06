@@ -122,6 +122,15 @@ export const GuardPolicySchema = z.object({
   denyByDefault: z.boolean().default(true),
   perToolMode: z.record(id, PerToolGuardModeSchema).default({}),
   perCategoryMode: PerCategoryGuardModeRecordSchema,
+  /** Exact host-broker operations, independent of filesystem category authority. */
+  httpEffects: z.array(z.object({
+    toolName: id,
+    method: z.enum(["GET", "POST"]),
+    url: z.url(),
+    action: z.enum(["read", "external-mutate"]),
+    resourceUri: text.max(2048),
+    decision: GuardDecisionSchema.default("forbid"),
+  }).strict()).default([]),
   /**
    * Category authority is only live when the caller has already established a
    * Work-derived, workspace-bound enforcement boundary. A Work grant alone is
@@ -134,6 +143,14 @@ export const GuardPolicySchema = z.object({
   backend: GuardBackendSchema.default("rhiz-native"),
   backendConfig: z.record(z.string(), z.unknown()).default({}),
 }).strict().superRefine((value, ctx) => {
+  const effectNames = new Set<string>();
+  for (const [index, effect] of value.httpEffects.entries()) {
+    if (effect.action !== (effect.method === "POST" ? "external-mutate" : "read") ||
+        effect.resourceUri !== `http-effect:${effect.method}:${effect.url}` || effectNames.has(effect.toolName)) {
+      ctx.addIssue({ code: "custom", path: ["httpEffects", index], message: "HTTP effect action/resource must match its unique exact method and URL" });
+    }
+    effectNames.add(effect.toolName);
+  }
   if (value.backend === "execpolicy" && Object.keys(value.backendConfig).length === 0) {
     ctx.addIssue({
       code: "custom",
@@ -307,6 +324,18 @@ export class RhizNativePolicyOracle implements PolicyOracle {
       return verdict("forbid", `Tool "${request.tool.name}" args match forbidden pattern "${forbiddenHit}".`, "critical", ruleHits);
     }
 
+    const httpEffect = policy.httpEffects.find((binding) => binding.toolName === request.tool.name);
+    if (httpEffect !== undefined) {
+      const args = request.tool.args;
+      const expectedCategory = httpEffect.method === "POST" ? "external-mutate" : "network";
+      if (request.tool.category !== expectedCategory || args.method !== httpEffect.method ||
+          args.url !== httpEffect.url || args.resourceUri !== httpEffect.resourceUri) {
+        return verdict("forbid", "HTTP effect does not match its exact host binding.", "critical", ["http-effect:binding-mismatch"]);
+      }
+      return verdict(httpEffect.decision, "Exact HTTP effect evaluated against Work authority.",
+        DEFAULT_RISK_LEVELS[expectedCategory], [`http-effect:${httpEffect.decision}`]);
+    }
+
     const toolMode = policy.perToolMode[request.tool.name];
     if (toolMode !== undefined) {
       if (toolMode.requireEvidence && request.evidenceRefs.length === 0) {
@@ -467,11 +496,13 @@ export interface GuardedToolMediationOptions {
   readonly approvalChannel?: "none" | "interactive";
   /**
    * Writes the bounded, durable form of the decision before the verdict is
-   * handed back to the native runtime. Evidence is downstream of authorization:
-   * a record that fails is a failure to write history, not a licence to change
-   * the decision, so it never alters the verdict the caller receives.
+   * handed back to the native runtime. Advisory recording does not revise an
+   * authorization decision. Crew separately requires successful durable
+   * admission with requireRecordBeforeEffect before allowing an effect.
    */
   readonly record?: (record: GuardEvaluationRecord) => Promise<void>;
+  /** Crew requires durable admission before any native effect may proceed. */
+  readonly requireRecordBeforeEffect?: boolean;
 }
 
 const MEDIATION_BACKEND = "rhiz-guard-mediation";
@@ -688,12 +719,20 @@ class DefaultGuardedToolMediation implements GuardedToolMediation {
   }
 
   async #record(evaluation: GuardEvaluation): Promise<GuardEvaluation> {
-    if (this.#options.record === undefined) return evaluation;
     try {
+      if (this.#options.record === undefined) {
+        if (this.#options.requireRecordBeforeEffect) throw new Error("Required Guard recorder is missing");
+        return evaluation;
+      }
       await this.#options.record(GuardEvaluationRecordSchema.parse(summarizeGuardEvaluation(evaluation)));
     } catch {
-      // Evidence is downstream of authorization. The verdict already decided
-      // what may happen, and an unwritable record does not revise it.
+      if (this.#options.requireRecordBeforeEffect) {
+        // Authorization may allow the action, but the required durable admission
+        // did not complete. Return a refusal without exposing the storage error.
+        return { ...evaluation, verdict: { ...evaluation.verdict, decision: "forbid",
+          rationale: "Required Guard admission could not be recorded; execution refused.",
+          ruleHits: [...evaluation.verdict.ruleHits, "guard-record:required-write-failed"] } };
+      }
     }
     return evaluation;
   }
@@ -833,6 +872,12 @@ export function guardPolicyFromWorkContract(contract: WorkContract, overrides: P
   return GuardPolicySchema.parse({
     ...derived,
     ...overrides,
+    httpEffects: (overrides.httpEffects ?? []).map((binding) => ({
+      ...binding,
+      decision: contract.authority.requiresHumanApproval.includes(binding.action) ? "prompt"
+        : contract.authority.grants.some((grant) => grant.action === binding.action && grant.constraints.length === 0 &&
+            grant.resources.some((resource) => resource.uri === binding.resourceUri)) ? "allow" : "forbid",
+    })),
     workId: contract.id,
   });
 }

@@ -5,6 +5,8 @@ import { countHumanInterventions, deriveWorkRecord, type RefinerAnalysis } from 
 import { computeRouterEvidenceFromEvents, type RouterEvidence } from "./router.js";
 import {
   ActorRefSchema,
+  WorkCorrectionSchema,
+  type WorkCorrection,
   parseHarnessEvent,
   type ActorRef,
   type EvidenceRef,
@@ -427,6 +429,50 @@ export async function acceptOperatorWork(input: OperatorAcceptInput): Promise<Op
       routerEvidence: computeRouterEvidenceFromEvents(closed),
     },
   };
+}
+
+
+export interface OperatorRejectInput extends OperatorWriteOptions {
+  ledger: EventLedger;
+  streamId: string;
+  actor: ActorRef;
+  reason: string;
+  correction: WorkCorrection;
+  evidence: readonly EvidenceRef[];
+  refiner?: RefinerBridge;
+}
+
+/** Record the actual human correction before Harvest, preserving it if Harvest fails. */
+export async function rejectOperatorWork(input: OperatorRejectInput) {
+  const actor = ActorRefSchema.parse(input.actor);
+  if (actor.kind !== "human") throw new OperatorError("rejection requires a human decision");
+  const correction = WorkCorrectionSchema.parse(input.correction);
+  const events = await input.ledger.replay(input.streamId);
+  const { workId } = single(events);
+  const board = projectBoard(events);
+  if (board.violations.length || !board.contract) throw new OperatorError("invalid Work history");
+  if (["accepted", "rejected", "cancelled"].includes(board.state)) throw new OperatorError("Work is already closed");
+  if (board.activeReview || board.activeVerification || Object.values(board.attempts).some((a) => a.state === "running" || a.state === "blocked")) {
+    throw new OperatorError("close active execution and proof lifecycles before rejection");
+  }
+  if (!input.evidence.length) throw new OperatorError("correction requires artifact or observation evidence");
+  const criteria = new Set(board.contract.acceptanceCriteria.map((c) => c.id));
+  if (new Set(correction.criterionIds).size !== correction.criterionIds.length || correction.criterionIds.some((id) => !criteria.has(id))) {
+    throw new OperatorError("correction must name distinct criteria in the current Work contract");
+  }
+  const timestamp = (input.now ?? (() => new Date().toISOString()))();
+  const correlationId = events.find((event) => event.type === "work.created")?.correlationId;
+  const rejection = parseHarnessEvent({
+    id: `event:rejection:${(input.idFactory ?? (() => globalThis.crypto.randomUUID()))()}`,
+    type: "work.rejected", schemaVersion: 1, streamId: input.streamId, workId, actor,
+    occurredAt: timestamp, recordedAt: timestamp, evidence: [...input.evidence],
+    ...(correlationId === undefined ? {} : { correlationId }),
+    payload: { reason: input.reason, contractRevision: board.contractRevision, correction },
+  });
+  await appendAdmitted(input.ledger, events, [rejection]);
+  const closed = await input.ledger.replay(input.streamId);
+  const learning = input.refiner ? await input.refiner.consume({ workId, events: closed }) : null;
+  return { rejectionEventId: rejection.id, status: summarizeOperatorWork(await input.ledger.replay(input.streamId)), learning };
 }
 
 /**

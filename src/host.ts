@@ -12,6 +12,7 @@ import {
   WorkContractSchema,
 } from "./schemas.js";
 import type { GuardedToolMediation } from "./guard.js";
+import type { HttpEffectsPort } from "./http-effects.js";
 import { ContextPackSchema } from "./context.js";
 
 const id = z.string().trim().min(1).max(200);
@@ -195,6 +196,8 @@ export interface WorkerHandle {
  */
 export interface WorkerStartOptions {
   readonly guardedToolMediation?: GuardedToolMediation;
+  /** Optional host-owned exact-resource broker. Contains no credentials or target overrides. */
+  readonly httpEffects?: HttpEffectsPort;
 }
 
 export interface WorkerProvider {

@@ -61,7 +61,7 @@ function git(cwd, args) {
 function usage() {
   return [
     "Usage:",
-    "  npm run work:repository -- --repo <path> --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>] [--ledger <dir>] [--output <receipt.json>] [--resume true] [--benchmark-case <id>] [--benchmark-variant <id>]",
+    "  npm run work:repository -- --repo <path> --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>] [--ledger <dir>] [--output <receipt.json>] [--resume true] [--correlation-id <build ref>] [--benchmark-case <id>] [--benchmark-variant <id>]",
     "",
     "--resume true continues the same Work in its existing Ledger: an attempt",
     "whose process ended without a terminal event is closed as a recoverable",
@@ -495,7 +495,14 @@ let closedOrphanedAttemptIds = [];
 let carriedRefusals = null;
 if (resuming) {
   const streamId = streamIdForWork(work.id);
-  const existing = projectBoard(await ledger.replay(streamId));
+  const existingEvents = await ledger.replay(streamId);
+  const existing = projectBoard(existingEvents);
+  const originalCorrelationId = existingEvents.find((event) => event.type === "work.created")?.correlationId;
+  if (args["correlation-id"] !== undefined && args["correlation-id"] !== originalCorrelationId) {
+    throw new Error("--resume cannot change the original build correlation");
+  }
+  // Preserve linkage on direct CLI resumes as well as operator-managed ones.
+  if (originalCorrelationId !== undefined) args["correlation-id"] = originalCorrelationId;
   if (!existing.contract) throw new Error(`--resume found no Work ${work.id} in ${ledgerRoot}`);
   if (JSON.stringify(existing.contract) !== JSON.stringify(work)) {
     throw new Error("--resume requires the exact contract the Work was opened with; amend the Work instead");
@@ -562,6 +569,7 @@ try {
       context,
       refiner,
       actor,
+      ...(args["correlation-id"] === undefined ? {} : { correlationId: args["correlation-id"] }),
     }).run();
 
     mission = run.receipt.missions[0];

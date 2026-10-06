@@ -59,10 +59,19 @@ npm run operator -- status --repo <repo>             # state, next action, inter
 npm run operator -- resume --repo <repo> [work]      # continue non-terminal Work in its own Ledger
 npm run operator -- review --repo <repo> [work]      # independent review of the verified diff (Claude Code by default)
 npm run operator -- accept --repo <repo> [work] --reason "why this outcome is accepted"
+npm run operator -- reject --repo <repo> [work] --reason "why it failed" --correction correction.json
+npm run operator -- harvest --repo <repo> [work]     # retry interrupted Harvest without duplicate proposals
 ```
 
 `accept` is the human Board decision. It hands the closed Work to the Refiner and to Router
 evidence, so the next Work in the repository is routed on accepted outcomes. It does not merge.
+
+`reject` requires an idle Work, a human actor, evidence and a typed correction
+(`cause`, `requestedRepair`, current `criterionIds`). It records the rejection before
+Harvest. `correction.json` contains `{ "correction": { ... }, "evidence": [ ... ] }`.
+Refiner proposals remain unpromoted until independently reviewed. `--correlation-id`
+on `start` binds a consumer build to this Work and survives resume; it grants no authority.
+Software Work acceptance does not assert a customer or business Outcome.
 
 ## Product loop
 

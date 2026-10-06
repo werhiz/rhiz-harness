@@ -29,6 +29,7 @@ Optional arguments:
 --benchmark-case <stable case id>
 --benchmark-variant <variant id>
 --resume true
+--correlation-id <consumer build reference>
 ```
 
 `--resume true` continues the Work its Ledger already holds. Any attempt whose process ended without a
@@ -41,7 +42,17 @@ Worker selection reads accepted outcomes from every other Work Ledger in the rep
 which Ledgers could not be read, in `composition.routerEvidence`.
 
 The operator loop in `scripts/rhiz-harness.mjs` (`npm run operator -- <verb>`) wraps this runner for
-`start` and `resume`. It adds `status`, `review`, and `accept` over the same Ledgers.
+`start` and `resume`. It adds `status`, `review`, `accept`, `reject`, and retryable `harvest` over the same Ledgers.
+
+`--correlation-id` records a consumer reference on Work creation and subsequent
+execution evidence. Resume inherits that reference and rejects a different explicit
+reference before orphan closure. It is linkage only, never execution permission.
+
+`preflightCodexModel` in the published `codex` adapter reads the effective CLI
+configuration and complete account catalog, including hidden entries and pagination,
+without starting a thread or inference. Consumer replay runners use it before
+workspace preparation. It refuses an unavailable configured model without choosing
+a fallback. Actual execution model attribution still comes from `thread/start`.
 
 Default base is the target repository's current `HEAD`.
 `--benchmark-variant` requires `--benchmark-case`. Benchmark arguments do not change execution authority, worker selection, verification, delivery, or acceptance. They add a canonical `BenchmarkRun` measurement record to the repository-work receipt. Codex model and reasoning effort are read from the provider's own `thread/start` response and carried through `WorkerResult`; they are never operator-invented benchmark labels.
