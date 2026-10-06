@@ -50,6 +50,20 @@ npm run work:repository -- \
 
 The repository runner uses isolated Git worktrees, contract-bound Guard mediation, independent exact-target verification, durable Ledger evidence, and Harness-owned candidate preservation. It deliberately does not push, merge, deploy, or accept the Work.
 
+Operate the same Work from start to accepted outcome with the operator loop
+([ADR 0026](docs/decisions/0026-operator-loop-and-acceptance-driven-learning.md)):
+
+```bash
+npm run operator -- start  --repo <repo> --contract work.json --verify verification.json
+npm run operator -- status --repo <repo>             # state, next action, interventions per accepted outcome
+npm run operator -- resume --repo <repo> [work]      # continue non-terminal Work in its own Ledger
+npm run operator -- review --repo <repo> [work]      # independent review of the verified diff (Claude Code by default)
+npm run operator -- accept --repo <repo> [work] --reason "why this outcome is accepted"
+```
+
+`accept` is the human Board decision. It hands the closed Work to the Refiner and to Router
+evidence, so the next Work in the repository is routed on accepted outcomes. It does not merge.
+
 ## Product loop
 
 ```text

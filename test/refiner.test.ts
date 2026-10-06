@@ -316,8 +316,33 @@ test("analyzeClosedWorkFromEvents classifies an accepted Work as high-quality-fi
   ];
   const analysis = analyzeClosedWorkFromEvents("work:1", events);
   assert.equal(analysis.outcome, "accepted");
-  assert.deepEqual(analysis.classifications, ["high-quality-first-attempt"]);
+  // Creation and acceptance are the two judgment calls; nothing else was asked of a human.
+  assert.deepEqual(analysis.classifications, ["high-quality-first-attempt", "zero-human-intervention"]);
+  assert.deepEqual(analysis.candidateProposalKinds, []);
   assert.equal(analysis.ledgerEventCount, 2);
+});
+
+test("analyzeClosedWorkFromEvents calls acceptance after a failed attempt a recovery, not a first attempt", () => {
+  const events = [
+    event("work.created", { contract: work(), revision: 1 }, { workId: "work:1" }),
+    event("attempt.started", { worker: { id: "agent:w", kind: "agent" }, contractRevision: 1 }, { workId: "work:1", taskId: "task:1", attemptId: "attempt:1" }),
+    event("attempt.failed", { reason: "verification refused", recoverable: true }, { workId: "work:1", taskId: "task:1", attemptId: "attempt:1" }),
+    event("attempt.started", { worker: { id: "agent:w", kind: "agent" }, contractRevision: 1 }, { workId: "work:1", taskId: "task:1", attemptId: "attempt:2" }),
+    event("work.accepted", { reason: "ok", contractRevision: 1 }, { workId: "work:1" }),
+  ];
+  const analysis = analyzeClosedWorkFromEvents("work:1", events);
+  assert.deepEqual(analysis.classifications, ["successful-recovery", "zero-human-intervention"]);
+  assert.deepEqual(analysis.candidateProposalKinds, ["recovery-behavior"]);
+});
+
+test("analyzeClosedWorkFromEvents does not call a Work zero-intervention when a human acted mid-run", () => {
+  const events = [
+    event("work.created", { contract: work(), revision: 1 }, { workId: "work:1" }),
+    event("review.started", { reviewId: "review:1", contractRevision: 1 }, { workId: "work:1" }),
+    event("work.accepted", { reason: "ok", contractRevision: 1 }, { workId: "work:1" }),
+  ];
+  const analysis = analyzeClosedWorkFromEvents("work:1", events);
+  assert.deepEqual(analysis.classifications, ["high-quality-first-attempt"]);
 });
 
 test("analyzeClosedWorkFromEvents classifies a failed Work as runtime-failure", () => {

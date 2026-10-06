@@ -1,0 +1,39 @@
+{
+  "analysis": {
+    "workId": "work:live-slugify",
+    "outcome": "accepted",
+    "classifications": [
+      "successful-recovery",
+      "zero-human-intervention"
+    ],
+    "candidateProposalKinds": [
+      "recovery-behavior"
+    ],
+    "ledgerEventCount": 36,
+    "ledgerSpanMs": 80549,
+    "record": {
+      "attempts": 2,
+      "firstAttemptSuccess": false,
+      "recovered": true,
+      "humanInterventions": 0,
+      "estimatedCostUsd": 0,
+      "observedCostUsd": 0.18830100000000002,
+      "observedUsageReports": 1
+    }
+  },
+  "routerEvidence": [
+    {
+      "workerId": "worker:codex-app-server",
+      "attemptCount": 2,
+      "successCount": 1,
+      "failedCount": 1,
+      "successRate": 0.5,
+      "medianCostUsd": null,
+      "p95CostUsd": null,
+      "medianDurationMs": 13516,
+      "p95DurationMs": 18971,
+      "confidence": 0.5,
+      "lastSeenAt": "2026-10-06T16:03:18.433Z"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "rhiz/operator-review/v1",
+  "workId": "work:live-slugify",
+  "candidateHead": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+  "reviewer": {
+    "id": "reviewer:claude-code",
+    "kind": "verifier",
+    "displayName": "Claude Code reviewer"
+  },
+  "model": null,
+  "costUsd": 0.18830100000000002,
+  "durationMs": 7569,
+  "diffTruncated": false,
+  "verdict": {
+    "status": "pass",
+    "summary": "The diff adds only src/slugify.mjs, so it stays inside src/. The file has a named export, slugify(text). The function converts the input to a string, lowercases it, replaces each run of characters outside [a-z0-9] with one hyphen, and then strips hyphens from the start and end. Tracing the required example: '  Hello, World!  ' lowercases to '  hello, world!  ', becomes '-hello-world-' after the hyphen replacement, and ends as 'hello-world'. That matches the expected output, so criterion:slugify is met. I found no defects in scope.",
+    "findings": []
+  }
+}

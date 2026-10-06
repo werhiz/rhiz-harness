@@ -110,7 +110,7 @@
       "id": "board/all-exempt-verification-cannot-reach-ready-alone",
       "why": "A verification in which every required criterion was exempted attests rather than verifies. Owns both halves: whether the rule applies AND that the signer is independent. Extracting only the predicate let the projection accept a self-signed attestation the gate refused (#54).",
       "file": "src/board.ts",
-      "remove": "      && !executionActors.has(review.actor.id),\n",
+      "remove": " && !executionActors.has(review.actor.id)",
       "testFile": "dist/test/falsifiability.test.js"
     },
     {

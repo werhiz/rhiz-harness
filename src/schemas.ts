@@ -569,7 +569,27 @@ const AttemptActivityPayloadSchema = z.object({
   authority: z.literal("observation"),
 }).strict();
 const AttemptBlockedPayloadSchema = z.object({ reason: nonEmpty.max(1000), decisionId: id.optional() }).strict();
-const AttemptFinishedPayloadSchema = z.object({ resultSummary: nonEmpty.max(2000), artifactRefs: z.array(ResourceRefSchema).default([]) }).strict();
+/**
+ * Spend a provider itself reported for one attempt or review. It is a
+ * measurement, never an estimate: a Router selection estimate lives on
+ * `router.decision-made` and is never copied here. Absent means the provider
+ * reported nothing, which is different from zero.
+ */
+export const ObservedUsageSchema = z.object({
+  source: z.literal("provider-reported"),
+  costUsd: z.number().nonnegative().finite().optional(),
+  inputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+}).strict().refine(
+  (value) => value.costUsd !== undefined || value.inputTokens !== undefined || value.outputTokens !== undefined,
+  { message: "observed usage must carry at least one reported value" },
+);
+export type ObservedUsage = z.infer<typeof ObservedUsageSchema>;
+const AttemptFinishedPayloadSchema = z.object({
+  resultSummary: nonEmpty.max(2000),
+  artifactRefs: z.array(ResourceRefSchema).default([]),
+  observedUsage: ObservedUsageSchema.optional(),
+}).strict();
 const AttemptFailedPayloadSchema = z.object({ reason: nonEmpty.max(2000), recoverable: z.boolean().default(true) }).strict();
 const AuthorityPayloadSchema = z.object({ policy: AuthorityPolicySchema, reason: nonEmpty.max(1000).optional() }).strict();
 const GuardEvaluatedPayloadSchema = GuardEvaluationRecordSchema;
@@ -610,7 +630,13 @@ const VerificationResultPayloadSchema = z.object({
 });
 const ReviewStartedPayloadSchema = z.object({ reviewId: id, contractRevision: z.number().int().positive() }).strict();
 const ReviewFindingPayloadSchema = z.object({ reviewId: id, severity: z.enum(["info", "low", "medium", "high", "critical"]), summary: nonEmpty.max(2000) }).strict();
-const ReviewResultPayloadSchema = z.object({ reviewId: id, contractRevision: z.number().int().positive(), status: z.enum(["pass", "fail"]), summary: nonEmpty.max(2000) }).strict();
+const ReviewResultPayloadSchema = z.object({
+  reviewId: id,
+  contractRevision: z.number().int().positive(),
+  status: z.enum(["pass", "fail"]),
+  summary: nonEmpty.max(2000),
+  observedUsage: ObservedUsageSchema.optional(),
+}).strict();
 const WorkDecisionPayloadSchema = z.object({ reason: nonEmpty.max(2000), contractRevision: z.number().int().positive() }).strict();
 const RouterDecisionPayloadSchema = z.object({
   decisionId: id,
