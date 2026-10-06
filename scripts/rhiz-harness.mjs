@@ -445,7 +445,7 @@ async function review(repo, query, values) {
     process.stdout.write(`review ${result.verdict.status}  ${result.verdict.summary}\n`);
     for (const finding of result.verdict.findings) process.stdout.write(`  ${finding.severity}  ${finding.summary}\n`);
     if (result.costUsd !== null) process.stdout.write(`  reviewer cost ${money(result.costUsd)}\n`);
-    printStatus(status);
+    printStatus(status, (await reviewerSpend(repo, workId)).total);
   }
   return result.verdict.status === "pass" ? 0 : 1;
 }
@@ -479,7 +479,7 @@ async function accept(repo, query, values) {
     return 0;
   }
   process.stdout.write(`accepted  ${workId}  by ${actor.id}\n`);
-  printStatus(result.status);
+  printStatus(result.status, (await reviewerSpend(repo, workId)).total);
   const analysis = result.learning.analysis;
   if (analysis) process.stdout.write(`  learned  ${analysis.classifications.join(", ") || "nothing new"}\n`);
   for (const proposal of result.learning.proposals) process.stdout.write(`  proposal ${proposal.kind}: ${proposal.title}\n`);

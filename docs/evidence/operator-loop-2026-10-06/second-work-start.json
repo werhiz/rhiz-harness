@@ -1,0 +1,250 @@
+{
+  "exitCode": 0,
+  "signal": null,
+  "receipt": {
+    "schema": "rhiz/repository-work-run/v1",
+    "generatedAt": "2026-10-06T16:03:51.336Z",
+    "repositoryRoot": "/private/tmp/claude-501/op3-journey/fx/repo",
+    "workId": "work:live-slugify-2",
+    "baseRevision": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+    "remoteName": "origin",
+    "preparation": null,
+    "workerProviderId": "worker:codex-app-server",
+    "attempts": [
+      {
+        "attemptNumber": 1,
+        "attemptId": "attempt:crew:8b78756a-58bd-49ec-8d85-53f596be60ab",
+        "candidateHead": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+        "verificationStatus": "pass",
+        "failedCheckIds": []
+      }
+    ],
+    "attemptBudget": 3,
+    "resume": null,
+    "ledgerRoot": "/private/tmp/claude-501/op3-journey/fx/repo/.git/rhiz-harness/ledgers/work-live-slugify-2",
+    "composition": {
+      "routerDecisionEventIds": [
+        "event:router:d41de42a-e10a-4d32-a6ad-0c07e72f90f5"
+      ],
+      "contextPackEventIds": [
+        "event:context:6642edc6-3801-4c86-b0c9-cd7fd0b44ac1"
+      ],
+      "refiner": null,
+      "routerEvidence": {
+        "works": 1,
+        "unreadable": []
+      },
+      "refinerProposalEventIds": []
+    },
+    "candidate": {
+      "head": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+      "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+      "rescueRef": "refs/rhiz/rescue/work-live-slugify-2/attempt-crew-8b78756a-58bd-49ec-8d85-53f596be60ab/3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+      "remoteRef": "refs/rhiz/rescue/work-live-slugify-2/attempt-crew-8b78756a-58bd-49ec-8d85-53f596be60ab/3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+      "remoteStatus": "pushed",
+      "verifiedRef": "refs/rhiz/work/work-live-slugify-2/candidate",
+      "changedPaths": [
+        "src/slugify.mjs"
+      ]
+    },
+    "verification": {
+      "id": "verification:e0b7b118-3a83-4c01-92b8-c766cf18acad",
+      "resultEventId": "event:verification:a528b758-1b51-4e70-aeb4-bfd09d335146",
+      "status": "pass",
+      "falsifiability": {
+        "provenCriteria": [
+          "criterion:slugify"
+        ],
+        "exemptedCriteria": []
+      },
+      "checks": [
+        {
+          "id": "check:slugify",
+          "status": "pass",
+          "summary": "exit 0; expected 0",
+          "evidence": [
+            {
+              "id": "evidence:check:slugify:sha256:b901cbe9e8cd25627a702a1a852da58f5f8fa515d28401585b181b9f493ae5ec",
+              "kind": "test",
+              "uri": "verify://local-command/check%3Aslugify",
+              "digest": "sha256:a4bbf6b8158f220e8924c994a3da7c8d667c5431a0a75993c38736958fdc520c"
+            }
+          ]
+        },
+        {
+          "id": "check:slugify-negative-control",
+          "status": "pass",
+          "summary": "negative control satisfied: verifier:local-command reported fail against an isolated copy perturbed by slugify replaced by identity",
+          "evidence": [
+            {
+              "id": "artifact-identity:workspace:fd18295b-8e31-43e3-9426-4a4c5fabc2ec:sha256:b901cbe9e8cd25627a702a1a852da58f5f8fa515d28401585b181b9f493ae5ec",
+              "kind": "artifact-identity",
+              "uri": "file:///var/folders/06/lcsdvfhd18dbxd7484yj656w0000gn/T/rhiz-repository-work-3iCG9h/worktrees/crew-work-live-slugify-2-attempt-1-work-live-slugify-2-workspace-fd18295b-8e31-43e3-9426-4a4c5fabc2ec",
+              "digest": "sha256:b901cbe9e8cd25627a702a1a852da58f5f8fa515d28401585b181b9f493ae5ec"
+            },
+            {
+              "id": "evidence:check:slugify-negative-control:sha256:5780671d0190a18166cb0596615c86de957e41ea7268ab3535b6fc5757b6f40f",
+              "kind": "test",
+              "uri": "verify://local-command/check%3Aslugify-negative-control",
+              "digest": "sha256:9d1788bd7d02a09f4b08625d9c62fb9e3735c61d7f46c015b86458400f570ab1"
+            }
+          ]
+        }
+      ]
+    },
+    "board": {
+      "state": "reviewing",
+      "violationCount": 0,
+      "accepted": false,
+      "integration": {
+        "configuration": {
+          "ref": "refs/rhiz/work/work-live-slugify-2/candidate",
+          "head": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+          "horizonPolicyId": "provisional-converge-on-private-advancement",
+          "provisionalHorizon": true
+        },
+        "head": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+        "checkpoints": {
+          "checkpoint:work:live-slugify-2": {
+            "eventId": "event:integration:d3dbf07b-bd1f-4db3-8dd0-5d658b812b21",
+            "taskId": "task:crew:f5b62340-0b04-4f90-a33b-bd454cebfa74",
+            "attemptId": "attempt:crew:8b78756a-58bd-49ec-8d85-53f596be60ab",
+            "checkpoint": {
+              "id": "checkpoint:work:live-slugify-2",
+              "class": "integration-candidate",
+              "parentIntegrationHead": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+              "workspaceId": "workspace:fd18295b-8e31-43e3-9426-4a4c5fabc2ec",
+              "changedResources": [
+                {
+                  "kind": "path",
+                  "resource": "src/slugify.mjs"
+                }
+              ],
+              "head": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+              "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+              "proofState": "passed",
+              "proofHead": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+              "verificationEventId": "event:verification:a528b758-1b51-4e70-aeb4-bfd09d335146",
+              "remoteRef": "refs/rhiz/rescue/work-live-slugify-2/attempt-crew-8b78756a-58bd-49ec-8d85-53f596be60ab/3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+              "remoteStatus": "pushed"
+            },
+            "effectiveProofState": "passed"
+          }
+        },
+        "queue": [],
+        "lock": null,
+        "headProof": {
+          "eventId": "event:integration:28706bdc-b29c-48ee-81c4-11dba8ef690a",
+          "checkpointId": "checkpoint:work:live-slugify-2",
+          "head": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+          "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+          "verificationEventId": "event:verification:a528b758-1b51-4e70-aeb4-bfd09d335146",
+          "remoteRef": "refs/rhiz/work/work-live-slugify-2/candidate"
+        },
+        "reconciliations": {},
+        "taskStates": {
+          "task:crew:f5b62340-0b04-4f90-a33b-bd454cebfa74": {
+            "taskId": "task:crew:f5b62340-0b04-4f90-a33b-bd454cebfa74",
+            "attemptId": "attempt:crew:8b78756a-58bd-49ec-8d85-53f596be60ab",
+            "baseHead": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+            "checkpointHead": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+            "remoteCheckpointStatus": "pushed",
+            "integrationEligibility": "integrated",
+            "queuePosition": null,
+            "resourceLeases": [],
+            "proofStatus": "passed",
+            "preservedRefs": []
+          }
+        },
+        "pullRequests": [],
+        "merge": {
+          "authority": "pending",
+          "status": "not-requested",
+          "detail": "merge authority has not been granted"
+        },
+        "cleanups": {
+          "attempt:crew:8b78756a-58bd-49ec-8d85-53f596be60ab": {
+            "eventId": "event:integration:2287ee69-6efb-409c-bd6e-f76079276cc9",
+            "disposition": "integrated",
+            "checkpointId": "checkpoint:work:live-slugify-2"
+          }
+        },
+        "failures": [],
+        "latestExecutionObservation": null,
+        "divergences": []
+      }
+    },
+    "checkpoint": {
+      "id": "checkpoint:work:live-slugify-2",
+      "class": "integration-candidate",
+      "parentIntegrationHead": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+      "workspaceId": "workspace:fd18295b-8e31-43e3-9426-4a4c5fabc2ec",
+      "changedResources": [
+        {
+          "kind": "path",
+          "resource": "src/slugify.mjs"
+        }
+      ],
+      "head": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+      "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+      "proofState": "passed",
+      "proofHead": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+      "verificationEventId": "event:verification:a528b758-1b51-4e70-aeb4-bfd09d335146",
+      "remoteRef": "refs/rhiz/rescue/work-live-slugify-2/attempt-crew-8b78756a-58bd-49ec-8d85-53f596be60ab/3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+      "remoteStatus": "pushed"
+    },
+    "ledgerHeadDigest": "sha256:e5bf7116d25632db3c0dac7d0dbcbb720cc08e6af03284a426fa5e703f7dc2d7"
+  },
+  "status": {
+    "workId": "work:live-slugify-2",
+    "streamId": "stream:work:live-slugify-2",
+    "state": "reviewing",
+    "contractRevision": 1,
+    "objective": "Create src/slugify.mjs exporting a named function slugify(text) that lowercases the text, replaces every run of non-alphanumeric characters with a single hyphen, and strips leading and trailing hyphens. slugify('  Hello, World!  ') must return 'hello-world'. The repository contains only README.md and src/.gitkeep. Do not run shell commands or inspect anything; create the file directly with one file edit.",
+    "attempts": {
+      "total": 1,
+      "finished": 1,
+      "failed": 0,
+      "active": 0,
+      "budget": 3
+    },
+    "verification": {
+      "latest": "pass",
+      "count": 1
+    },
+    "review": {
+      "latest": null,
+      "count": 0,
+      "required": true
+    },
+    "readiness": {
+      "ready": false,
+      "reasons": [
+        "required independent passing review for the current contract revision is missing"
+      ]
+    },
+    "violations": 0,
+    "verifiedTarget": {
+      "base": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+      "head": "3fe85f4615c0c4bd53fead5863bba4aa5369ec66",
+      "ref": "refs/rhiz/work/work-live-slugify-2/candidate"
+    },
+    "nextAction": "review",
+    "nextActionReason": "verified, waiting on an independent review",
+    "metrics": {
+      "outcome": "open",
+      "attempts": 1,
+      "failedAttempts": 0,
+      "repairAttempts": 0,
+      "recovered": false,
+      "firstAttemptSuccess": false,
+      "estimatedCostUsd": 0,
+      "observedCostUsd": null,
+      "observedUsageReports": 0,
+      "contextTokens": 0,
+      "humanInterventions": 0,
+      "humanDecisions": 1,
+      "elapsedMs": 17057
+    }
+  }
+}

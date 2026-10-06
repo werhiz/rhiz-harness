@@ -1,0 +1,219 @@
+{
+  "schema": "rhiz/repository-work-run/v1",
+  "generatedAt": "2026-10-06T16:02:27.179Z",
+  "repositoryRoot": "/private/tmp/claude-501/op3-journey/fx/repo",
+  "workId": "work:live-slugify",
+  "baseRevision": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+  "remoteName": "origin",
+  "preparation": null,
+  "workerProviderId": "worker:codex-app-server",
+  "attempts": [
+    {
+      "attemptNumber": 2,
+      "attemptId": "attempt:crew:b13b71cd-8af7-4ea9-9c24-586954c6664b",
+      "candidateHead": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+      "verificationStatus": "pass",
+      "failedCheckIds": []
+    }
+  ],
+  "attemptBudget": 3,
+  "resume": {
+    "firstAttemptNumber": 2,
+    "closedOrphanedAttemptIds": [
+      "attempt:crew:b6d74136-7db3-4ca6-9a4c-f35a0b3108f9"
+    ],
+    "carriedRefusals": {
+      "verificationResultEventIds": [],
+      "attachmentCount": 0,
+      "missing": [],
+      "rejected": []
+    }
+  },
+  "ledgerRoot": "/private/tmp/claude-501/op3-journey/fx/repo/.git/rhiz-harness/ledgers/work-live-slugify",
+  "composition": {
+    "routerDecisionEventIds": [
+      "event:router:61ee42b8-2af4-4279-8d5e-ebb34d1b5728",
+      "event:router:6716c4e5-4f3a-45b0-bff2-3a3f1bef8c7e"
+    ],
+    "contextPackEventIds": [
+      "event:context:8e49f034-8765-4149-a769-ede8daf9be0d",
+      "event:context:18b5cfef-2957-4006-971b-de68358a4652"
+    ],
+    "refiner": null,
+    "routerEvidence": {
+      "works": 0,
+      "unreadable": []
+    },
+    "refinerProposalEventIds": []
+  },
+  "candidate": {
+    "head": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+    "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+    "rescueRef": "refs/rhiz/rescue/work-live-slugify/attempt-crew-b13b71cd-8af7-4ea9-9c24-586954c6664b/df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+    "remoteRef": "refs/rhiz/rescue/work-live-slugify/attempt-crew-b13b71cd-8af7-4ea9-9c24-586954c6664b/df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+    "remoteStatus": "pushed",
+    "verifiedRef": "refs/rhiz/work/work-live-slugify/candidate",
+    "changedPaths": [
+      "src/slugify.mjs"
+    ]
+  },
+  "verification": {
+    "id": "verification:c1340c37-2f5b-4b54-9368-99c95759a86b",
+    "resultEventId": "event:verification:8fcc4df1-47c7-451b-93e5-8b7666493668",
+    "status": "pass",
+    "falsifiability": {
+      "provenCriteria": [
+        "criterion:slugify"
+      ],
+      "exemptedCriteria": []
+    },
+    "checks": [
+      {
+        "id": "check:slugify",
+        "status": "pass",
+        "summary": "exit 0; expected 0",
+        "evidence": [
+          {
+            "id": "evidence:check:slugify:sha256:b901cbe9e8cd25627a702a1a852da58f5f8fa515d28401585b181b9f493ae5ec",
+            "kind": "test",
+            "uri": "verify://local-command/check%3Aslugify",
+            "digest": "sha256:a4bbf6b8158f220e8924c994a3da7c8d667c5431a0a75993c38736958fdc520c"
+          }
+        ]
+      },
+      {
+        "id": "check:slugify-negative-control",
+        "status": "pass",
+        "summary": "negative control satisfied: verifier:local-command reported fail against an isolated copy perturbed by slugify replaced by identity",
+        "evidence": [
+          {
+            "id": "artifact-identity:workspace:17ad5b38-5303-4f3d-a719-9c651afa2015:sha256:b901cbe9e8cd25627a702a1a852da58f5f8fa515d28401585b181b9f493ae5ec",
+            "kind": "artifact-identity",
+            "uri": "file:///var/folders/06/lcsdvfhd18dbxd7484yj656w0000gn/T/rhiz-repository-work-HCW2ce/worktrees/crew-work-live-slugify-attempt-2-work-live-slugify-workspace-17ad5b38-5303-4f3d-a719-9c651afa2015",
+            "digest": "sha256:b901cbe9e8cd25627a702a1a852da58f5f8fa515d28401585b181b9f493ae5ec"
+          },
+          {
+            "id": "evidence:check:slugify-negative-control:sha256:5780671d0190a18166cb0596615c86de957e41ea7268ab3535b6fc5757b6f40f",
+            "kind": "test",
+            "uri": "verify://local-command/check%3Aslugify-negative-control",
+            "digest": "sha256:9d1788bd7d02a09f4b08625d9c62fb9e3735c61d7f46c015b86458400f570ab1"
+          }
+        ]
+      }
+    ]
+  },
+  "board": {
+    "state": "reviewing",
+    "violationCount": 0,
+    "accepted": false,
+    "integration": {
+      "configuration": {
+        "ref": "refs/rhiz/work/work-live-slugify/candidate",
+        "head": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+        "horizonPolicyId": "provisional-converge-on-private-advancement",
+        "provisionalHorizon": true
+      },
+      "head": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+      "checkpoints": {
+        "checkpoint:work:live-slugify": {
+          "eventId": "event:integration:64b52bf9-4f0e-4901-8fe7-24ad65470974",
+          "taskId": "task:crew:62d71262-0d29-49dd-a7d3-f9a343648b1d",
+          "attemptId": "attempt:crew:b13b71cd-8af7-4ea9-9c24-586954c6664b",
+          "checkpoint": {
+            "id": "checkpoint:work:live-slugify",
+            "class": "integration-candidate",
+            "parentIntegrationHead": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+            "workspaceId": "workspace:17ad5b38-5303-4f3d-a719-9c651afa2015",
+            "changedResources": [
+              {
+                "kind": "path",
+                "resource": "src/slugify.mjs"
+              }
+            ],
+            "head": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+            "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+            "proofState": "passed",
+            "proofHead": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+            "verificationEventId": "event:verification:8fcc4df1-47c7-451b-93e5-8b7666493668",
+            "remoteRef": "refs/rhiz/rescue/work-live-slugify/attempt-crew-b13b71cd-8af7-4ea9-9c24-586954c6664b/df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+            "remoteStatus": "pushed"
+          },
+          "effectiveProofState": "passed"
+        }
+      },
+      "queue": [],
+      "lock": null,
+      "headProof": {
+        "eventId": "event:integration:3e8f4488-3cb1-4761-9bb7-76efd4fd6c50",
+        "checkpointId": "checkpoint:work:live-slugify",
+        "head": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+        "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+        "verificationEventId": "event:verification:8fcc4df1-47c7-451b-93e5-8b7666493668",
+        "remoteRef": "refs/rhiz/work/work-live-slugify/candidate"
+      },
+      "reconciliations": {},
+      "taskStates": {
+        "task:crew:2f078e98-04da-4438-93ac-212a2b86f512": {
+          "taskId": "task:crew:2f078e98-04da-4438-93ac-212a2b86f512",
+          "attemptId": "attempt:crew:b6d74136-7db3-4ca6-9a4c-f35a0b3108f9",
+          "baseHead": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+          "checkpointHead": null,
+          "remoteCheckpointStatus": "local-only",
+          "integrationEligibility": "integrating",
+          "queuePosition": null,
+          "resourceLeases": [],
+          "proofStatus": "not-run",
+          "preservedRefs": []
+        },
+        "task:crew:62d71262-0d29-49dd-a7d3-f9a343648b1d": {
+          "taskId": "task:crew:62d71262-0d29-49dd-a7d3-f9a343648b1d",
+          "attemptId": "attempt:crew:b13b71cd-8af7-4ea9-9c24-586954c6664b",
+          "baseHead": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+          "checkpointHead": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+          "remoteCheckpointStatus": "pushed",
+          "integrationEligibility": "integrated",
+          "queuePosition": null,
+          "resourceLeases": [],
+          "proofStatus": "passed",
+          "preservedRefs": []
+        }
+      },
+      "pullRequests": [],
+      "merge": {
+        "authority": "pending",
+        "status": "not-requested",
+        "detail": "merge authority has not been granted"
+      },
+      "cleanups": {
+        "attempt:crew:b13b71cd-8af7-4ea9-9c24-586954c6664b": {
+          "eventId": "event:integration:6eade916-62ee-4002-ae9d-439db541cec2",
+          "disposition": "integrated",
+          "checkpointId": "checkpoint:work:live-slugify"
+        }
+      },
+      "failures": [],
+      "latestExecutionObservation": null,
+      "divergences": []
+    }
+  },
+  "checkpoint": {
+    "id": "checkpoint:work:live-slugify",
+    "class": "integration-candidate",
+    "parentIntegrationHead": "835d65c3f977d1a5e8c5b582b87162379166b9ac",
+    "workspaceId": "workspace:17ad5b38-5303-4f3d-a719-9c651afa2015",
+    "changedResources": [
+      {
+        "kind": "path",
+        "resource": "src/slugify.mjs"
+      }
+    ],
+    "head": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+    "tree": "248494eb650f94e6b55a9778b95287f1786b3603",
+    "proofState": "passed",
+    "proofHead": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+    "verificationEventId": "event:verification:8fcc4df1-47c7-451b-93e5-8b7666493668",
+    "remoteRef": "refs/rhiz/rescue/work-live-slugify/attempt-crew-b13b71cd-8af7-4ea9-9c24-586954c6664b/df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+    "remoteStatus": "pushed"
+  },
+  "ledgerHeadDigest": "sha256:ac2706eaa1d78ecc43de125e2c81f9f1c28e5cb654e9e2adc1d62ab9544963fb"
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "rhiz/operator-review/v1",
+  "workId": "work:live-slugify",
+  "candidateHead": "df897728dbd6e2c99567e7c68a30ea5b841b8a95",
+  "reviewer": {
+    "id": "reviewer:command:/Users/werhiz/Developer/rhiz-harness-op3/docs/evidence/operator-loop-2026-10-06/mm-reviewer.sh",
+    "kind": "verifier"
+  },
+  "model": null,
+  "costUsd": null,
+  "durationMs": 25892,
+  "diffTruncated": false,
+  "verdict": {
+    "status": "pass",
+    "summary": "The diff creates src/slugify.mjs with a named export `slugify` that lowercases input, replaces any run of non-alphanumeric characters with a single hyphen (after lowercasing, so [^a-z0-9] correctly captures former uppercase letters too), and strips leading/trailing hyphens. Tracing slugify('  Hello, World!  '): lowercases to '  hello, world!  ', replaces the runs ('  ', ', ', '!  ') yielding '-hello-world-', then strips outer hyphens to 'hello-world'. The file lives entirely under src/ as required, and no acceptance criteria are violated.",
+    "findings": []
+  }
+}
