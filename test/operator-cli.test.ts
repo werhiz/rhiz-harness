@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { human } from "./helpers.js";
+import { readDurableLedgerEvents } from "../adapters/local/durable-ledger.js";
 
 // End to end proof of the operator CLI: start, status, review, accept, and the
 // Router reading the first accepted Work when the second Work starts.
@@ -252,6 +253,31 @@ test("operator CLI: --help as the first argument prints usage and exits 0, as an
     assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
     assert.match(result.stdout, /Usage: rhiz-harness <command>/);
   }
+});
+
+test("operator CLI binds a build before execution and retains a correction across Harvest retries", async () => {
+  const f = fixture();
+  try {
+    const workId = "work:corrected";
+    const work = f.writeWork(workId, false);
+    const started = cliRun(f, ["start", "--contract", work.contract, "--verify", work.verify, "--correlation-id", "build:studio:1", "--json"]);
+    assert.equal(started.status, 0, started.stderr);
+    const correctionPath = join(f.root, "correction.json");
+    writeFileSync(correctionPath, JSON.stringify({
+      correction: { cause: "verification-gap", requestedRepair: "Check the actual arm content", criterionIds: ["criterion:tests"] },
+      evidence: [{ id: "observation:wrong-arm", kind: "review", uri: "private://review/1" }],
+    }));
+    const rejected = cliRun(f, ["reject", workId, "--reason", "The technical check missed the wrong content", "--correction", correctionPath]);
+    assert.equal(rejected.status, 0, rejected.stderr);
+    assert.equal(json(rejected).status.state, "rejected");
+    const directory = join(git(f.repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]), "rhiz-harness", "ledgers", "work-corrected");
+    const before = await readDurableLedgerEvents(directory);
+    assert.equal(before.find((e) => e.type === "work.created")?.correlationId, "build:studio:1");
+    assert.equal(before.find((e) => e.type === "work.rejected")?.correlationId, "build:studio:1");
+    const harvested = cliRun(f, ["harvest", workId]);
+    assert.equal(harvested.status, 0, harvested.stderr);
+    assert.deepEqual(await readDurableLedgerEvents(directory), before);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("operator CLI: review refuses a diff too large to read whole, and reports a refusal file it did not carry", () => {

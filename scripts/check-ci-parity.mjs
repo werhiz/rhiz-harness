@@ -62,6 +62,10 @@ const NOT_PROVEN_IN_CI = {
     reason: "the worker OS boundary is proven by a real escape attempt at the local-command seam; sandbox-exec is darwin-only",
     provenOn: "a darwin workstation running `npm run check` (ADR 0020). CI still proves the fail-closed half, the derivation, and the evidence channel, which are platform independent",
   },
+  "test/http-effect-worker.test.ts": {
+    reason: "the contained HTTP worker uses actual sandbox-exec isolation, which requires darwin",
+    provenOn: "an independent darwin checkout of the exact candidate running npm run check, including reservation-before-POST, cancellation and unconfirmed artifact custody; portable HTTP broker tests also run in Linux CI",
+  },
 };
 
 const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));

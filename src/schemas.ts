@@ -1,3 +1,4 @@
+import { FAILURE_TAXONOMY } from "./failure-taxonomy.js";
 import { z } from "zod";
 
 const nonEmpty = z.string().trim().min(1);
@@ -638,6 +639,17 @@ const ReviewResultPayloadSchema = z.object({
   observedUsage: ObservedUsageSchema.optional(),
 }).strict();
 const WorkDecisionPayloadSchema = z.object({ reason: nonEmpty.max(2000), contractRevision: z.number().int().positive() }).strict();
+
+/** Human assertions about a rejected artifact, not a model-inferred diagnosis. */
+export const WorkCorrectionSchema = z.object({
+  cause: z.enum(FAILURE_TAXONOMY),
+  requestedRepair: nonEmpty.max(2000),
+  criterionIds: z.array(id).min(1).max(100),
+}).strict();
+export type WorkCorrection = z.infer<typeof WorkCorrectionSchema>;
+const WorkRejectionPayloadSchema = WorkDecisionPayloadSchema.extend({
+  correction: WorkCorrectionSchema.optional(),
+});
 const RouterDecisionPayloadSchema = z.object({
   decisionId: id,
   policy: z.enum(["cheapest-capable", "fastest-capable", "highest-confidence", "balanced"]),
@@ -921,7 +933,7 @@ const HarnessEventUnionSchema = z.discriminatedUnion("type", [
   event("review.finding", ReviewFindingPayloadSchema),
   event("review.result", ReviewResultPayloadSchema),
   event("work.accepted", WorkDecisionPayloadSchema),
-  event("work.rejected", WorkDecisionPayloadSchema),
+  event("work.rejected", WorkRejectionPayloadSchema),
   event("work.cancelled", WorkDecisionPayloadSchema),
   event("work.parked", WorkParkedPayloadSchema),
   event("work.released", WorkReleasedPayloadSchema),

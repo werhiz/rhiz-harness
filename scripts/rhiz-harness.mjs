@@ -18,6 +18,7 @@ import { readRepositoryWorkLedgers } from "../dist/adapters/local/work-ledgers.j
 import {
   acceptOperatorWork,
   recordOperatorReview,
+  rejectOperatorWork,
   summarizeOperatorWork,
   summarizeOperatorWorks,
 } from "../dist/src/operator.js";
@@ -41,6 +42,8 @@ function usage() {
     "  review [work] [--reviewer claude|command] [--reviewer-command <path>] [--model <id>]",
     "         independent review of the verified candidate diff, recorded on the Board",
     "  accept [work] --reason <why>  the Board decision; hands the outcome to Router and Refiner",
+    "  reject <work> --reason <why> --correction <json>  record a human correction and Harvest",
+    "  harvest <work>               resume proposal generation from durable closed Work",
     "",
     "Common options: --repo <path> (default: current directory), --json",
     "[work] is a Work id or a unique prefix. With no [work], resume, review, and accept",
@@ -219,18 +222,20 @@ async function start(repo, values) {
     workId: contract.id,
     base,
     prepare: Boolean(values.prepare),
+    correlationId: values["correlation-id"],
     startedAt: new Date().toISOString(),
   }, null, 2)}\n`, { mode: 0o600 });
-  return runAndReport(repo, contract.id, runnerArgsFor(repo, dir, base, Boolean(values.prepare)), values);
+  return runAndReport(repo, contract.id, runnerArgsFor(repo, dir, base, Boolean(values.prepare), values["correlation-id"]), values);
 }
 
-function runnerArgsFor(repo, dir, base, prepare) {
+function runnerArgsFor(repo, dir, base, prepare, correlationId) {
   return [
     "--repo", repo.root,
     "--contract", join(dir, "contract.json"),
     "--verify", join(dir, "verify.json"),
     "--base", base,
     ...(prepare ? ["--prepare", join(dir, "prepare.json")] : []),
+    ...(correlationId === undefined ? [] : ["--correlation-id", correlationId]),
   ];
 }
 
@@ -243,7 +248,7 @@ async function resume(repo, query, values) {
   const dir = operatorDir(repo, work.status.workId);
   const inputs = await readJsonIfPresent(join(dir, "inputs.json"));
   if (!inputs) throw new Error(`Work ${work.status.workId} was not started by rhiz-harness; its inputs are unknown`);
-  return runAndReport(repo, work.status.workId, [...runnerArgsFor(repo, dir, inputs.base, inputs.prepare), "--resume", "true"], values);
+  return runAndReport(repo, work.status.workId, [...runnerArgsFor(repo, dir, inputs.base, inputs.prepare, inputs.correlationId), "--resume", "true"], values);
 }
 
 async function status(repo, query, values) {
@@ -467,6 +472,33 @@ async function accept(repo, query, values) {
   return 0;
 }
 
+async function reject(repo, query, values) {
+  if (!query || !values.reason || !values.correction) throw new Error("reject needs an exact Work, --reason and --correction <json>");
+  const { works } = await loadWorks(repo);
+  const work = pickWork(works, query, "none");
+  if (work.status.workId !== query) throw new Error("rejection requires the exact Work id");
+  const document = await readJson(resolve(values.correction));
+  const result = await withLedger(work, (ledger) => rejectOperatorWork({
+    ledger, streamId: work.status.streamId, actor: human(repo), reason: values.reason,
+    correction: document.correction, evidence: document.evidence,
+    refiner: new RefinerBridge({ ledger }),
+  }));
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return 0;
+}
+
+async function harvest(repo, query) {
+  if (!query) throw new Error("harvest needs an exact Work id");
+  const { works } = await loadWorks(repo);
+  const work = pickWork(works, query, "none");
+  if (work.status.workId !== query) throw new Error("Harvest requires the exact Work id");
+  const result = await withLedger(work, async (ledger) => new RefinerBridge({ ledger }).consume({
+    workId: query, events: await ledger.replay(work.status.streamId),
+  }));
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return 0;
+}
+
 async function main() {
   const { command, work, values } = parseArgs(process.argv.slice(2));
   if (!command || command === "help" || command === "--help" || command === "-h" || values.help) {
@@ -480,6 +512,8 @@ async function main() {
     case "resume": return resume(repo, work, values);
     case "review": return review(repo, work, values);
     case "accept": return accept(repo, work, values);
+    case "reject": return reject(repo, work, values);
+    case "harvest": return harvest(repo, work);
     default: throw new Error(`unknown command ${command}\n\n${usage()}`);
   }
 }
@@ -491,4 +525,3 @@ main().then(
     process.exitCode = 1;
   },
 );
-

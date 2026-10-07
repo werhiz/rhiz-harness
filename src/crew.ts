@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HttpEffectBroker, getHttpEffectPolicyBindings, type HttpEffectBinding } from "./http-effects.js";
 
 import { DigestScopeSchema } from "./workspace-digest.js";
 import { projectBoard } from "./board.js";
@@ -463,6 +464,10 @@ export interface CrewSupervisorOptions {
    * analysis flagged.
    */
   refiner?: RefinerBridge;
+  /** Consumer's build/job identity. It is evidence linkage, never authority. */
+  correlationId?: string;
+  /** Explicit host bindings; Work authority must independently grant each exact resource. */
+  httpEffects?: readonly HttpEffectBinding[];
   actor: ActorRef;
   now?: () => string;
   idFactory?: () => string;
@@ -806,6 +811,8 @@ export class CrewSupervisor {
   readonly #context: ContextBridge | undefined;
   readonly #refiner: RefinerBridge | undefined;
   readonly #actor: ActorRef;
+  readonly #correlationId: string | undefined;
+  readonly #httpEffects: readonly HttpEffectBinding[];
   readonly #now: () => string;
   readonly #idFactory: () => string;
 
@@ -819,6 +826,9 @@ export class CrewSupervisor {
     this.#context = options.context;
     this.#refiner = options.refiner;
     this.#actor = ActorRefSchema.parse(options.actor);
+    this.#correlationId = options.correlationId === undefined ? undefined : id.parse(options.correlationId);
+    this.#httpEffects = (options.httpEffects ?? []).map(binding => Object.freeze({ ...binding }));
+    getHttpEffectPolicyBindings(this.#httpEffects);
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#idFactory = options.idFactory ?? (() => globalThis.crypto.randomUUID());
   }
@@ -907,12 +917,14 @@ export class CrewSupervisor {
     // Once closed, no late worker observation or Guard callback may append
     // evidence that changes the terminal Attempt's story.
     let workerClosed = false;
+    const httpEffectsAbort = new AbortController();
     let boardState: WorkState | undefined;
     let projectionViolationCount = 0;
     let changeViolations: string[] = [];
     let errorMessage: string | undefined;
     let contractRevision = 1;
     let deadlineObservedAt: string | undefined;
+    let correlationId = this.#correlationId;
     const attemptClosed = (): boolean => {
       if (workerClosed) return true;
       if (activeAttemptDeadlineAt !== undefined && Date.parse(this.#now()) >= Date.parse(activeAttemptDeadlineAt)) {
@@ -939,6 +951,7 @@ export class CrewSupervisor {
         recordedAt: timestamp,
         evidence: [],
         payload,
+        ...(correlationId === undefined ? {} : { correlationId }),
         ...extra,
       });
       await this.#ledger.append(event);
@@ -948,6 +961,11 @@ export class CrewSupervisor {
     try {
       const existingEvents = await this.#ledger.replay(streamId);
       if (existingEvents.length > 0) {
+        const originalCorrelationId = existingEvents.find((event) => event.type === "work.created")?.correlationId;
+        if (correlationId !== undefined && correlationId !== originalCorrelationId) {
+          throw new Error("continued Work must preserve its original correlation identity");
+        }
+        correlationId = originalCorrelationId;
         const existing = projectBoard(existingEvents);
         if (!mission.continuesWork) {
           throw new Error(`Work ${work.id} already exists; an existing stream must be continued explicitly`);
@@ -1164,6 +1182,7 @@ export class CrewSupervisor {
       }
       const guardPolicy = guardPolicyFromWorkContract(work, {
         contractBoundCategoryAuthority: categoryAuthorityProof?.active ?? false,
+        httpEffects: [...getHttpEffectPolicyBindings(this.#httpEffects)],
       });
       const guardedToolMediation = createGuardedToolMediation({
         oracle: createDefaultPolicyOracle(guardPolicy),
@@ -1175,6 +1194,7 @@ export class CrewSupervisor {
         actor: workerActor,
         writeScope: resolution.selection.descriptor.writeAccess,
         contextHash: `crew:${this.plan.id}:${work.id}:${taskId}`.slice(0, 300),
+        requireRecordBeforeEffect: true,
         // The decision becomes durable evidence here, from Guard's own result,
         // before the verdict reaches the native runtime. A record derived from
         // what a provider later echoes back could misreport or omit a decision
@@ -1242,7 +1262,17 @@ export class CrewSupervisor {
         contextPack,
         workspace: binding,
         attemptDeadlineAt,
-      }, workspace.mode === "isolated-write" ? { guardedToolMediation: attemptGuardedToolMediation } : {});
+      }, workspace.mode === "isolated-write" ? {
+        guardedToolMediation: attemptGuardedToolMediation,
+        ...(this.#httpEffects.length === 0 ? {} : {
+          httpEffects: new HttpEffectBroker({
+            bindings: this.#httpEffects, work, guard: attemptGuardedToolMediation,
+            signal: AbortSignal.any([httpEffectsAbort.signal,
+              AbortSignal.timeout(Math.max(1, Date.parse(attemptDeadlineAt) - Date.parse(this.#now())))]),
+            isActive: () => !attemptClosed(),
+          }).port(),
+        }),
+      } : {});
       // Provider capability discovery and startup are part of the same
       // Attempt budget as result production and the observation stream.
       // If startup resolves after timeout, cancel its handle without letting
@@ -1415,6 +1445,7 @@ export class CrewSupervisor {
         }
       }
     } finally {
+      httpEffectsAbort.abort();
       if (resolution !== undefined) {
         await awaitCleanupGrace(resolution.close().catch((error) => {
           errorMessage ??= safeError(error);

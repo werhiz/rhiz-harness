@@ -256,6 +256,47 @@ export type CodexAppServerConnectionFactory = (
   input: WorkerStartRequest,
 ) => Promise<CodexAppServerConnection> | CodexAppServerConnection;
 
+/** Read-only catalog preflight. It never selects a fallback or starts model work. */
+export async function preflightCodexModel(options: {
+  stdio?: StdioCodexAppServerOptions;
+  connection?: CodexAppServerConnection;
+  timeoutMs?: number;
+} = {}): Promise<{ model: string; configured: boolean; availableModels: string[] }> {
+  const client = new CodexRpcClient(options.connection ?? new StdioCodexAppServerConnection(options.stdio));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        await client.request("initialize", { clientInfo: { name: "rhiz_harness_model_preflight", version: "0.0.1" } });
+        await client.notify("initialized", {});
+        const configuration = z.object({ config: z.object({ model: z.string().nullable().optional() }).passthrough() })
+          .parse(await client.request("config/read", { includeLayers: false }));
+        const entries: Array<{ id: string; model: string; isDefault: boolean }> = [];
+        const seen = new Set<string>();
+        let cursor: string | undefined;
+        for (;;) {
+          const page = z.object({ data: z.array(z.object({ id, model: id, isDefault: z.boolean() })), nextCursor: z.string().nullable().optional() })
+            .parse(await client.request("model/list", { includeHidden: true, limit: 100, ...(cursor === undefined ? {} : { cursor }) }));
+          entries.push(...page.data);
+          if (!page.nextCursor) break;
+          if (seen.has(page.nextCursor) || seen.size >= 100) throw new CodexAppServerProtocolError("Codex model catalog pagination did not terminate");
+          seen.add(page.nextCursor);
+          cursor = page.nextCursor;
+        }
+        const selected = configuration.config.model ?? entries.find(entry => entry.isDefault)?.model;
+        if (!selected || !entries.some(entry => entry.id === selected || entry.model === selected)) {
+          throw new CodexAppServerProtocolError(`Configured Codex model ${selected ?? "(none)"} is absent from the complete model catalog; no model work started`);
+        }
+        return { model: selected, configured: configuration.config.model != null, availableModels: [...new Set(entries.map(entry => entry.model))] };
+      })(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new CodexAppServerProtocolError("Codex model preflight timed out; no model work started")), options.timeoutMs ?? 15_000); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await client.close();
+  }
+}
+
 type ServerRequestHandler = (method: string, params: unknown) => Promise<unknown>;
 type NotificationHandler = (method: string, params: unknown) => Promise<void> | void;
 type TerminationHandler = (error: Error) => void;

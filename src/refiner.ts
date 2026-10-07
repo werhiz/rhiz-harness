@@ -17,28 +17,8 @@ import type { EventLedger } from "./ledger.js";
 const id = z.string().trim().min(1).max(200);
 const text = z.string().trim().min(1);
 
-export const FAILURE_TAXONOMY = [
-  "wrong-understanding",
-  "missing-context",
-  "too-much-context",
-  "bad-routing",
-  "worker-capability",
-  "authority-error",
-  "coordination-error",
-  "concurrency-conflict",
-  "implementation-error",
-  "verification-gap",
-  "false-verification",
-  "runtime-failure",
-  "dependency-failure",
-  "environment-drift",
-  "process-stall",
-  "recovery-failure",
-  "human-friction",
-  "architecture-confusion",
-  "repeated-mistake",
-] as const;
-export type FailureTaxonomy = typeof FAILURE_TAXONOMY[number];
+import { FAILURE_TAXONOMY, type FailureTaxonomy } from "./failure-taxonomy.js";
+export { FAILURE_TAXONOMY, type FailureTaxonomy } from "./failure-taxonomy.js";
 
 export const SUCCESS_TAXONOMY = [
   "high-quality-first-attempt",
@@ -380,6 +360,7 @@ export function analyzeClosedWorkFromEvents(
     classifications.push(record.recovered ? "successful-recovery" : "high-quality-first-attempt");
     if (countHumanInterventions(workEvents) === 0) classifications.push("zero-human-intervention");
   } else {
+    if (rejected?.payload.correction) classifications.push(rejected.payload.correction.cause);
     if (workEvents.some((event) => event.type === "attempt.failed")) {
       classifications.push("runtime-failure");
     }
@@ -395,6 +376,9 @@ export function analyzeClosedWorkFromEvents(
   }
 
   const candidateProposalKinds: string[] = [];
+  if (rejected?.payload.correction) {
+    candidateProposalKinds.push("lesson-fixture", "test");
+  }
   if (classifications.includes("repeated-mistake")) {
     candidateProposalKinds.push("rule", "test");
   }
@@ -421,8 +405,8 @@ export function analyzeClosedWorkFromEvents(
   return {
     workId,
     outcome,
-    classifications,
-    candidateProposalKinds,
+    classifications: [...new Set(classifications)],
+    candidateProposalKinds: [...new Set(candidateProposalKinds)],
     ledgerEventCount: workEvents.length,
     ledgerSpanMs: spanMs,
     record: deriveWorkRecord(workEvents),

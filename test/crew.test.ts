@@ -8,7 +8,9 @@ import type {
   WorkerProvider,
   WorkerResult,
   WorkerStartRequest,
+  WorkerStartOptions,
 } from "../src/host.js";
+import { httpEffectResourceUri, type HttpEffectsPort } from "../src/http-effects.js";
 import {
   CatalogCrewWorkerResolver,
   CrewPlanSchema,
@@ -99,6 +101,49 @@ class FakeWorkspaceProvider implements CrewWorkspaceProvider {
     for (const workspaceId of [...this.records.keys()]) await this.release(workspaceId);
   }
 }
+
+test("Crew mediates exact HTTP authority, persists Guard before effect and closes the broker with its Attempt", async (t) => {
+  const ledger = new InMemoryEventLedger();
+  const workspaces = new FakeWorkspaceProvider();
+  const target = "https://example.invalid/api/create";
+  let captured: HttpEffectsPort | undefined;
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    calls++;
+    assert.equal(url, target);
+    const events = await ledger.replay(streamIdForWork("work:http-fixture"));
+    assert.ok(events.some(event => event.type === "guard.evaluated" && event.payload.request.tool.category === "external-mutate" && event.payload.verdict.decision === "allow"));
+    return new Response('{"created":true}');
+  });
+  const provider = new SelectionProvider("worker:http-fixture", "workspace");
+  provider.start = async (input: WorkerStartRequest, options?: WorkerStartOptions) => {
+    captured = options?.httpEffects;
+    assert.ok(captured);
+    const result = await captured.invoke("fixture.create", { intent: "private fixture" });
+    assert.equal(result.outcome, "responded");
+    const write = await options!.guardedToolMediation!.evaluate({ requestId: "request:artifact", tool: { name: "write", category: "write", args: { path: "src/response.json" } } });
+    assert.equal(write.verdict.decision, "allow");
+    workspaces.mutate(input.workspace.workspaceId, "src/response.json");
+    return new FakeHandle(provider.id, input, { status: "finished", summary: "Response artifact saved", artifacts: [], evidence: [] });
+  };
+  const work = crewWork({ id: "work:http-fixture", type: "SHIP", preferredProviders: [provider.id] });
+  work.authority.grants.push({ action: "external-mutate", resources: [{ uri: httpEffectResourceUri("POST", target) }], constraints: [] });
+  const run = await new CrewSupervisor({
+    plan: parseCrewPlan({ id: "crew:http-fixture", objective: "Exercise actual Crew broker wiring", baseRevision: "base", maxParallel: 1,
+      missions: [{ work, workspace: { strategy: "fresh", mode: "isolated-write" }, requiredCapabilities: ["guardedToolMediation"] }] }),
+    ledger, workspaceProvider: workspaces, workerCatalog: sandboxCapableCatalog(provider), actor: human,
+    correlationId: "build:http-fixture", httpEffects: [{ toolName: "fixture.create", method: "POST", url: target, credential: () => "fixture-secret" }],
+    now: () => "2026-08-20T16:00:00.000Z",
+  }).run();
+  try {
+    assert.equal(run.receipt.missions[0]!.status, "execution-finished");
+    assert.equal((await captured!.invoke("fixture.create")).outcome, "not-sent");
+    assert.equal(calls, 1);
+    const events = await ledger.replay(streamIdForWork(work.id));
+    assert.ok(events.every(event => event.correlationId === "build:http-fixture"));
+    assert.equal(JSON.stringify(events).includes("fixture-secret"), false);
+  } finally { await run.close(); }
+});
 
 class SelectionProvider implements WorkerProvider {
   constructor(readonly id: string, readonly writeAccess: WorkerDescriptor["writeAccess"] = "host-policy") {}

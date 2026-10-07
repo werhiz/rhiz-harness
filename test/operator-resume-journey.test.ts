@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { human } from "./helpers.js";
+import { readDurableLedgerEvents } from "../adapters/local/durable-ledger.js";
 
 // The interrupted journey through the real CLI and real processes: start runs
 // an attempt the verifier refuses, the second attempt's process is killed
@@ -181,7 +182,7 @@ test("start, kill mid-run, resume, review, accept: the earlier refusal survives 
   t.after(() => { if (!process.env.KEEP_FIXTURE) rmSync(f.root, { recursive: true, force: true }); });
 
   // 1. start: attempt 1 writes the wrong bytes and is refused; attempt 2 hangs.
-  const child = spawn(process.execPath, [cli, "start", "--contract", f.contract, "--verify", f.verify, "--json", "--repo", f.repo], {
+  const child = spawn(process.execPath, [cli, "start", "--contract", f.contract, "--verify", f.verify, "--correlation-id", "build:resume-proof", "--json", "--repo", f.repo], {
     env: env(f), detached: true, stdio: "ignore",
   });
   await waitFor(join(f.log, "turn-2.json"), 120_000);
@@ -195,11 +196,21 @@ test("start, kill mid-run, resume, review, accept: the earlier refusal survives 
   assert.equal(work.attempts.failed + work.attempts.active >= 1, true);
   assert.equal(work.verification.latest, "fail");
 
+  const ledgerDirectory = join(git(f.repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]), "rhiz-harness", "ledgers", "work-resume-journey");
+  const beforeMismatch = await readDurableLedgerEvents(ledgerDirectory);
+  const runner = fileURLToPath(new URL("../../scripts/run-repository-work.mjs", import.meta.url));
+  const mismatch = spawnSync(process.execPath, [runner, "--repo", f.repo, "--contract", f.contract, "--verify", f.verify, "--resume", "true", "--correlation-id", "build:wrong"], { encoding: "utf8", env: env(f) });
+  assert.notEqual(mismatch.status, 0);
+  assert.match(mismatch.stderr, /cannot change the original build correlation/);
+  assert.deepEqual(await readDurableLedgerEvents(ledgerDirectory), beforeMismatch);
+
   // 3. resume continues the same Work and hands the worker the refusal that predates this process.
   const resumed = cliRun(f, ["resume", "work:resume-journey", "--json"]);
   assert.equal(resumed.status, 0, `resume failed:\n${resumed.stderr}`);
   const resumedJson = JSON.parse(String(resumed.stdout));
   assert.equal(resumedJson.status.state, "reviewing");
+  const resumedEvents = await readDurableLedgerEvents(ledgerDirectory);
+  assert.ok(resumedEvents.filter((e) => e.type === "attempt.started").every((e) => e.correlationId === "build:resume-proof"));
   assert.equal(resumedJson.receipt.resume.carriedRefusals.verificationResultEventIds.length, 1);
   assert.deepEqual(resumedJson.receipt.resume.carriedRefusals.missing, []);
   assert.deepEqual(resumedJson.receipt.resume.carriedRefusals.rejected, []);

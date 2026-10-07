@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   CodexAppServerHost,
+  preflightCodexModel,
   type CodexAppServerConnection,
 } from "../adapters/codex/app-server.js";
 import type { GuardEvaluation, GuardToolCall } from "../src/guard.js";
@@ -64,6 +65,24 @@ class ScriptedConnection implements CodexAppServerConnection {
   push(message: unknown): void { this.#queue.push(message); }
   end(): void { this.#queue.close(); }
 }
+
+test("model preflight checks all catalog pages and never starts inference or selects a fallback", async () => {
+  for (const selected of ["model:available-hidden", "model:stale"]) {
+    const connection = new ScriptedConnection((message, channel) => {
+      if (message.method === "initialize") respond(channel, message, {});
+      if (message.method === "config/read") respond(channel, message, { config: { model: selected } });
+      if (message.method === "model/list") {
+        const params = message.params as { cursor?: string; includeHidden: boolean };
+        assert.equal(params.includeHidden, true);
+        respond(channel, message, params.cursor ? { data: [{ id: "model:available-hidden", model: "model:available-hidden", isDefault: false }], nextCursor: null }
+          : { data: [{ id: "model:default", model: "model:default", isDefault: true }], nextCursor: "page:2" });
+      }
+    });
+    if (selected === "model:stale") await assert.rejects(preflightCodexModel({ connection }), /absent from the complete model catalog/);
+    else assert.equal((await preflightCodexModel({ connection })).model, selected);
+    assert.equal(connection.sent.some(message => message.method === "thread/start" || message.method === "turn/start"), false);
+  }
+});
 
 function requestId(message: Sent): string | number | null {
   const value = message["id"];
