@@ -27,7 +27,8 @@ const threadId = "thread:fake";
 const turnId = "turn:fake";
 let cwd = null;
 let target = null;
-const content = "arm:" + process.pid + ":" + Date.now() + "\n";
+let content = "arm:" + process.pid + ":" + Date.now() + "\n";
+let attemptNumber = 1;
 
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (!line.trim()) return;
@@ -38,6 +39,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     return;
   } else if (message.method === "thread/start") {
     cwd = message.params.cwd;
+    attemptNumber = cwd.includes("attempt-2") ? 2 : 1;
+    if (process.env.RHIZ_USAGE_FIXTURE_MODE && attemptNumber === 1) content = "first candidate fails verification\n";
     target = join(cwd, "src", "arm.txt");
     send({ id: message.id, result: {
       thread: { id: threadId }, model: "fake-model", modelProvider: "fake", serviceTier: null, cwd,
@@ -56,7 +59,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     }
     send({ method: "item/completed", params: { threadId, turnId, item: { type: "fileChange", id: "file:arm", changes: [{ path: target, kind: { type: "add" }, diff: content }] } } });
     send({ method: "item/completed", params: { threadId, turnId, item: { type: "agentMessage", id: "message:arm", text: "wrote src/arm.txt" } } });
-    send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed", error: null } } });
+    if (process.env.RHIZ_USAGE_FIXTURE_MODE) {
+      const usage = { method: "thread/tokenUsage/updated", params: { threadId, turnId, tokenUsage: { total: { inputTokens: 10 * attemptNumber, outputTokens: 2 * attemptNumber }, last: { inputTokens: 1, outputTokens: 1 } } } };
+      send(usage);
+      send(usage);
+    }
+    const failed = process.env.RHIZ_USAGE_FIXTURE_MODE === "fail-second" && attemptNumber === 2;
+    send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: failed ? "failed" : "completed", error: null } } });
   } else if (message.id !== undefined && message.method !== undefined) {
     send({ id: message.id, result: {} });
   }
@@ -71,7 +80,7 @@ function remoteHead(repo: string, ref: string): string | undefined {
   return git(repo, ["ls-remote", "--refs", "origin", ref]).split("\t")[0] || undefined;
 }
 
-function fixture() {
+function fixture(usageMode?: "retry" | "fail-second") {
   const root = mkdtempSync(join(tmpdir(), "rhiz-benchmark-arms-"));
   const remote = join(root, "remote.git");
   const repo = join(root, "repo");
@@ -106,7 +115,7 @@ function fixture() {
     requiredEvidence: [{ id: "evidence:tests", description: "Passing test evidence", acceptedKinds: ["test"], required: true }],
     context: { strategy: "minimal", resources: [], includeHistory: true },
     dependencies: [],
-    workerPolicy: { preferredProviders: [], maxAttempts: 1, allowParallelAttempts: false },
+    workerPolicy: { preferredProviders: [], maxAttempts: usageMode ? 2 : 1, allowParallelAttempts: false },
     verificationPolicy: { required: true, independentActor: true, reviewRequired: false },
     createdBy: human,
     createdAt: "2026-10-01T00:00:00.000Z",
@@ -141,7 +150,7 @@ function fixture() {
   const codex = join(root, "codex");
   writeFileSync(codex, `#!/bin/sh\nexec "${process.execPath}" "${join(root, "fake-codex.mjs")}" "$@"\n`);
   chmodSync(codex, 0o755);
-  return { root, repo, base, workId, codex };
+  return { root, repo, base, workId, codex, usageMode };
 }
 
 function runArm(f: ReturnType<typeof fixture>, variant: string, extra: string[] = []) {
@@ -157,7 +166,7 @@ function runArm(f: ReturnType<typeof fixture>, variant: string, extra: string[] 
     ...extra,
   ], {
     encoding: "utf8",
-    env: { ...process.env, RHIZ_CODEX_COMMAND: f.codex },
+    env: { ...process.env, RHIZ_CODEX_COMMAND: f.codex, RHIZ_USAGE_FIXTURE_MODE: f.usageMode },
     timeout: 120_000,
   });
   return { result, receipt: () => JSON.parse(readFileSync(output, "utf8")) };
@@ -219,5 +228,25 @@ test("non-benchmark Work keeps its one Work-scoped integration ref", () => {
     assert.equal(remoteHead(f.repo, receipt.candidate.verifiedRef), receipt.candidate.head);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("repository benchmark counts both retry attempts even when the last worker fails before Verify", () => {
+  for (const mode of ["retry", "fail-second"] as const) {
+    const f = fixture(mode);
+    try {
+      const run = benchmarkArm(f, mode);
+      assert.equal(run.result.status, mode === "retry" ? 0 : 1, run.result.stderr);
+      const receipt = run.receipt();
+      assert.equal(receipt.benchmarkRun.attemptIds.length, 2);
+      assert.equal(receipt.benchmarkRun.outcome, mode === "retry" ? "verified" : "failed");
+      assert.deepEqual(receipt.benchmarkRun.usage, { inputTokens: 30, outputTokens: 6 });
+      assert.equal(receipt.benchmarkRun.measurementCoverage.usage, "provider-reported");
+      const terminal = readFileSync(join(receipt.ledgerRoot, "events.jsonl"), "utf8").trim().split("\n")
+        .map(line => JSON.parse(line).event).filter(event => event.type === "attempt.finished" || event.type === "attempt.failed");
+      assert.equal(terminal.length, 2);
+      assert.deepEqual(terminal.map(event => event.payload.observedUsage.inputTokens), [10, 20]);
+      assert.equal(terminal[1].type, mode === "retry" ? "attempt.finished" : "attempt.failed");
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
   }
 });

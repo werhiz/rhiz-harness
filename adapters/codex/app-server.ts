@@ -33,6 +33,7 @@ import type { GuardEvaluation, GuardToolCall } from "../../src/guard.js";
 import { summarizeGuardEvaluation } from "../../src/guard.js";
 import { workerContractWritableRoots } from "../../src/sandbox.js";
 import { WorkerCatalog } from "../../src/workers.js";
+import type { ObservedUsage } from "../../src/schemas.js";
 
 /**
  * Minimal adapter-owned slice of the Codex App Server protocol.
@@ -108,6 +109,16 @@ const TurnCompletedParamsSchema = z.object({
     error: z.unknown().nullable().optional(),
   }).passthrough(),
 }).passthrough();
+
+// Codex 0.154 App Server v2: total is cumulative for this fresh thread.
+// Cache/reasoning counts are subtotals, not extra billable tokens.
+const UsageIdentitySchema = z.object({ threadId: id, turnId: id }).passthrough();
+const TokenUsageParamsSchema = UsageIdentitySchema.extend({
+  tokenUsage: z.object({ total: z.object({
+    inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  }).passthrough() }).passthrough(),
+});
 
 const FileChangeApprovalParamsSchema = z.object({
   threadId: id,
@@ -336,6 +347,9 @@ class CodexRpcClient {
     const response = new Promise<unknown>((resolve, reject) => {
       this.#pending.set(requestId, { resolve, reject, ...(beforeResolve === undefined ? {} : { beforeResolve }) });
     });
+    // Close can reject the response while send is still pending. Observe that
+    // rejection now; callers still receive the original response promise below.
+    void response.catch(() => {});
     try {
       await this.#connection.send({ id: requestId, method, params });
     } catch (error) {
@@ -429,6 +443,7 @@ class ObservationQueue implements AsyncIterableIterator<WorkerObservation> {
 interface Completion {
   status: "completed" | "interrupted" | "failed";
   finalText: string;
+  observedUsage?: ObservedUsage;
 }
 
 /** Owns attempt correlation and completion state before a WorkerHandle exists. */
@@ -439,6 +454,8 @@ class CodexAttemptState {
   #turnId: string | null = null;
   #finalText = "";
   #settled = false;
+  #usage: { inputTokens: number; outputTokens: number } | undefined;
+  #usageInvalid = false;
 
   constructor() {
     let resolve!: (value: Completion) => void;
@@ -483,7 +500,19 @@ class CodexAttemptState {
     if (!this.#settled) this.#finalText = text;
   }
 
-  settle(status: Completion["status"], fallback = ""): void {
+  observeUsage(raw: unknown): void {
+    if (this.#settled || this.#usageInvalid) return;
+    const parsed = TokenUsageParamsSchema.safeParse(raw);
+    if (!parsed.success) { this.#usageInvalid = true; return; }
+    const next = parsed.data.tokenUsage.total;
+    if (this.#usage && (next.inputTokens < this.#usage.inputTokens || next.outputTokens < this.#usage.outputTokens)) {
+      this.#usageInvalid = true;
+      return;
+    }
+    this.#usage = { inputTokens: next.inputTokens, outputTokens: next.outputTokens };
+  }
+
+  settle(status: Completion["status"], fallback = "", providerCompleted = false): void {
     if (this.#settled) return;
     this.#settled = true;
     let finalText = this.#finalText.trim() || fallback.trim();
@@ -492,7 +521,12 @@ class CodexAttemptState {
       effectiveStatus = "failed";
       finalText = "Codex turn completed without a final agent message";
     }
-    this.#resolveCompletion({ status: effectiveStatus, finalText });
+    this.#resolveCompletion({ status: effectiveStatus, finalText,
+      ...(this.#usage && !this.#usageInvalid ? { observedUsage: {
+        source: "provider-reported", ...this.#usage,
+        complete: providerCompleted,
+      } } : {}),
+    });
   }
 
   fail(reason: string): void {
@@ -661,6 +695,7 @@ class CodexAppServerWorkerHandle implements WorkerHandle {
         summary: completion.finalText.slice(0, 4000),
         artifacts: [],
         evidence: [],
+        ...(completion.observedUsage ? { observedUsage: completion.observedUsage } : {}),
         runtime: {
           model: this.#model,
           ...(this.#effortLevel === undefined
@@ -683,13 +718,19 @@ class CodexAppServerWorkerHandle implements WorkerHandle {
     });
     const threadId = this.#state.threadId;
     const turnId = this.#state.turnId;
+    const interrupt = threadId !== null && turnId !== null
+      ? this.#client.request("turn/interrupt", { threadId, turnId }).then(() => undefined).catch(() => undefined)
+      : Promise.resolve();
+    // Accounting custody must not wait for transport acknowledgement. Crew
+    // closes its bounded cleanup window before an unresponsive interrupt times
+    // out, so publish the observed partial snapshot as soon as cancellation wins.
+    this.#state.settle("interrupted", `Codex turn cancelled: ${reason}`);
     if (threadId !== null && turnId !== null) {
       await Promise.race([
-        this.#client.request("turn/interrupt", { threadId, turnId }).then(() => undefined).catch(() => undefined),
+        interrupt,
         delay(1_000),
       ]);
     }
-    this.#state.settle("interrupted", `Codex turn cancelled: ${reason}`);
     await this.#client.close().catch(() => undefined);
   }
 }
@@ -848,6 +889,12 @@ class CodexAppServerWorkerProvider implements WorkerProvider {
     });
 
     const handleNotification = (method: string, rawParams: unknown): void => {
+      if (method === "thread/tokenUsage/updated") {
+        const identity = UsageIdentitySchema.safeParse(rawParams);
+        if (!identity.success || correlationFailure(identity.data.threadId, identity.data.turnId)) return;
+        state.observeUsage(rawParams);
+        return;
+      }
       if (method === "item/started" || method === "item/completed") {
         const params = ItemLifecycleParamsSchema.parse(rawParams);
         if (correlationFailure(params.threadId, params.turnId)) return;
@@ -900,7 +947,7 @@ class CodexAppServerWorkerProvider implements WorkerProvider {
         const status: Completion["status"] = params.turn.status === "completed"
           ? "completed"
           : params.turn.status === "interrupted" ? "interrupted" : "failed";
-        state.settle(status, status === "failed" ? "Codex turn failed" : "");
+        state.settle(status, status === "failed" ? "Codex turn failed" : "", params.turn.status !== "inProgress");
       }
     };
 

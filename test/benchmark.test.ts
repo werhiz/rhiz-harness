@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   benchmarkExposureContext,
+  aggregateAttemptUsage,
   BenchmarkRunSchema,
   clericalInterventionCount,
   compareBenchmarkRuns,
@@ -11,6 +12,25 @@ import {
 } from "../src/benchmark.js";
 import { composeContextPack, parseContextCompositionOptions } from "../src/context.js";
 import { work } from "./helpers.js";
+import type { ObservedUsage } from "../src/schemas.js";
+
+test("attempt usage totals require every attempt and preserve unknown directions", () => {
+  const reports = new Map<string, ObservedUsage | undefined>([
+    ["first", { source: "provider-reported", inputTokens: 12, outputTokens: 3 }],
+    ["second", { source: "provider-reported", complete: true, inputTokens: 20, outputTokens: 0 }],
+    ["unrelated", { source: "provider-reported", inputTokens: 999 }],
+  ]);
+  assert.deepEqual(aggregateAttemptUsage(["first", "second"], reports), { inputTokens: 32, outputTokens: 3 });
+  reports.set("second", { source: "provider-reported", inputTokens: 20 });
+  assert.deepEqual(aggregateAttemptUsage(["first", "second"], reports), { inputTokens: 32 });
+  assert.equal(aggregateAttemptUsage(["first", "missing"], reports), undefined);
+  assert.equal(aggregateAttemptUsage([], reports), undefined);
+  reports.set("second", { source: "provider-reported", complete: false, inputTokens: 20 });
+  assert.equal(aggregateAttemptUsage(["first", "second"], reports), undefined);
+  reports.set("second", { source: "provider-reported", inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 2 });
+  assert.deepEqual(aggregateAttemptUsage(["first", "second"], reports), { outputTokens: 5 });
+  assert.throws(() => aggregateAttemptUsage(["first", "first"], reports), /duplicate/);
+});
 
 const REPOSITORY_CONTROLS = {
   taskIdentity: `sha256:${"a".repeat(64)}`,

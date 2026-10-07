@@ -113,6 +113,34 @@ A benchmark dashboard is a projection of this evidence, never the source of trut
 - Do not claim cost improvements when provider usage data is unavailable.
 - Do not generalize from one task class without evidence.
 
+## Codex provider usage custody
+
+The actual Site Studio consumer replay baseline at Harness `25a58c00bf61fd28c0d688e42b793dfc5ca64ada`
+(`dd27ec28-bfef-41c5-a097-b4fca8bed7a0`, correlation `68a920c1-4353-4193-81bf-8f071c09feb9`)
+finished two Astra attempts on October 7, 2026 with usage unavailable. The adapter
+ignored App Server token notifications and the repository runner supplied no usage.
+That receipt remains unchanged; missing historical measurements are not backfilled.
+
+Codex App Server v2 `thread/tokenUsage/updated` carries cumulative totals. Each
+Harness attempt starts a fresh thread and uses only the latest valid snapshot for
+its exact confirmed thread and turn. Repeated snapshots are not added together;
+cached input and reasoning output are not added to input/output totals. The mapping
+is checked against the installed Codex 0.154 protocol schema and scripted wire fixtures.
+
+`ObservedUsage` travels through WorkerResult and the existing terminal Attempt event,
+including failed attempts. `complete: false` preserves a partial reported snapshot
+after local cancellation or transport loss. Provider-confirmed terminal turns mark
+the snapshot complete. Legacy reports with no completeness field retain their existing
+semantics. Malformed, unsafe or regressing counters invalidate that attempt's usage.
+The adapter freezes usage when the attempt settles.
+
+Benchmark totals include a field only when every included attempt reported that field
+with complete coverage. A missing/partial attempt does not become zero; overflow does
+not become a rounded measurement. Refiner counts reported values and reports, while
+Router excludes partial costs from per-attempt cost evidence. The signed-in CLI's token
+counts do not establish dollar cost. The real Codex canary requires the usage to survive
+Ledger close/reopen. None of these measurements establishes customer Outcome acceptance.
+
 ## Release discipline
 
 Major performance or autonomy claims should cite a benchmark suite and exact Harness version. A feature may ship before measurable improvement is proven, but claims that it makes Rhiz better must eventually be tied to evidence.

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { CodexAppServerHost } from "../dist/adapters/codex/app-server.js";
-import { createRepositoryBenchmarkRun, repositoryRunContext } from "../dist/src/benchmark.js";
+import { aggregateAttemptUsage, createRepositoryBenchmarkRun, repositoryRunContext } from "../dist/src/benchmark.js";
 import {
   candidatePathScopesFromResources,
   GitWorkIntegrationExecutor,
@@ -454,6 +454,7 @@ function benchmarkRunFor({
     outcome,
     verified,
     repairRequired: attemptIds.length > 1,
+    usage: aggregateAttemptUsage(attemptIds, attemptUsage),
     evidenceRefs,
   });
 }
@@ -480,6 +481,7 @@ const verifierCatalog = new VerifierCatalog(verifierProvider);
 const attemptBudget = work.workerPolicy.maxAttempts;
 const attempts = [];
 const attemptRuntimeControls = [];
+const attemptUsage = new Map();
 let priorAttemptEvidence = [];
 let mission;
 let workspace;
@@ -575,6 +577,7 @@ try {
     mission = run.receipt.missions[0];
     assert.ok(mission, "Crew returned no mission receipt");
     if (mission.attemptId) {
+      attemptUsage.set(mission.attemptId, mission.workerResult?.observedUsage);
       attemptRuntimeControls.push({
         attemptId: mission.attemptId,
         workerProviderId: mission.workerProviderId ?? undefined,
