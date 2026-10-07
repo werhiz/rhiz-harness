@@ -5,6 +5,7 @@ import {
   ContextRequestSchema,
   EvidenceRefSchema,
   GuardEvaluationRecordSchema,
+  ObservedUsageSchema,
   ResourceRefSchema,
   TAINTED_ATTACHMENT_MAX,
   TaintedAttachmentSchema,
@@ -161,6 +162,7 @@ export const WorkerResultSchema = z.object({
   summary: text.max(4000),
   artifacts: z.array(ResourceRefSchema),
   evidence: z.array(EvidenceRefSchema),
+  observedUsage: ObservedUsageSchema.optional(),
   /**
    * Provider-observed execution identity that is safe to compare across runs.
    * This is evidence about execution configuration, never Work authority.

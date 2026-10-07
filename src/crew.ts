@@ -917,6 +917,9 @@ export class CrewSupervisor {
     // Once closed, no late worker observation or Guard callback may append
     // evidence that changes the terminal Attempt's story.
     let workerClosed = false;
+    // Cancellation may return measured partial usage during bounded cleanup.
+    // This latch admits only result custody, never tools or observations.
+    let resultCustodyClosed = false;
     const httpEffectsAbort = new AbortController();
     let boardState: WorkState | undefined;
     let projectionViolationCount = 0;
@@ -1318,7 +1321,13 @@ export class CrewSupervisor {
             );
           }
         })();
-        const lifecycle = Promise.all([started.handle.result(), collecting]);
+        const lifecycle = Promise.all([started.handle.result().then((value) => {
+          const parsed = WorkerResultSchema.parse(value);
+          // Preserve a completed result if observation drain or the later
+          // workspace snapshot fails. Late results cannot reopen an attempt.
+          if (!resultCustodyClosed) result = parsed;
+          return parsed;
+        }), collecting]);
         // Observe a rejected detached stream even if the deadline wins first.
         void collecting.catch(() => {});
         const lifecycleOutcome = await awaitDeadline(lifecycle, attemptDeadlineAt, this.#now);
@@ -1326,9 +1335,11 @@ export class CrewSupervisor {
           deadlineObservedAt = lifecycleOutcome.observedAt;
           workerClosed = true;
           await awaitCleanupGrace(Promise.resolve().then(() => started.handle.cancel(`attempt deadline ${attemptDeadlineAt} exceeded`)));
+          resultCustodyClosed = true;
         } else {
           [result] = lifecycleOutcome.value;
           workerClosed = true;
+          resultCustodyClosed = true;
         }
       }
       if (deadlineObservedAt === undefined) {
@@ -1350,7 +1361,8 @@ export class CrewSupervisor {
         // callbacks and late startup handles are now cleanup-only.
         await append(
           "attempt.failed",
-          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false },
+          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false,
+            ...(result?.observedUsage ? { observedUsage: result.observedUsage } : {}) },
           { taskId, attemptId, actor: workerActor },
           deadlineObservedAt,
         );
@@ -1376,7 +1388,8 @@ export class CrewSupervisor {
           // in the mission receipt, but bound the projection input at the
           // adapter boundary so a verbose worker cannot prevent the Attempt
           // from reaching its terminal Ledger event.
-          { resultSummary: result.summary.slice(0, 2000), artifactRefs: result.artifacts },
+          { resultSummary: result.summary.slice(0, 2000), artifactRefs: result.artifacts,
+            ...(result.observedUsage ? { observedUsage: result.observedUsage } : {}) },
           { taskId, attemptId, actor: workerActor },
         );
       } else if (deadlineObservedAt === undefined && result !== undefined) {
@@ -1385,7 +1398,8 @@ export class CrewSupervisor {
           : result.summary;
         await append(
           "attempt.failed",
-          { reason: reason.slice(0, 2000), recoverable: false },
+          { reason: reason.slice(0, 2000), recoverable: false,
+            ...(result.observedUsage ? { observedUsage: result.observedUsage } : {}) },
           { taskId, attemptId, actor: workerActor },
         );
       }
@@ -1406,6 +1420,7 @@ export class CrewSupervisor {
       }
     } catch (error) {
       workerClosed = true;
+      resultCustodyClosed = true;
       errorMessage = safeError(error);
       if (attemptStarted && !terminalAttemptEvent) {
         try {
@@ -1415,7 +1430,8 @@ export class CrewSupervisor {
           };
           await append(
             "attempt.failed",
-            { reason: errorMessage, recoverable: false },
+            { reason: errorMessage, recoverable: false,
+              ...(result?.observedUsage ? { observedUsage: result.observedUsage } : {}) },
             { taskId, attemptId, actor: workerActor },
           );
           terminalAttemptEvent = true;

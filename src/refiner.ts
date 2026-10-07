@@ -300,7 +300,7 @@ export function deriveWorkRecord(workEvents: readonly HarnessEvent[]): WorkRecor
   let observedUsageReports = 0;
   for (const event of workEvents) {
     if (event.type === "router.decision-made") estimatedCostUsd += event.payload.expectedCostUsd;
-    if (event.type === "attempt.finished" || event.type === "review.result") {
+    if (event.type === "attempt.finished" || event.type === "attempt.failed" || event.type === "review.result") {
       const usage = event.payload.observedUsage;
       if (usage !== undefined) {
         observedUsageReports += 1;

@@ -178,6 +178,7 @@ interface Behavior {
   status?: WorkerResult["status"];
   summary?: string;
   mutate?: string[];
+  observedUsage?: WorkerResult["observedUsage"];
 }
 
 class FakeHandle implements WorkerHandle {
@@ -238,6 +239,7 @@ class ScriptedResolver implements CrewWorkerResolver {
           summary: behavior.summary ?? `${selection.provider.id} completed`,
           artifacts: [],
           evidence: [],
+          ...(behavior.observedUsage ? { observedUsage: behavior.observedUsage } : {}),
         });
       },
     };
@@ -450,6 +452,29 @@ test("Crew bounds a finished worker summary to the attempt event contract", asyn
     originalSummary.slice(0, 2000),
   );
   await run.close();
+});
+
+test("Crew preserves provider usage on finished, failed and scope-refused attempts", async () => {
+  for (const mode of ["finished", "failed", "scope"] as const) {
+    const work = crewWork({ id: `work:usage-${mode}`, type: "SHIP", preferredProviders: ["worker:ship"] });
+    const ledger = new InMemoryEventLedger();
+    const workspaces = new FakeWorkspaceProvider();
+    const observedUsage = { source: "provider-reported" as const, inputTokens: 13, outputTokens: 4, complete: true };
+    const run = await new CrewSupervisor({
+      plan: parseCrewPlan({ id: `crew:usage-${mode}`, objective: "Retain measured usage across terminal states", baseRevision: "abc123",
+        missions: [{ work, workspace: { strategy: "fresh", mode: "isolated-write" } }] }),
+      ledger, workspaceProvider: workspaces, workerCatalog: sandboxCapableCatalog(new SelectionProvider("worker:ship", "workspace")), actor: human,
+      workerResolver: new ScriptedResolver(workspaces, { "worker:ship": {
+        status: mode === "failed" ? "failed" : "finished", mutate: mode === "scope" ? ["outside.ts"] : [], observedUsage,
+      } }),
+    }).run();
+    try {
+      const terminal = (await ledger.replay(streamIdForWork(work.id))).find(e => e.type === (mode === "finished" ? "attempt.finished" : "attempt.failed"));
+      assert.ok(terminal && (terminal.type === "attempt.finished" || terminal.type === "attempt.failed"));
+      assert.deepEqual(terminal.payload.observedUsage, observedUsage);
+      assert.deepEqual(run.receipt.missions[0]?.workerResult?.observedUsage, observedUsage);
+    } finally { await run.close(); }
+  }
 });
 
 test("SHIP changes outside writeScope fail closed", async () => {

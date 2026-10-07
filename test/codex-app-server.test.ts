@@ -84,6 +84,68 @@ test("model preflight checks all catalog pages and never starts inference or sel
   }
 });
 
+function usageNotification(inputTokens: unknown, outputTokens: unknown, threadId = "thread:1", turnId = "turn:1") {
+  return { method: "thread/tokenUsage/updated", params: { threadId, turnId, tokenUsage: {
+    total: { inputTokens, outputTokens, cachedInputTokens: 5, reasoningOutputTokens: 3, totalTokens: 99 },
+    last: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 2 },
+    modelContextWindow: 1000,
+  } } };
+}
+
+async function usageResult(notifications: unknown[], terminal = "completed") {
+  let result;
+  await withRoot(async root => {
+    const connection = new ScriptedConnection((message, self) => {
+      if (baseHandshake(message, self, root)) return;
+      if (method(message) === "turn/start") {
+        // Real protocol updates can precede the turn/start response.
+        for (const notification of notifications) self.push(notification);
+        respond(self, message, turnResult());
+        self.push({ method: "item/completed", params: { threadId: "thread:1", turnId: "turn:1", item: { type: "agentMessage", id: "message:usage", text: "measurement fixture" } } });
+        if (terminal === "transport") { self.end(); return; }
+        if (terminal === "local-cancel") return;
+        self.push({ method: "turn/completed", params: { threadId: "thread:1", turn: { id: "turn:1", status: terminal, error: null } } });
+        self.push(usageNotification(9999, 9999)); // Settled evidence is immutable.
+      }
+      if (method(message) === "turn/interrupt") respond(self, message, {});
+    });
+    const host = new CodexAppServerHost({ connectionFactory: () => connection });
+    try {
+      const started = await startWorkerAttempt(host.workers().get("worker:codex-app-server")!, inputFor(root), { guardedToolMediation: mediation() });
+      if (terminal === "local-cancel") await started.handle.cancel("fixture cancellation");
+      result = await started.handle.result();
+    } finally { await host.close(); }
+  });
+  return result!;
+}
+
+test("Codex usage keeps the final correlated cumulative total exactly once", async () => {
+  const result = await usageResult([
+    usageNotification(9000, 9000, "unrelated"), usageNotification(9000, 9000, "thread:1", "other-turn"),
+    usageNotification(10, 2), usageNotification(20, 7), usageNotification(20, 7),
+  ]);
+  assert.deepEqual((result as { observedUsage?: unknown }).observedUsage, { source: "provider-reported", complete: true, inputTokens: 20, outputTokens: 7 });
+});
+
+test("Codex usage preserves zero, missing, and invalid measurements distinctly", async () => {
+  assert.deepEqual((await usageResult([usageNotification(0, 0)])).observedUsage,
+    { source: "provider-reported", complete: true, inputTokens: 0, outputTokens: 0 });
+  assert.equal((await usageResult([])).observedUsage, undefined);
+  for (const invalid of [usageNotification(-1, 3), usageNotification(1.5, 3), usageNotification(Number.MAX_SAFE_INTEGER + 1, 3), usageNotification("2", 3), usageNotification(9, 1)]) {
+    assert.equal((await usageResult([usageNotification(10, 2), invalid, usageNotification(20, 4)])).observedUsage, undefined);
+  }
+});
+
+test("Codex failed and interrupted turns retain usage while transport and local cancellation remain partial", async () => {
+  for (const terminal of ["failed", "interrupted", "transport", "local-cancel"]) {
+    const result = await usageResult([usageNotification(10, 2)], terminal);
+    assert.deepEqual(result.observedUsage, {
+      source: "provider-reported", inputTokens: 10, outputTokens: 2,
+      complete: terminal === "failed" || terminal === "interrupted",
+    });
+  }
+});
+
 function requestId(message: Sent): string | number | null {
   const value = message["id"];
   return typeof value === "string" || typeof value === "number" ? value : null;

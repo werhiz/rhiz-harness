@@ -578,6 +578,8 @@ const AttemptBlockedPayloadSchema = z.object({ reason: nonEmpty.max(1000), decis
  */
 export const ObservedUsageSchema = z.object({
   source: z.literal("provider-reported"),
+  /** False when interruption left only a partial provider snapshot. */
+  complete: z.boolean().optional(),
   costUsd: z.number().nonnegative().finite().optional(),
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
@@ -591,7 +593,7 @@ const AttemptFinishedPayloadSchema = z.object({
   artifactRefs: z.array(ResourceRefSchema).default([]),
   observedUsage: ObservedUsageSchema.optional(),
 }).strict();
-const AttemptFailedPayloadSchema = z.object({ reason: nonEmpty.max(2000), recoverable: z.boolean().default(true) }).strict();
+const AttemptFailedPayloadSchema = z.object({ reason: nonEmpty.max(2000), recoverable: z.boolean().default(true), observedUsage: ObservedUsageSchema.optional() }).strict();
 const AuthorityPayloadSchema = z.object({ policy: AuthorityPolicySchema, reason: nonEmpty.max(1000).optional() }).strict();
 const GuardEvaluatedPayloadSchema = GuardEvaluationRecordSchema;
 const ArtifactPayloadSchema = z.object({ artifact: ResourceRefSchema, digest: nonEmpty.max(300).optional() }).strict();

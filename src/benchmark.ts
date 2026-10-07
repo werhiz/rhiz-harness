@@ -5,7 +5,7 @@ import {
   type ContextConfig,
   type ContextStrategy,
 } from "./context.js";
-import { TimestampSchema, type WorkContract } from "./schemas.js";
+import { ObservedUsageSchema, TimestampSchema, type ObservedUsage, type WorkContract } from "./schemas.js";
 
 const id = z.string().trim().min(1).max(200);
 const identity = z.string().trim().min(1).max(500);
@@ -119,6 +119,26 @@ export function clericalInterventionCount(run: BenchmarkRun): number {
 
 export function parseBenchmarkRun(input: unknown): BenchmarkRun {
   return BenchmarkRunSchema.parse(input);
+}
+
+/** A run total exists only for directions every included attempt reported. */
+export function aggregateAttemptUsage(
+  attemptIds: readonly string[],
+  reports: ReadonlyMap<string, ObservedUsage | undefined>,
+): RepositoryBenchmarkRunInput["usage"] {
+  if (new Set(attemptIds).size !== attemptIds.length) throw new Error("duplicate usage attempt identity");
+  if (attemptIds.length === 0) return undefined;
+  const values = attemptIds.map((id) => {
+    const value = reports.get(id);
+    return value === undefined ? undefined : ObservedUsageSchema.parse(value);
+  });
+  const usage: NonNullable<RepositoryBenchmarkRunInput["usage"]> = {};
+  for (const field of ["inputTokens", "outputTokens", "costUsd"] as const) {
+    if (values.some((value) => value === undefined || value.complete === false || value[field] === undefined)) continue;
+    const total = values.reduce((sum, value) => sum + value![field]!, 0);
+    if (field === "costUsd" ? Number.isFinite(total) : Number.isSafeInteger(total)) usage[field] = total;
+  }
+  return Object.keys(usage).length ? usage : undefined;
 }
 
 

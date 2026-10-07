@@ -126,6 +126,10 @@ try {
   }, null, 2));
 
   assert.equal(mission.status, "execution-finished", mission.error ?? "Codex canary did not finish");
+  const usage = mission.workerResult?.observedUsage;
+  assert.ok(usage && usage.complete === true, "Codex canary lacks complete provider-reported usage");
+  assert.ok(Number.isSafeInteger(usage.inputTokens) && Number.isSafeInteger(usage.outputTokens), "Codex canary lacks input/output counts");
+  assert.equal(usage.costUsd, undefined, "subscription token counters do not establish dollar cost");
   assert.deepEqual(mission.changedPaths, [targetPath], `Codex changed paths outside the Work contract: ${mission.changedPaths.join(", ")}`);
 
   const workspace = run.workspaces.find((item) => item.workspaceId === mission.workspace?.workspaceId);
@@ -149,6 +153,8 @@ try {
   });
   try {
     const persistedEvents = await reopened.replay(mission.streamId);
+    assert.deepEqual(persistedEvents.find(event => event.type === "attempt.finished")?.payload.observedUsage, usage,
+      "provider usage did not survive durable Ledger reopen");
     const persistedGuards = persistedEvents.filter((event) => event.type === "guard.evaluated");
     persistedGuardCount = persistedGuards.length;
     assert.ok(
@@ -167,6 +173,7 @@ try {
     changedPaths: mission.changedPaths,
     guardEvaluations: persistedGuardCount,
     ledgerHeadDigest,
+    observedUsage: usage,
     summary: mission.workerResult?.summary ?? null,
   }, null, 2));
 } finally {

@@ -183,6 +183,20 @@ test("record: observed cost sums only the reports that carried a cost and says h
   assert.ok(Math.abs((record.observedCostUsd ?? 0) - 0.3) < 1e-9);
 });
 
+test("failed attempt usage reaches Refiner and only complete cost reaches Router", () => {
+  for (const complete of [true, false]) {
+    const events = successfulExecution().map(item => item.type === "attempt.finished"
+      ? event("attempt.failed", { reason: "provider failed", recoverable: false, observedUsage: { source: "provider-reported", complete, inputTokens: 100, costUsd: 0.2 } }, { taskId: "task:1", attemptId: "attempt:1", actor: worker }) : item);
+    const record = deriveWorkRecord(events);
+    assert.equal(record.observedUsageReports, 1);
+    assert.equal(record.observedCostUsd, 0.2); // Sum of reported amounts, not a completeness claim.
+    const evidence = computeRouterEvidenceFromEvents(events).find(item => item.workerId === worker.id);
+    assert.equal(evidence?.medianCostUsd, complete ? 0.2 : null);
+  }
+  const tokensOnly = event("attempt.failed", { reason: "failed", recoverable: false, observedUsage: { source: "provider-reported", inputTokens: 100 } }, { taskId: "task:1", attemptId: "attempt:1", actor: worker });
+  assert.equal(deriveWorkRecord([tokensOnly]).observedCostUsd, null);
+});
+
 test("record: an independent review that failed once makes the accepted Work a recovery, not a first-attempt success", () => {
   const failedReview = event("review.result", { reviewId: "review:f", contractRevision: 1, status: "fail", summary: "defect" }, { actor: reviewer });
   const events = acceptedEvents([failedReview]);

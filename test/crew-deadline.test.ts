@@ -83,7 +83,7 @@ for (const phase of ["startup", "cancellation", "observations", "completed-resul
     const setup = fixture(async (input) => {
       if (phase === "startup") await release.promise;
       return handle(input, {
-        result: phase === "completed-result-observations" ? async () => ({ status: "finished", summary: "Done", artifacts: [], evidence: [] }) : async () => { await release.promise; return { status: "cancelled", summary: "Stopped", artifacts: [], evidence: [] }; },
+        result: phase === "completed-result-observations" ? async () => ({ status: "finished", summary: "Done", artifacts: [], evidence: [], observedUsage: { source: "provider-reported", inputTokens: 12 } }) : async () => { await release.promise; return { status: "cancelled", summary: "Stopped", artifacts: [], evidence: [] }; },
         cancel: async () => { cancelCalls += 1; if (phase === "cancellation") await release.promise; },
         async *observe() {
           if (phase.endsWith("observations")) {
@@ -101,6 +101,8 @@ for (const phase of ["startup", "cancellation", "observations", "completed-resul
       const events = await setup.events();
       assert.equal(events.filter((event) => event.type === "attempt.failed").length, 1);
       assert.equal(events.filter((event) => event.type === "attempt.finished").length, 0);
+      const failed = events.find(event => event.type === "attempt.failed");
+      assert.deepEqual(failed?.payload.observedUsage, phase === "completed-result-observations" ? { source: "provider-reported", inputTokens: 12 } : undefined);
       await run.close();
     } finally {
       release.resolve();
@@ -144,7 +146,7 @@ test("Crew refuses a Guard call that arrives after the Attempt deadline", async 
 
 test("Crew deadline also bounds the post-result workspace snapshot", async () => {
   const never = deferred<void>();
-  const setup = fixture(async (input) => handle(input), {
+  const setup = fixture(async (input) => handle(input, { result: async () => ({ status: "finished", summary: "Done", artifacts: [], evidence: [], observedUsage: { source: "provider-reported", inputTokens: 12 } }) }), {
     snapshot: async (workspaceId, call) => {
       if (call > 1) await never.promise;
       return { workspaceId, head: "abc", digest: "sha256:clean", digestScope: testDigestScope, changedPaths: [], observedAt: new Date().toISOString() };
@@ -156,7 +158,45 @@ test("Crew deadline also bounds the post-result workspace snapshot", async () =>
   const events = await setup.events();
   assert.equal(events.filter((event) => event.type === "attempt.failed").length, 1);
   assert.equal(events.filter((event) => event.type === "attempt.finished").length, 0);
+  assert.deepEqual(events.find(event => event.type === "attempt.failed")?.payload.observedUsage, { source: "provider-reported", inputTokens: 12 });
   await run.close();
+});
+
+test("Crew preserves resolved usage when observation draining fails", async () => {
+  const setup = fixture(async input => handle(input, {
+    result: async () => ({ status: "finished", summary: "Done", artifacts: [], evidence: [], observedUsage: { source: "provider-reported", inputTokens: 17 } }),
+    async *observe() { await new Promise(resolve => setImmediate(resolve)); throw new Error("observation drain failed"); },
+  }));
+  const run = await within(setup.run);
+  try {
+    const failed = (await setup.events()).find(event => event.type === "attempt.failed");
+    assert.match(failed?.payload.reason ?? "", /observation drain failed/);
+    assert.deepEqual(failed?.payload.observedUsage, { source: "provider-reported", inputTokens: 17 });
+  } finally { await run.close(); }
+});
+
+test("deadline cleanup retains prompt partial usage and freezes out late results", async () => {
+  for (const prompt of [true, false]) {
+    const response = deferred<Awaited<ReturnType<WorkerHandle["result"]>>>();
+    const partial = { status: "cancelled" as const, summary: "Cancelled", artifacts: [], evidence: [],
+      observedUsage: { source: "provider-reported" as const, complete: false, inputTokens: 23 } };
+    const setup = fixture(async input => handle(input, {
+      result: () => response.promise,
+      cancel: async () => { if (prompt) response.resolve(partial); },
+    }));
+    const run = await within(setup.run);
+    try {
+      const before = await setup.events();
+      const failed = before.find(event => event.type === "attempt.failed");
+      assert.equal(before.filter(event => event.type === "attempt.failed").length, 1);
+      assert.deepEqual(failed?.payload.observedUsage, prompt ? partial.observedUsage : undefined);
+      assert.deepEqual(run.receipt.missions[0]?.workerResult?.observedUsage, prompt ? partial.observedUsage : undefined);
+      response.resolve(partial);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(await setup.events(), before);
+      assert.deepEqual(run.receipt.missions[0]?.workerResult?.observedUsage, prompt ? partial.observedUsage : undefined);
+    } finally { response.resolve(partial); await run.close(); }
+  }
 });
 
 test("Crew deadline bounds SHIP authority preflight", async () => {
