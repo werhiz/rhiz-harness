@@ -355,7 +355,7 @@
       "id": "crew/attempt-respects-deadline",
       "why": "Constitution §10 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
       "file": "src/crew.ts",
-      "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false },\n          { taskId, attemptId, actor: workerActor },\n          deadlineObservedAt,\n        );\n",
+      "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false,\n            ...(result?.observedUsage ? { observedUsage: result.observedUsage } : {}) },\n          { taskId, attemptId, actor: workerActor },\n          deadlineObservedAt,\n        );\n",
       "testFile": "dist/test/crew-deadline.test.js"
     },
     {
