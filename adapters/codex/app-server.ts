@@ -347,6 +347,9 @@ class CodexRpcClient {
     const response = new Promise<unknown>((resolve, reject) => {
       this.#pending.set(requestId, { resolve, reject, ...(beforeResolve === undefined ? {} : { beforeResolve }) });
     });
+    // Close can reject the response while send is still pending. Observe that
+    // rejection now; callers still receive the original response promise below.
+    void response.catch(() => {});
     try {
       await this.#connection.send({ id: requestId, method, params });
     } catch (error) {
@@ -715,13 +718,19 @@ class CodexAppServerWorkerHandle implements WorkerHandle {
     });
     const threadId = this.#state.threadId;
     const turnId = this.#state.turnId;
+    const interrupt = threadId !== null && turnId !== null
+      ? this.#client.request("turn/interrupt", { threadId, turnId }).then(() => undefined).catch(() => undefined)
+      : Promise.resolve();
+    // Accounting custody must not wait for transport acknowledgement. Crew
+    // closes its bounded cleanup window before an unresponsive interrupt times
+    // out, so publish the observed partial snapshot as soon as cancellation wins.
+    this.#state.settle("interrupted", `Codex turn cancelled: ${reason}`);
     if (threadId !== null && turnId !== null) {
       await Promise.race([
-        this.#client.request("turn/interrupt", { threadId, turnId }).then(() => undefined).catch(() => undefined),
+        interrupt,
         delay(1_000),
       ]);
     }
-    this.#state.settle("interrupted", `Codex turn cancelled: ${reason}`);
     await this.#client.close().catch(() => undefined);
   }
 }

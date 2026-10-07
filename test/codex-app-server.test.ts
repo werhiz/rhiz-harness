@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { performance } from "node:perf_hooks";
 import test from "node:test";
 
 import {
@@ -14,7 +13,9 @@ import {
 import type { GuardEvaluation, GuardToolCall } from "../src/guard.js";
 import { parseWorkerStartRequest } from "../src/host.js";
 import { startWorkerAttempt } from "../src/workers.js";
-import { work } from "./helpers.js";
+import { CrewSupervisor, parseCrewPlan, type CrewWorkspaceProvider } from "../src/crew.js";
+import { InMemoryEventLedger } from "../src/ledger.js";
+import { human, testDigestScope, work, sandboxCapableCatalog } from "./helpers.js";
 
 class TestQueue<T> implements AsyncIterableIterator<T> {
   readonly #values: T[] = [];
@@ -531,24 +532,103 @@ test("unexpected App Server EOF settles the worker as failed instead of hanging"
   });
 });
 
-test("cancellation is bounded even when turn/interrupt never answers", async () => {
-  await withRoot(async (root) => {
-    const connection = new ScriptedConnection((message, self) => {
-      if (baseHandshake(message, self, root)) return;
-      if (method(message) === "turn/start") respond(self, message, turnResult());
-      // Deliberately never respond to turn/interrupt.
+test("cancellation preserves partial usage before Crew cleanup closes even when turn/interrupt never answers", async () => {
+  for (const pendingSend of [false, true]) {
+    await withRoot(async (root) => {
+      let releaseSend!: () => void;
+      const sent = new Promise<void>(resolve => { releaseSend = resolve; });
+      const connection = new ScriptedConnection((message, self) => {
+        if (baseHandshake(message, self, root)) return;
+        if (method(message) === "turn/start") {
+          self.push(usageNotification(10, 2));
+          respond(self, message, turnResult());
+        }
+        // Deliberately never respond, and also exercise a send callback still pending.
+        if (method(message) === "turn/interrupt" && pendingSend) return sent;
+      });
+      const host = new CodexAppServerHost({ connectionFactory: () => connection });
+      try {
+        const started = await startWorkerAttempt(host.workers().get("worker:codex-app-server")!, inputFor(root), { guardedToolMediation: mediation() });
+        const cancelling = started.handle.cancel("test cancel");
+        let timer: NodeJS.Timeout | undefined;
+        try {
+          // Crew's existing cancellation custody closes after 100 ms. Provider
+          // transport acknowledgement must not hide an already observed snapshot.
+          const result = await Promise.race([
+            started.handle.result(),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("observed usage missed Crew cleanup custody")), 100);
+            }),
+          ]);
+          await new Promise<void>(resolve => setImmediate(resolve));
+          assert.equal(result.status, "cancelled");
+          assert.deepEqual(result.observedUsage, {
+            source: "provider-reported", complete: false, inputTokens: 10, outputTokens: 2,
+          });
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+          releaseSend();
+          await cancelling;
+        }
+      } finally { await host.close(); }
     });
-    const host = new CodexAppServerHost({ connectionFactory: () => connection });
-    try {
-      const started = await startWorkerAttempt(host.workers().get("worker:codex-app-server")!, inputFor(root), { guardedToolMediation: mediation() });
-      const began = performance.now();
-      await started.handle.cancel("test cancel");
-      const elapsed = performance.now() - began;
-      const result = await started.handle.result();
-      assert.equal(result.status, "cancelled");
-      assert.ok(elapsed < 2_000, `cancel took ${elapsed}ms`);
-    } finally { await host.close(); }
-  });
+  }
+});
+
+test("real Codex adapter preserves partial usage through Crew deadline and late interrupt replies", async () => {
+  for (const reply of ["never", "late"] as const) {
+    await withRoot(async root => {
+      let interruptRequest: Sent | undefined;
+      const connection = new ScriptedConnection((message, self) => {
+        if (baseHandshake(message, self, root)) return;
+        if (method(message) === "turn/start") {
+          self.push(usageNotification(10, 2));
+          respond(self, message, turnResult());
+        }
+        if (method(message) === "turn/interrupt") interruptRequest = message;
+      });
+      const host = new CodexAppServerHost({ connectionFactory: () => connection });
+      const ledger = new InMemoryEventLedger();
+      const contract = work({ workerPolicy: {
+        preferredProviders: ["worker:codex-app-server"], maxAttempts: 1,
+        allowParallelAttempts: false, explicitProviderAuthorizations: [], attemptBudgetMs: 150,
+      } });
+      const workspaceProvider: CrewWorkspaceProvider = {
+        id: "workspace:codex",
+        acquire: async request => ({ leaseId: "lease:codex", workspaceId: "workspace:codex", uri: `file://${root}`,
+          executionRoot: root, baseRevision: request.baseRevision, mode: request.mode }),
+        snapshot: async workspace => ({ workspaceId: workspace.workspaceId, head: workspace.baseRevision,
+          digest: "sha256:clean", digestScope: testDigestScope, changedPaths: [], observedAt: new Date().toISOString() }),
+        release: async () => {}, close: async () => {},
+      };
+      try {
+        const run = await new CrewSupervisor({
+          plan: parseCrewPlan({ id: "crew:codex-deadline", objective: "Retain observed usage", baseRevision: "0".repeat(40),
+            maxParallel: 1, missions: [{ work: contract, workspace: { strategy: "fresh", mode: "isolated-write" } }] }),
+          ledger, workspaceProvider, actor: human,
+          workerCatalog: sandboxCapableCatalog(host.workers().get("worker:codex-app-server")!),
+        }).run();
+        try {
+          assert.ok(interruptRequest, "the real adapter cancellation path must execute");
+          const usage = { source: "provider-reported", complete: false, inputTokens: 10, outputTokens: 2 };
+          assert.equal(run.receipt.missions[0]?.status, "failed");
+          assert.deepEqual(run.receipt.missions[0]?.workerResult?.observedUsage, usage);
+          const events = await ledger.replay("stream:work:1");
+          const failures = events.filter(event => event.type === "attempt.failed");
+          assert.equal(failures.length, 1);
+          assert.deepEqual(failures[0]?.payload.observedUsage, usage);
+          assert.equal(events.some(event => event.type === "attempt.finished"), false);
+          const frozen = JSON.stringify(events);
+          if (reply === "late") respond(connection, interruptRequest, {});
+          connection.push(usageNotification(99, 9));
+          connection.push({ method: "turn/completed", params: { threadId: "thread:1", turn: { id: "turn:1", status: "completed", error: null } } });
+          await new Promise<void>(resolve => setImmediate(resolve));
+          assert.equal(JSON.stringify(await ledger.replay("stream:work:1")), frozen);
+          assert.deepEqual(run.receipt.missions[0]?.workerResult?.observedUsage, usage);
+        } finally { await run.close(); }
+      } finally { await host.close(); }
+    });
+  }
 });
 
 test("thread cwd mismatch is refused before a WorkerHandle is published", async () => {
