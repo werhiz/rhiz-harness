@@ -213,13 +213,13 @@ export const CrewMissionSchema = z.object({
         message: "REVIEW missions require independentActor=true",
       });
     }
-    if (workspace.strategy !== "inherit") {
+    if (workspace.strategy === "fresh" && workspace.mode !== "read-only") {
       ctx.addIssue({
         code: "custom",
         path: ["workspace"],
-        message: "REVIEW missions must inherit the workspace of a direct dependency",
+        message: "fresh REVIEW missions require a read-only workspace",
       });
-    } else if (!work.dependencies.includes(workspace.fromWorkId)) {
+    } else if (workspace.strategy === "inherit" && !work.dependencies.includes(workspace.fromWorkId)) {
       ctx.addIssue({
         code: "custom",
         path: ["workspace", "fromWorkId"],
@@ -260,11 +260,14 @@ export const CrewPlanSchema = z.object({
       }
     }
     if (mission.work.type === "REVIEW") {
-      if (mission.work.dependencies.length !== 1) {
+      const inherited = mission.workspace.strategy === "inherit";
+      if (mission.work.dependencies.length !== (inherited ? 1 : 0)) {
         ctx.addIssue({
           code: "custom",
           path: ["missions", index, "work", "dependencies"],
-          message: "Crew v0 REVIEW missions require exactly one direct dependency",
+          message: inherited
+            ? "inherited REVIEW missions require exactly one direct dependency"
+            : "fresh REVIEW missions require no dependencies; use inheritance to review dependency work",
         });
       }
       if (mission.workspace.strategy === "inherit") {

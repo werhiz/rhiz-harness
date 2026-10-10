@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { z } from "zod";
 
 import type {
@@ -30,7 +30,7 @@ import {
   WorkerResultSchema,
 } from "../../src/host.js";
 import type { SandboxLauncher, SandboxPolicy } from "../../src/sandbox.js";
-import { requireSandbox, workerSandboxPolicy } from "../../src/sandbox.js";
+import { requireSandbox, SandboxPolicyError, workerSandboxPolicy } from "../../src/sandbox.js";
 import { FORBIDDEN_VERIFIER_ENV, NEUTRALIZED_VERIFIER_ENV } from "./command-verifier.js";
 
 /**
@@ -74,6 +74,8 @@ export interface LocalCommandWorkerOptions {
   /** Absolute path to the executable. No shell: an argv, never a command line. */
   command: string;
   args?: readonly string[];
+  /** Deny workspace writes; only a disjoint scratch HOME may be writable. */
+  readOnly?: boolean;
   /**
    * OS containment for this worker. Required in the sense that a null or
    * unavailable launcher makes `start` throw rather than run unconfined; it is
@@ -231,6 +233,7 @@ class LocalCommandWorkerHandle implements WorkerHandle {
 export class LocalCommandWorkerProvider implements WorkerProvider {
   readonly id: string;
   readonly #descriptor: WorkerDescriptor;
+  readonly #readOnly: boolean;
   readonly #command: string;
   readonly #args: readonly string[];
   readonly #sandbox: SandboxLauncher | null;
@@ -244,6 +247,7 @@ export class LocalCommandWorkerProvider implements WorkerProvider {
 
   constructor(options: LocalCommandWorkerOptions) {
     this.id = id.parse(options.id ?? "worker:local-command");
+    this.#readOnly = z.boolean().parse(options.readOnly ?? false);
     this.#command = z.string().trim().min(1).max(4096).parse(options.command);
     this.#args = z.array(z.string().max(4096)).max(200).parse([...(options.args ?? [])]);
     this.#sandbox = options.sandbox;
@@ -270,7 +274,7 @@ export class LocalCommandWorkerProvider implements WorkerProvider {
       // Not "host-policy". This provider states exactly what the worker may
       // write, and an operating system holds it to that statement.
       authorityMode: "os-contained:write-scope",
-      writeAccess: "workspace",
+      writeAccess: this.#readOnly ? "none" : "workspace",
       dangerous: false,
       bindsWorkspace: true,
       credentialEnv: [],
@@ -301,7 +305,24 @@ export class LocalCommandWorkerProvider implements WorkerProvider {
 
   /** The boundary this worker would impose for one request. Exposed so proofs can assert it. */
   policyFor(request: WorkerStartRequest): SandboxPolicy {
-    return workerSandboxPolicy(parseWorkerStartRequest(request), this.#home);
+    const parsed = parseWorkerStartRequest(request);
+    if (this.#readOnly) {
+      if (parsed.workspace.mode !== "read-only" || parsed.work.writeScope.length !== 0) {
+        throw new SandboxPolicyError("read-only local worker refuses write-enabled workspace or Work scope");
+      }
+      // The launcher resolves aliases too. Check physical paths in both directions:
+      // a scratch directory inside the source or containing it grants source writes.
+      const root = realpathSync(parsed.workspace.executionRoot);
+      const home = realpathSync(this.#home);
+      const contains = (parent: string, child: string): boolean => {
+        const path = relative(parent, child);
+        return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
+      };
+      if (contains(root, home) || contains(home, root)) {
+        throw new SandboxPolicyError("read-only scratch HOME must not overlap the execution workspace");
+      }
+    }
+    return workerSandboxPolicy(parsed, this.#home);
   }
 
   /** The HOME handed to contained workers. Inside the boundary, so tools still work. */
@@ -310,7 +331,7 @@ export class LocalCommandWorkerProvider implements WorkerProvider {
   async start(rawRequest: WorkerStartRequest): Promise<WorkerHandle> {
     const request = parseWorkerStartRequest(rawRequest);
     const executionRoot = requireBoundExecutionRoot(this.id, request);
-    const policy = workerSandboxPolicy(request, this.#home);
+    const policy = this.policyFor(request);
 
     // THE SEAM. Everything below this line runs inside a boundary the operating
     // system is already holding. requireSandbox throws for a null launcher, an
