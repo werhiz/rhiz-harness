@@ -121,7 +121,7 @@ function reviewFor(repo, branch, signals) {
   let pr;
   try {
     pr = JSON.parse(
-      execFileSync("gh", ["pr", "view", branch, "--json", "number,state,headRefOid,url"], {
+      execFileSync("gh", ["pr", "view", branch, "--json", "number,state,headRefOid,baseRefOid,url"], {
         cwd: repo,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -155,9 +155,9 @@ function reviewFor(repo, branch, signals) {
   }
   for (const receipt of [...(stored?.change === pr.number && Array.isArray(stored.correctionReceipts) ? stored.correctionReceipts : [])].reverse()) {
     try {
-      if (!/^[a-f0-9]{40}$/.test(receipt.head) || !/^[a-f0-9]{40}$/.test(receipt.integrationHead)) continue;
+      if (!/^[a-f0-9]{40}$/.test(receipt.head) || !/^[a-f0-9]{40}$/.test(pr.baseRefOid)) continue;
       git(repo, ["merge-base", "--is-ancestor", receipt.head, local]);
-      if (committedDiffLines(repo, receipt.integrationHead, receipt.head) !== receipt.anchorDiffLines) continue;
+      if (committedDiffLines(repo, pr.baseRefOid, receipt.head) !== receipt.anchorDiffLines) continue;
       const verified = reviewComment(repo, pr, receipt.commentUrl, receipt.head);
       if (verified.commentDigest !== receipt.commentDigest || verified.reviewerLogin !== receipt.reviewerLogin) continue;
       return { review: { anchorDiffLines: Math.max(review.anchorDiffLines, receipt.anchorDiffLines) }, note: `under review as #${pr.number}; correction receipt ${receipt.commentUrl}` };
@@ -200,12 +200,15 @@ function reviewComment(repo, pr, commentUrl, head) {
 function commandReviewReceipt(repo, integrationRef, branch, commentUrl) {
   const measurement = measureBranchDrift({ repositoryRoot: repo, integrationRef, branch });
   if (measurement.kind === "unavailable" || measurement.signals.upstreamState !== "pushed") throw new Error("review receipt requires a durable pushed candidate");
-  const pr = JSON.parse(execFileSync("gh", ["pr", "view", branch, "--json", "number,state,headRefOid,url"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 }));
+  const pr = JSON.parse(execFileSync("gh", ["pr", "view", branch, "--json", "number,state,headRefOid,baseRefOid,url"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 }));
   const head = git(repo, ["rev-parse", branch]);
   const upstream = git(repo, ["rev-parse", `${branch}@{upstream}`]);
   if (pr.state !== "OPEN" || head !== upstream || head !== pr.headRefOid) throw new Error("review receipt requires this exact OPEN pushed head");
   const ordinary = decideHorizon(measurement.signals);
   if (ordinary.kind === "tripped" && !horizonReviewMayApply(measurement.signals, ordinary.reasons)) throw new Error("review receipt cannot forgive history, missing durability, or age at 48 hours");
+  const integrationHead = git(repo, ["rev-parse", integrationRef]);
+  // GUARD integration/review-receipt-binds-forge-base
+  if (!/^[a-f0-9]{40}$/.test(pr.baseRefOid) || integrationHead !== pr.baseRefOid) throw new Error("fetch the current forge integration base before recording a receipt");
   const verified = reviewComment(repo, pr, commentUrl, head);
   const reviews = readReviews(repo);
   const stored = reviews[branch];
@@ -221,7 +224,7 @@ function commandReviewReceipt(repo, integrationRef, branch, commentUrl) {
     console.log(`horizon: would record correction receipt for ${head}; nothing changed`);
     return EXIT_CLEAR;
   }
-  receipts.push({ ...verified, head, integrationHead: git(repo, ["rev-parse", integrationRef]), anchorDiffLines: measurement.signals.diffLines, recordedAt: new Date().toISOString() });
+  receipts.push({ ...verified, head, integrationHead, anchorDiffLines: committedDiffLines(repo, pr.baseRefOid, head), recordedAt: new Date().toISOString() });
   reviews[branch] = { ...stored, correctionReceipts: receipts };
   writeReviews(repo, reviews);
   console.log(`horizon: recorded exact-head correction receipt for ${head}; original anchor preserved`);

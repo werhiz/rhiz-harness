@@ -525,6 +525,20 @@
       "file": "scripts/horizon.mjs",
       "remove": "  if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || ![\"OWNER\", \"MEMBER\", \"COLLABORATOR\"].includes(comment.author_association) || typeof comment.user?.login !== \"string\" || !namedHead || !head.startsWith(namedHead) || !body.includes(\"<!-- rhiz-review-agent -->\") || !body.includes(`Independent review by the \\`pr-reviewer\\` agent (\\`scripts/review-pr.mts\\`) of head \\`${head}\\`.`)) throw new Error(\"receipt is not an attributable exact-head correction review\");\n",
       "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/review-receipt-binds-forge-base",
+      "why": "A caller cannot record a reviewed correction against an older local integration ref than the actual forge PR base.",
+      "file": "scripts/horizon.mjs",
+      "remove": "  if (!/^[a-f0-9]{40}$/.test(pr.baseRefOid) || integrationHead !== pr.baseRefOid) throw new Error(\"fetch the current forge integration base before recording a receipt\");\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/review-receipt-size-uses-forge-base",
+      "why": "A mutable receipt base and size cannot expand the correction allowance; size is remeasured against fresh forge authority.",
+      "file": "scripts/horizon.mjs",
+      "remove": "      if (committedDiffLines(repo, pr.baseRefOid, receipt.head) !== receipt.anchorDiffLines) continue;\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
     }
   ]
 }

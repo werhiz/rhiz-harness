@@ -22,8 +22,14 @@ test("host requires an open exact-pushed-head review for bounded-age corrections
     execFileSync("git", ["init", "--bare", "-q", remote]);
     git(["init", "-q", "--initial-branch=main"]);
     await writeFile(join(repo, "base.txt"), "base\n");
+    await writeFile(join(repo, "historical-only.txt"), "old\n".repeat(1000));
     git(["add", "."]);
     git(["commit", "-q", "-m", "base"]);
+    const olderBase = git(["rev-parse", "HEAD"]);
+    await rm(join(repo, "historical-only.txt"));
+    git(["add", "."]);
+    git(["commit", "-qm", "current integration base"]);
+    const baseHead = git(["rev-parse", "HEAD"]);
     git(["remote", "add", "origin", remote]);
     git(["push", "-qu", "origin", "main"]);
     git(["checkout", "-qb", "feature"]);
@@ -71,10 +77,10 @@ test("host requires an open exact-pushed-head review for bounded-age corrections
     // A real review of this newer exact head is a distinct convergence round.
     const commentUrl = "https://github.com/example/project/pull/4375#issuecomment-123";
     const comment = { id: 123, html_url: commentUrl, issue_url: "https://api.github.com/repos/example/project/issues/4375", author_association: "MEMBER", user: { login: "independent-checker" }, body: `## NOT READY at ${head}\n\n<!-- rhiz-review-agent -->\nIndependent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.\n\nRequired authority repair.` };
-    await writeFile(join(bin, "gh"), `#!${process.execPath}\nif(process.env.FORGE_MODE==='failure')process.exit(1);if(process.argv[2]==='api'){const c=JSON.parse(process.env.FORGE_COMMENT);if(process.env.FORGE_MODE==='bad-body')c.body='no reviewed head';if(process.env.FORGE_MODE==='untrusted')c.author_association='NONE';console.log(JSON.stringify(c));}else{console.log(JSON.stringify({number:4375,state:process.env.FORGE_MODE==='closed'?'CLOSED':'OPEN',headRefOid:process.env.FORGE_HEAD,url:'https://github.com/example/project/pull/4375'}));}\n`, { mode: 0o755 });
+    await writeFile(join(bin, "gh"), `#!${process.execPath}\nif(process.env.FORGE_MODE==='failure')process.exit(1);if(process.argv[2]==='api'){const c=JSON.parse(process.env.FORGE_COMMENT);if(process.env.FORGE_MODE==='bad-body')c.body='no reviewed head';if(process.env.FORGE_MODE==='untrusted')c.author_association='NONE';console.log(JSON.stringify(c));}else{console.log(JSON.stringify({number:4375,state:process.env.FORGE_MODE==='closed'?'CLOSED':'OPEN',headRefOid:process.env.FORGE_HEAD,baseRefOid:'${baseHead}',url:'https://github.com/example/project/pull/4375'}));}\n`, { mode: 0o755 });
     const receiptEnv = { ...env, PATH: bin + ":" + (process.env.PATH ?? ""), FORGE_HEAD: head, FORGE_COMMENT: JSON.stringify(comment) };
     delete (receiptEnv as Record<string, string | undefined>).NODE_TEST_CONTEXT;
-    const record = (mode: string, url = commentUrl) => spawnSync(process.execPath, [hostScript, "converge", "--repo", repo, "--integration-ref", "origin/main", "--review-receipt", url], { cwd: repo, env: { ...receiptEnv, FORGE_MODE: mode }, encoding: "utf8" });
+    const record = (mode: string, url = commentUrl, integration = "origin/main") => spawnSync(process.execPath, [hostScript, "converge", "--repo", repo, "--integration-ref", integration, "--review-receipt", url], { cwd: repo, env: { ...receiptEnv, FORGE_MODE: mode }, encoding: "utf8" });
     const original = await readFile(reviewPath, "utf8");
     for (const mode of ["bad-body", "untrusted", "closed", "failure"]) {
       assert.notEqual(record(mode).status, 0, mode);
@@ -85,6 +91,8 @@ test("host requires an open exact-pushed-head review for bounded-age corrections
     const dry = spawnSync(process.execPath, [hostScript, "converge", "--repo", repo, "--review-receipt", commentUrl, "--dry-run"], { cwd: repo, env: { ...receiptEnv, FORGE_MODE: "open" }, encoding: "utf8" });
     assert.equal(dry.status, 0, dry.stderr);
     assert.equal(await readFile(reviewPath, "utf8"), original, "dry run preserves all anchors");
+    assert.notEqual(record("open", commentUrl, olderBase).status, 0, "recording cannot choose an older base than the forge");
+    assert.equal(await readFile(reviewPath, "utf8"), original);
     const recorded = record("open");
     assert.equal(recorded.status, 0, recorded.stderr);
     const rounds = JSON.parse(await readFile(reviewPath, "utf8"));
@@ -102,6 +110,12 @@ test("host requires an open exact-pushed-head review for bounded-age corrections
     await writeFile(reviewPath, JSON.stringify(rounds));
     const forgedAnchor = spawnSync(process.execPath, [hostScript, "check", "--repo", repo, "--integration-ref", "origin/main", "--json"], { cwd: repo, env: { ...receiptEnv, FORGE_MODE: "open" }, encoding: "utf8" });
     assert.equal(forgedAnchor.status, 1, "cached size cannot exceed the measured reviewed commit");
+    await writeFile(reviewPath, pinnedRound);
+    rounds.reviews.feature.correctionReceipts[0].integrationHead = olderBase;
+    rounds.reviews.feature.correctionReceipts[0].anchorDiffLines = 1500;
+    await writeFile(reviewPath, JSON.stringify(rounds));
+    const forgedBase = spawnSync(process.execPath, [hostScript, "check", "--repo", repo, "--integration-ref", "origin/main", "--json"], { cwd: repo, env: { ...receiptEnv, FORGE_MODE: "open" }, encoding: "utf8" });
+    assert.equal(forgedBase.status, 1, "changing both cached base and size cannot increase the correction round");
     await writeFile(reviewPath, pinnedRound);
     const invalidated = spawnSync(process.execPath, [hostScript, "check", "--repo", repo, "--integration-ref", "origin/main", "--json"], { cwd: repo, env: { ...receiptEnv, FORGE_MODE: "bad-body" }, encoding: "utf8" });
     assert.equal(invalidated.status, 1, "a receipt edited on the forge stops granting correction authority");
