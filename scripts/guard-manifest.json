@@ -192,7 +192,7 @@
     },
     {
       "id": "disposable/an-unresolvable-symlink-refuses-the-derivative",
-      "why": "A broken or cyclic link has no kernel witness of where it lands, and computing where it WOULD land means reimplementing partial path resolution — a clever containment proof that will eventually be wrong. Without this refusal a broken link whose target would land outside is accepted on no evidence at all.",
+      "why": "A broken or cyclic link has no kernel witness of where it lands, and computing where it WOULD land means reimplementing partial path resolution \u2014 a clever containment proof that will eventually be wrong. Without this refusal a broken link whose target would land outside is accepted on no evidence at all.",
       "file": "src/disposable.ts",
       "remove": "  throw new DerivativeLinkEscapeError(\n    unresolvable === \"ENOENT\"\n      ? `symlink ${relPath} -> ${target} is broken; where it would resolve once its target exists cannot be proven, so the derivative is refused`\n      : `symlink ${relPath} -> ${target} cannot be resolved by the kernel (${unresolvable}); a link with no kernel witness of where it lands cannot be proven contained`,\n    relPath,\n    target,\n  );\n",
       "testFile": "dist/test/disposable-symlinks.test.js"
@@ -346,14 +346,14 @@
     },
     {
       "id": "crew/dependency-output-is-not-spliced-into-objective",
-      "why": "Constitution §9 forbids prompt text as an enforcement boundary. A SHIP worker's free-text summary must not reach a downstream worker's instruction channel; the only path is the typed TaintedAttachment array, which the adapter renders as fenced data (#15).",
+      "why": "Constitution \u00a79 forbids prompt text as an enforcement boundary. A SHIP worker's free-text summary must not reach a downstream worker's instruction channel; the only path is the typed TaintedAttachment array, which the adapter renders as fenced data (#15).",
       "file": "src/crew.ts",
       "remove": "        taintedAttachments: missionContext.taintedAttachments,\n",
       "testFile": "dist/test/crew.test.js"
     },
     {
       "id": "crew/attempt-respects-deadline",
-      "why": "Constitution §10 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
+      "why": "Constitution \u00a710 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
       "file": "src/crew.ts",
       "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false,\n            ...(result?.observedUsage ? { observedUsage: result.observedUsage } : {}) },\n          { taskId, attemptId, actor: workerActor },\n          deadlineObservedAt,\n        );\n",
       "testFile": "dist/test/crew-deadline.test.js"
@@ -518,6 +518,27 @@
       "file": "src/horizon.ts",
       "remove": "  if (signals.divergenceAgeMs >= HORIZON_REVIEW_MAX_AGE_MS) return false;\n",
       "testFile": "dist/test/horizon-enforcement.test.js"
+    },
+    {
+      "id": "integration/review-receipt-binds-forge-head",
+      "why": "A correction round requires an attributable same-PR exact-head NOT READY forge receipt; an arbitrary comment cannot increase its allowance.",
+      "file": "scripts/horizon.mjs",
+      "remove": "  if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || ![\"OWNER\", \"MEMBER\", \"COLLABORATOR\"].includes(comment.author_association) || typeof comment.user?.login !== \"string\" || !namedHead || !head.startsWith(namedHead) || !body.includes(\"<!-- rhiz-review-agent -->\") || !body.includes(`Independent review by the \\`pr-reviewer\\` agent (\\`scripts/review-pr.mts\\`) of head \\`${head}\\`.`)) throw new Error(\"receipt is not an attributable exact-head correction review\");\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/review-receipt-binds-forge-base",
+      "why": "A caller cannot record a reviewed correction against an older local integration ref than the actual forge PR base.",
+      "file": "scripts/horizon.mjs",
+      "remove": "  if (!/^[a-f0-9]{40}$/.test(pr.baseRefOid) || integrationHead !== pr.baseRefOid) throw new Error(\"fetch the current forge integration base before recording a receipt\");\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/review-receipt-size-uses-forge-base",
+      "why": "A mutable receipt base and size cannot expand the correction allowance; size is remeasured against fresh forge authority.",
+      "file": "scripts/horizon.mjs",
+      "remove": "      if (committedDiffLines(repo, pr.baseRefOid, receipt.head) !== receipt.anchorDiffLines) continue;\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
     }
   ]
 }
