@@ -19,9 +19,11 @@
  *   node scripts/horizon.mjs census [--repo <path>] [--integration-ref <ref>] [--json]
  *   node scripts/horizon.mjs baseline freeze [--repo <path>] [--integration-ref <ref>]
  *   node scripts/horizon.mjs converge [--repo <path>] [--branch <name>] [--durability-only] [--dry-run]
+ *   node scripts/horizon.mjs converge --review-receipt <exact-head-NOT-READY-comment-url> [--repo <path>] [--branch <name>] [--dry-run]
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -119,7 +121,7 @@ function reviewFor(repo, branch, signals) {
   let pr;
   try {
     pr = JSON.parse(
-      execFileSync("gh", ["pr", "view", branch, "--json", "number,state,headRefOid"], {
+      execFileSync("gh", ["pr", "view", branch, "--json", "number,state,headRefOid,url"], {
         cwd: repo,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -147,10 +149,83 @@ function reviewFor(repo, branch, signals) {
       change: pr.number,
       anchorDiffLines: review.anchorDiffLines,
       recordedAt: stored?.change === pr.number ? stored.recordedAt : new Date().toISOString(),
+      ...(stored?.change === pr.number && stored.correctionReceipts ? { correctionReceipts: stored.correctionReceipts } : {}),
     };
     writeReviews(repo, reviews);
   }
+  for (const receipt of [...(stored?.change === pr.number && Array.isArray(stored.correctionReceipts) ? stored.correctionReceipts : [])].reverse()) {
+    try {
+      if (!/^[a-f0-9]{40}$/.test(receipt.head) || !/^[a-f0-9]{40}$/.test(receipt.integrationHead)) continue;
+      git(repo, ["merge-base", "--is-ancestor", receipt.head, local]);
+      if (committedDiffLines(repo, receipt.integrationHead, receipt.head) !== receipt.anchorDiffLines) continue;
+      const verified = reviewComment(repo, pr, receipt.commentUrl, receipt.head);
+      if (verified.commentDigest !== receipt.commentDigest || verified.reviewerLogin !== receipt.reviewerLogin) continue;
+      return { review: { anchorDiffLines: Math.max(review.anchorDiffLines, receipt.anchorDiffLines) }, note: `under review as #${pr.number}; correction receipt ${receipt.commentUrl}` };
+    } catch { continue; }
+  }
   return { review, note: `under review as #${pr.number}` };
+}
+
+function committedDiffLines(repo, base, head) {
+  let lines = 0;
+  const raw = git(repo, ["diff", "--numstat", `${base}...${head}`]);
+  for (const row of raw ? raw.split("\n") : []) {
+    const [added, removed] = row.split("\t").map(Number);
+    if (!Number.isSafeInteger(added) || !Number.isSafeInteger(removed) || added < 0 || removed < 0) throw new Error("receipt diff cannot be measured safely");
+    lines += added + removed;
+    if (!Number.isSafeInteger(lines)) throw new Error("receipt diff exceeds safe measurement");
+  }
+  return lines;
+}
+
+/** A forge comment is correction evidence, never a READY or acceptance verdict. */
+function reviewComment(repo, pr, commentUrl, head) {
+  const selected = new URL(commentUrl);
+  const target = new URL(pr.url);
+  const id = /^#issuecomment-(\d+)$/.exec(selected.hash)?.[1];
+  if (!id || selected.origin !== target.origin || selected.pathname !== target.pathname || selected.search) throw new Error("receipt must belong to this exact pull request");
+  const parts = target.pathname.split("/").filter(Boolean);
+  if (parts.length !== 4 || parts[2] !== "pull" || parts[3] !== String(pr.number)) throw new Error("forge did not identify this pull request");
+  const [owner, name] = parts;
+  const comment = JSON.parse(execFileSync("gh", ["api", "--hostname", target.hostname, `repos/${owner}/${name}/issues/comments/${id}`], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 }));
+  const issue = new URL(comment.issue_url);
+  const expectedHost = target.hostname === "github.com" ? "api.github.com" : target.hostname;
+  const body = comment.body;
+  const namedHead = typeof body === "string" ? /^## NOT READY at ([a-f0-9]{7,40})\s*$/m.exec(body)?.[1] : undefined;
+  // GUARD integration/review-receipt-binds-forge-head
+  if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || typeof comment.user?.login !== "string" || !namedHead || !head.startsWith(namedHead) || !body.includes("<!-- rhiz-review-agent -->") || !body.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.`)) throw new Error("receipt is not an attributable exact-head correction review");
+  return { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
+}
+
+function commandReviewReceipt(repo, integrationRef, branch, commentUrl) {
+  const measurement = measureBranchDrift({ repositoryRoot: repo, integrationRef, branch });
+  if (measurement.kind === "unavailable" || measurement.signals.upstreamState !== "pushed") throw new Error("review receipt requires a durable pushed candidate");
+  const pr = JSON.parse(execFileSync("gh", ["pr", "view", branch, "--json", "number,state,headRefOid,url"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 }));
+  const head = git(repo, ["rev-parse", branch]);
+  const upstream = git(repo, ["rev-parse", `${branch}@{upstream}`]);
+  if (pr.state !== "OPEN" || head !== upstream || head !== pr.headRefOid) throw new Error("review receipt requires this exact OPEN pushed head");
+  const ordinary = decideHorizon(measurement.signals);
+  if (ordinary.kind === "tripped" && !horizonReviewMayApply(measurement.signals, ordinary.reasons)) throw new Error("review receipt cannot forgive history, missing durability, or age at 48 hours");
+  const verified = reviewComment(repo, pr, commentUrl, head);
+  const reviews = readReviews(repo);
+  const stored = reviews[branch];
+  if (!stored || stored.change !== pr.number) throw new Error("observe this open review before recording its correction receipt");
+  const receipts = stored.correctionReceipts ?? [];
+  const existing = receipts.find((receipt) => receipt.commentId === verified.commentId);
+  if (existing) {
+    if (existing.head !== head || existing.commentDigest !== verified.commentDigest) throw new Error("a correction receipt changed after recording");
+    console.log(`horizon: correction receipt already recorded for ${head}`);
+    return EXIT_CLEAR;
+  }
+  if (flag("dry-run")) {
+    console.log(`horizon: would record correction receipt for ${head}; nothing changed`);
+    return EXIT_CLEAR;
+  }
+  receipts.push({ ...verified, head, integrationHead: git(repo, ["rev-parse", integrationRef]), anchorDiffLines: measurement.signals.diffLines, recordedAt: new Date().toISOString() });
+  reviews[branch] = { ...stored, correctionReceipts: receipts };
+  writeReviews(repo, reviews);
+  console.log(`horizon: recorded exact-head correction receipt for ${head}; original anchor preserved`);
+  return EXIT_CLEAR;
 }
 
 function measure(repo, integrationRef, branch, baselines) {
@@ -274,12 +349,14 @@ function commandBaselineFreeze(repo, integrationRef) {
   return EXIT_CLEAR;
 }
 
-function commandConverge(repo) {
+function commandConverge(repo, integrationRef) {
   const branch = option("branch", currentBranch(repo));
   if (branch === undefined) {
     console.error("horizon: UNAVAILABLE (detached HEAD names no branch to converge)");
     return EXIT_UNAVAILABLE;
   }
+  const receipt = option("review-receipt", undefined);
+  if (receipt !== undefined) return commandReviewReceipt(repo, integrationRef, branch, receipt);
   const dryRun = flag("dry-run");
 
   // Durability convergence is a push and nothing else. It is deliberately not
@@ -332,7 +409,7 @@ function main() {
       if (process.argv[3] !== "freeze") throw new Error("usage: baseline freeze");
       return commandBaselineFreeze(repo, integrationRef);
     case "converge":
-      return commandConverge(repo);
+      return commandConverge(repo, integrationRef);
     default:
       console.error("usage: horizon.mjs <check|census|baseline freeze|converge> [options]");
       return EXIT_UNAVAILABLE;
