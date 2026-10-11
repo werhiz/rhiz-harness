@@ -64,7 +64,7 @@ test("a baseline never legalizes bytes that exist on one machine", () => {
 });
 
 // Falsifies: integration/review-forgives-only-size
-test("review never forgives private history, divergence, or age", () => {
+test("review never forgives private history or integration divergence", () => {
   const review = { anchorDiffLines: 10_000 };
   const decision = decideHorizon({ ...clean, diffLines: 1_000, commitsAhead: 196, commitsBehind: 321 }, undefined, review);
   assert.equal(decision.kind, "tripped");
@@ -74,6 +74,13 @@ test("review never forgives private history, divergence, or age", () => {
 // Falsifies: integration/review-growth-is-bounded
 test("a change under review cannot grow without bound", () => {
   const decision = decideHorizon({ ...clean, diffLines: 50_000 }, undefined, { anchorDiffLines: 1_000 });
+  assert.equal(decision.kind, "tripped");
+  assert.throws(() => assertHorizonAllowsWrite(decision), IntegrationHorizonExceededError);
+});
+
+// Falsifies: integration/review-age-is-bounded
+test("review never forgives 48h divergence age, even with a generous size anchor", () => {
+  const decision = decideHorizon({ ...clean, diffLines: 1_000, divergenceAgeMs: 48 * 60 * 60 * 1000 }, undefined, { anchorDiffLines: 10_000 });
   assert.equal(decision.kind, "tripped");
   assert.throws(() => assertHorizonAllowsWrite(decision), IntegrationHorizonExceededError);
 });

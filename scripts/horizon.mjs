@@ -34,6 +34,7 @@ import {
 import {
   CALIBRATED_INTEGRATION_HORIZON,
   HORIZON_THRESHOLDS,
+  horizonReviewMayApply,
   decideHorizon,
   ratchetBaseline,
   ratchetReviewAnchor,
@@ -130,7 +131,8 @@ function reviewFor(repo, branch, signals) {
   }
   if (pr.state !== "OPEN") return { review: undefined, note: `review #${pr.number} is ${pr.state}` };
   const upstream = tryGit(repo, ["rev-parse", `${branch}@{upstream}`]);
-  if (upstream === undefined || upstream !== pr.headRefOid) {
+  const local = tryGit(repo, ["rev-parse", branch]);
+  if (local === undefined || upstream === undefined || local !== upstream || upstream !== pr.headRefOid) {
     return { review: undefined, note: `review #${pr.number} is not at this branch's pushed head` };
   }
   const reviews = readReviews(repo);
@@ -156,9 +158,8 @@ function measure(repo, integrationRef, branch, baselines) {
   if (measurement.kind === "unavailable") return { branch, state: "unavailable", reason: measurement.reason };
   let decision = decideHorizon(measurement.signals, baselines[branch]);
   let review;
-  // The forge is asked only when size alone tripped, so an ordinary check
-  // never pays for a network call.
-  if (decision.kind === "tripped" && decision.reasons.every((reason) => reason.signal === "diffLines")) {
+  // Ask the forge only when review evidence could change this verdict.
+  if (decision.kind === "tripped" && horizonReviewMayApply(measurement.signals, decision.reasons)) {
     review = reviewFor(repo, branch, measurement.signals);
     decision = decideHorizon(measurement.signals, baselines[branch], review.review);
   }

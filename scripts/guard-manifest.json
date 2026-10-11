@@ -374,9 +374,9 @@
     },
     {
       "id": "integration/review-forgives-only-size",
-      "why": "Review answers whether a change is too large to review. It does not reconcile private history, divergence, or age, so forgiving those under review would reopen the drift ADR 0023 closed.",
+      "why": "Review corrections may answer size and bounded age, but never private history, integration divergence, or missing durability.",
       "file": "src/horizon.ts",
-      "remove": "  if (volume.some((reason) => reason.signal !== \"diffLines\")) return undefined;\n",
+      "remove": "  if (reasons.some((reason) => reason.signal !== \"diffLines\" && reason.signal !== \"divergenceAgeMs\")) return false;\n",
       "testFile": "dist/test/horizon-enforcement.test.js"
     },
     {
@@ -511,6 +511,13 @@
       "file": "src/guard.ts",
       "remove": "      if (this.#options.requireRecordBeforeEffect) {\n        // Authorization may allow the action, but the required durable admission\n        // did not complete. Return a refusal without exposing the storage error.\n        return { ...evaluation, verdict: { ...evaluation.verdict, decision: \"forbid\",\n          rationale: \"Required Guard admission could not be recorded; execution refused.\",\n          ruleHits: [...evaluation.verdict.ruleHits, \"guard-record:required-write-failed\"] } };\n      }",
       "testFile": "dist/test/http-effects.test.js"
+    },
+    {
+      "id": "integration/review-age-is-bounded",
+      "why": "A reviewed change cannot keep a permanent age exemption: 48h still requires convergence.",
+      "file": "src/horizon.ts",
+      "remove": "  if (signals.divergenceAgeMs >= HORIZON_REVIEW_MAX_AGE_MS) return false;\n",
+      "testFile": "dist/test/horizon-enforcement.test.js"
     }
   ]
 }
