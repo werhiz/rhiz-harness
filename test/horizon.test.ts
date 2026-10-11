@@ -6,6 +6,7 @@ import {
   HORIZON_THRESHOLDS,
   assertHorizonAllowsWrite,
   HORIZON_REVIEW_GROWTH,
+  HORIZON_REVIEW_MAX_AGE_MS,
   decideHorizon,
   ratchetBaseline,
   ratchetReviewAnchor,
@@ -273,12 +274,12 @@ test("a change under review may grow while answering review, up to the bound", (
   assert.equal(decideHorizon({ ...idle, diffLines: limit }, undefined, review).kind, "tripped");
 });
 
-test("review forgives size and nothing else", () => {
+test("review never forgives private history, divergence, or 48h age", () => {
   const review = { anchorDiffLines: 2_000 };
   for (const over of [
     { commitsAhead: HORIZON_THRESHOLDS.commitsAhead },
     { commitsBehind: HORIZON_THRESHOLDS.commitsBehind },
-    { divergenceAgeMs: HORIZON_THRESHOLDS.divergenceAgeMs },
+    { divergenceAgeMs: HORIZON_REVIEW_MAX_AGE_MS },
   ]) {
     assert.equal(decideHorizon({ ...idle, diffLines: 1_000, ...over }, undefined, review).kind, "tripped");
   }
@@ -303,4 +304,20 @@ test("a zero or missing anchor grants nothing", () => {
 test("a review anchor only falls", () => {
   assert.deepEqual(ratchetReviewAnchor({ anchorDiffLines: 1_500 }, { anchorDiffLines: 1_700 }), { anchorDiffLines: 1_500 });
   assert.deepEqual(ratchetReviewAnchor({ anchorDiffLines: 1_500 }, { anchorDiffLines: 900 }), { anchorDiffLines: 900 });
+});
+
+// The Oct 11 #4370 convergence refusal: a pushed change at about 25.6h
+// could not answer an independent review despite an existing open review.
+test("open review can answer corrections between 24h and strictly less than 48h", () => {
+  const review = { anchorDiffLines: 4_177 };
+  for (const divergenceAgeMs of [24 * HOUR, 25.6 * HOUR, 48 * HOUR - 1]) {
+    const signals = { ...idle, commitsAhead: 2, diffLines: 4_177, divergenceAgeMs };
+    assert.equal(decideHorizon(signals).kind, "tripped", "no review evidence means no allowance");
+    assert.equal(decideHorizon(signals, undefined, review).kind, "in_review");
+    for (const upstreamState of ["no-upstream", "ahead-of-remote", "upstream-gone"] as const) {
+      assert.equal(decideHorizon({ ...signals, upstreamState }, undefined, review).kind, "tripped");
+    }
+  }
+  assert.equal(decideHorizon({ ...idle, diffLines: 4_177, divergenceAgeMs: 48 * HOUR }, undefined, review).kind, "tripped");
+  assert.equal(decideHorizon({ ...idle, diffLines: 5_222, divergenceAgeMs: 25.6 * HOUR }, undefined, review).kind, "tripped");
 });

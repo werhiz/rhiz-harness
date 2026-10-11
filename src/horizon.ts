@@ -75,6 +75,21 @@ export interface IntegrationHorizonReview {
  */
 export const HORIZON_REVIEW_GROWTH = 0.25;
 
+/** Review corrections have a bounded second day; the ordinary horizon stays 24h. */
+export const HORIZON_REVIEW_MAX_AGE_MS = 48 * HOUR_MS;
+
+/** The host asks for review evidence only when it could affect the verdict. */
+export function horizonReviewMayApply(
+  signals: IntegrationHorizonSignals,
+  reasons: readonly HorizonReason[],
+): boolean {
+  // GUARD integration/review-forgives-only-size
+  if (reasons.some((reason) => reason.signal !== "diffLines" && reason.signal !== "divergenceAgeMs")) return false;
+  // GUARD integration/review-age-is-bounded
+  if (signals.divergenceAgeMs >= HORIZON_REVIEW_MAX_AGE_MS) return false;
+  return reasons.length > 0;
+}
+
 export type HorizonDecision =
   | { readonly kind: "clear" }
   | { readonly kind: "grandfathered"; readonly within: IntegrationHorizonBaseline }
@@ -188,11 +203,8 @@ function reviewAllowance(
   review: IntegrationHorizonReview | undefined,
 ): HorizonDecision | undefined {
   if (review === undefined || !(review.anchorDiffLines > 0)) return undefined;
-  // GUARD integration/review-forgives-only-size
-  // Review answers the question "is this too large to review?" and nothing
-  // else. Private history, divergence, and age still trip a change under
-  // review, because review does not reconcile them.
-  if (volume.some((reason) => reason.signal !== "diffLines")) return undefined;
+  // Review can answer size and a bounded second day, never history or durability.
+  if (!horizonReviewMayApply(signals, volume)) return undefined;
   const limit = Math.ceil(review.anchorDiffLines * (1 + HORIZON_REVIEW_GROWTH));
   // GUARD integration/review-growth-is-bounded
   // Past the bound, the change is no longer the one under review.
