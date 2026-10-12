@@ -53,6 +53,26 @@ and the DSH SDK and product smoke runs. The check agent below remains the proof
 for what hosted CI cannot run: the darwin containment suites and the Codex
 canary.
 
+**Execution placement decision (2026-10-12), owner: #4370 release integrator.**
+Exact candidate `689caa9860b83015250a7375f6bc145bccff24db`, run
+[38235058054](https://github.com/werhiz/rhiz-harness/actions/runs/38235058054),
+passed 889 hosted unit tests with ten declared platform skips and all 88 guard
+falsifiers. The guards took 25m37s; the aggregate job then reached its existing
+30-minute bound during disposable proofs. Hosted proof/parity did not finish,
+and dependent DSH execution was skipped. That run is incomplete evidence.
+
+Verdict: **change execution placement**, not the proof or the ceiling. The
+complete manifest-backed guard lane runs in its own parallel standard Ubuntu
+job with the same 30-minute limit. The existing check lane retains every other
+stage from local `npm run check`, including unit tests, disposable proofs and
+CI parity. DSH requires both jobs. Local `npm run check` is unchanged, and the
+workflow completeness test compares its stages with both hosted lanes and
+refuses missing, narrowed, duplicated or bypassed proof stages. This adds one
+free public hosted job and one dependency install/build; it adds no paid runner,
+credential or model traffic. Raising the limit or guessing at worker concurrency
+would retain the observed aggregate bottleneck. Inspect the exact replacement
+run on 2026-10-12 before integration; require all three jobs to finish successfully.
+
 ## The check agent
 
 Before integration, a checker other than the author inspects the exact candidate

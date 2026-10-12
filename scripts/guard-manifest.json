@@ -616,6 +616,20 @@
       "file": "scripts/horizon.mjs",
       "remove": ", input.purpose === \"resolve-integration\"",
       "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "operator/review-material-is-delivered",
+      "why": "A manifest-only model verdict cannot judge referenced source semantics; whole immutable source evidence must reach the actual independent reviewer.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": ", material.text",
+      "testFile": "dist/test/operator-cli.test.js"
+    },
+    {
+      "id": "operator/review-material-is-durable",
+      "why": "A passing review must durably bind the material actually supplied alongside its candidate diff; an opaque pass cannot authorize source convergence.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": ", ...(material ? [material.evidence] : [])",
+      "testFile": "dist/test/operator-cli.test.js"
     }
   ]
 }

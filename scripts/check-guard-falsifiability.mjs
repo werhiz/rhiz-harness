@@ -158,6 +158,8 @@ async function main() {
     return;
   }
 
+  console.log(`guard execution: ${JSON.stringify({ availableParallelism: availableParallelism(), concurrency })}`);
+
   // A falsifier that cannot pass in an unmutated derivative proves nothing:
   // its red result would be about the derivative, not about the guard. The
   // control is computed once per falsifier under the same pinned candidate,

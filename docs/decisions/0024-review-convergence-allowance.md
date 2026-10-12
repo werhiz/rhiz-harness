@@ -69,3 +69,21 @@ The first actual model-backed orchestration proof of candidate a208a856 failed s
 A fresh genuine READY review can supersede the last NOT READY comment while a branch still needs accepted-main conflict resolution. For `resolve-integration` only, the latest attributable exact-head canonical READY or NOT READY comment is review context. It grants no source effect, skips no actual Work/Verify/independent Review, and changes no ordinary or terminal correction receipt rule. Those remain NOT READY-only.
 
 Actual forge readback also exposed that a PR comparison base can remain historical while repository main advances. Convergence now reads the same repository’s actual `git/ref/heads/main` commit and binds local integration/MERGE_HEAD to it. The forge-provided historical PR base remains the source of the reviewed diff/growth measurement; cached receipt bases/numbers remain non-authoritative. Real Git fixtures watched READY resolution rejected, historical comparison bases rejected, and mismatched current-main refs incorrectly accepted before repair. Their corrected proofs retain actual-execution and no-effect controls. Cancelled intermediate-head validation is incomplete evidence, never reused as final-head proof.
+
+
+### Whole semantic review material
+
+The actual `689caa9` provider run produced its native artifact, passed identity
+Verify, and exercised fictional effect/recovery. Its real reviewer judged only
+manifest references and explicitly lacked the source Context. This is observed
+mechanical proof and a semantic-review failure, never qualifying effect proof.
+
+The generic operator Review now resolves immutable supplemental Git evidence,
+validates exact Work/revision/verified-head binding, whole UTF-8 content, digests,
+path/tree membership and typed historical absence, and bounds the entire input
+before invoking its independent reviewer. Source content is untrusted data.
+Horizon supplies its complete packet and actual original/main/projected legs
+through existing retained Work artifacts. Raw review material identity accompanies
+the existing candidate diff and is required by effect admission, intent and
+recovery. Packaging and deterministic Verify establish identity only; actual
+independent review must judge preservation and repair semantics on supplied bytes.

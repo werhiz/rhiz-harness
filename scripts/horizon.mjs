@@ -589,6 +589,31 @@ async function projectConvergenceTree(repo, privateRoot, input, originals, integ
   } finally { await factory.destroy(derivative); }
 }
 
+function convergenceReviewBlobs(repo, packet, checkpoint) {
+  const entries = [{ label: "packet", blob: checkpoint.blob, digest: checkpoint.digest, tree: checkpoint.head, path: "artifact.json" }];
+  for (const name of packet.request.paths) {
+    for (const [label, tree] of [["original", packet.source.head], ["accepted-main", packet.forge.integration], ["projected", packet.projected.tree]]) {
+      const row = git(repo, ["ls-tree", "-z", tree, "--", name]).split("\0").filter(Boolean);
+      if (!row.length) { entries.push({ label: `${label}:${name}`, tree, path: name, absent: true }); continue; }
+      if (row.length !== 1 || !/^100(?:644|755) blob /.test(row[0])) throw new Error("review source leg is not a regular text file");
+      const blob = row[0].split("\t")[0].split(" ")[2];
+      const bytes = execFileSync("git", ["cat-file", "blob", blob], { cwd: repo });
+      if (new TextDecoder("utf-8", { fatal: true }).decode(bytes).includes("\0")) throw new Error("review source leg is binary or uninspectable");
+      entries.push({ label: `${label}:${name}`, blob, digest: sha(bytes), tree, path: name });
+    }
+  }
+  for (const stage of packet.mergeStages.filter((entry) => entry.stage === 1)) {
+    const tree = git(repo, ["merge-base", packet.source.head, packet.forge.integration]);
+    const bytes = execFileSync("git", ["cat-file", "blob", stage.blob], { cwd: repo });
+    entries.push({ label: `merge-base:${stage.path}`, blob: stage.blob, digest: sha(bytes), tree, path: stage.path });
+  }
+  return entries;
+}
+
+function matchesReviewMaterial(event, material) {
+  return !!event?.evidence.some((entry) => entry.id === `review-material:${material.digest}` && entry.kind === "artifact-identity" && entry.uri === `git:${material.head}:artifact.json` && entry.digest === material.digest);
+}
+
 function qualifiedConvergenceAnchor(repo, branch, forge) {
   const stored = readReviews(repo)[branch];
   for (const receipt of [...(stored?.correctionReceipts ?? [])].reverse()) {
@@ -648,6 +673,9 @@ async function recoverConvergenceEffect(repo, workId) {
   const board = canonical.board;
   const review = canonical.events.find((event) => event.id === intent.reviewEventId);
   const verification = canonical.events.find((event) => event.id === intent.verificationEventId);
+  if (!intent.reviewMaterial || !matchesReviewMaterial(review, intent.reviewMaterial)) throw new Error("recovery intent lacks whole source review material");
+  const material = git(repo, ["show", `${intent.reviewMaterial.head}:artifact.json`]);
+  if (sha(material) !== intent.reviewMaterial.digest || JSON.parse(material).candidateHead !== intent.artifactHead) throw new Error("recovery review material differs from the exact candidate");
   if (!acceptanceReadiness(board).ready || board.violations.length || board.integration?.headProof?.head !== intent.artifactHead || board.integration.headProof.verificationEventId !== verification?.id || review?.payload.status !== "pass" || verification?.payload.status !== "pass" || executionActorIds(board).has(review.actor.id) || executionActorIds(board).has(verification.actor.id) || !review.evidence.some((evidence) => evidence.kind === "diff" && evidence.digest === `git:${intent.packet.source.head}..${intent.artifactHead}`)) throw new Error("recovery intent lacks its exact independent canonical proof");
   const lockPath = git(repo, ["rev-parse", "--path-format=absolute", "--git-path", "horizon-convergence.lock"]);
   if (existsSync(lockPath)) {
@@ -714,6 +742,7 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
   const artifactDate = git(repo, ["show", "-s", "--format=%cI", before.head]);
   const projectedCommit = execFileSync("git", [...HARDENED_GIT_FLAGS, "commit-tree", projected.tree, "-p", before.head, "-p", forge.integration], { cwd: repo, env: { ...hardenedGitEnv(), GIT_AUTHOR_DATE: artifactDate, GIT_COMMITTER_DATE: artifactDate, GIT_AUTHOR_NAME: "Harness Convergence", GIT_COMMITTER_NAME: "Harness Convergence", GIT_AUTHOR_EMAIL: "horizon-convergence@rhiz.invalid", GIT_COMMITTER_EMAIL: "horizon-convergence@rhiz.invalid" }, encoding: "utf8", input: "rhiz: retained projected convergence artifact\n" }).trim();
   const retainedInput = retainConvergenceArtifact(repo, workId, "convergence-input", packet, [projectedCommit]);
+  const reviewBlobs = convergenceReviewBlobs(repo, packet, retainedInput);
   manifest.inputCheckpoint = retainedInput;
   const manifestDigest = sha(stable(manifest));
   const artifactPath = `tools/horizon-convergence-artifacts/${workId.slice(-40)}/artifact.json`;
@@ -758,13 +787,16 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     if (!target || target.head !== started.receipt.candidate.head) throw new Error("actual producer receipt differs from canonical integration proof");
     const actual = JSON.parse(git(repo, ["show", `${target.head}:${artifactPath}`]));
     validateConvergencePacket(actual, manifestDigest);
+    const reviewMaterial = retainConvergenceArtifact(repo, workId, "review-material", { schema: "rhiz/operator-review-material/v1", workId, contractRevision: 1, candidateHead: target.head, blobs: reviewBlobs }, [retainedInput.head, target.head]);
+    await recordConvergenceArtifact(produced, workId, "review-material", reviewMaterial);
     const reviewStartedAtMs = Date.now();
-    const reviewed = invoke(["review", workId, "--reviewer", "claude"]);
+    const reviewed = invoke(["review", workId, "--reviewer", "claude", "--review-material", `git:${reviewMaterial.head}:artifact.json`]);
     const canonical = await canonicalConvergenceWork(repo, workId);
     const board = canonical?.board;
     const readiness = board && acceptanceReadiness(board);
     const reviewEvent = canonical?.events.find((event) => event.id === readiness?.reviewEventId);
     const verificationEvent = canonical?.events.find((event) => event.id === board?.integration?.headProof?.verificationEventId);
+    if (!matchesReviewMaterial(reviewEvent, reviewMaterial) || reviewed.review?.material?.digest !== reviewMaterial.digest || reviewed.review?.material?.uri !== `git:${reviewMaterial.head}:artifact.json`) throw new Error("independent review lacks the exact whole source material identity");
     const exactDiff = `git:${before.head}..${target.head}`;
     const current = captureSourceState(repo, branch);
     const freshForge = convergenceForge(repo, branch, integrationRef, input);
@@ -781,8 +813,8 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     });
     if (refusals.length) throw new Error(`convergence effect refused: ${refusals.join(", ")}`);
     if (captureSourceState(repo, branch).digest !== before.digest || sha(readFileSync(patchPath)) !== sha(input.patch)) throw new Error("convergence state changed before effect");
-    const receiptBase = { schema: "rhiz/convergence-effect/v1", workId, artifactHead: target.head, artifactDigest: packetDigest, sourceBefore: before.digest, paths: input.paths, verificationEventId: verificationEvent.id, reviewEventId: reviewEvent.id, accepted: false };
-    const intent = retainConvergenceArtifact(repo, workId, "intent", { schema: "rhiz/convergence-intent/v1", workId, packet, artifactHead: target.head, verificationEventId: verificationEvent.id, reviewEventId: reviewEvent.id, receipt: receiptBase }, [retainedInput.head, target.head]);
+    const receiptBase = { schema: "rhiz/convergence-effect/v1", workId, artifactHead: target.head, artifactDigest: packetDigest, sourceBefore: before.digest, paths: input.paths, verificationEventId: verificationEvent.id, reviewEventId: reviewEvent.id, reviewMaterial, accepted: false };
+    const intent = retainConvergenceArtifact(repo, workId, "intent", { schema: "rhiz/convergence-intent/v1", workId, packet, artifactHead: target.head, verificationEventId: verificationEvent.id, reviewEventId: reviewEvent.id, reviewMaterial, receipt: receiptBase }, [retainedInput.head, target.head, reviewMaterial.head]);
     await recordConvergenceArtifact(canonical, workId, "intent", intent);
     if (captureSourceState(repo, branch).digest !== before.digest) throw new Error("source changed before the recorded effect intent");
     git(repo, ["apply", "--check", patchPath]);

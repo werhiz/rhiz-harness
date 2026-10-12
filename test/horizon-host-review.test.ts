@@ -194,6 +194,7 @@ async function convergenceFixture() {
   git(["push", "-qu", "origin", "feature"]);
   git(["checkout", "-q", "main"]);
   await writeFile(join(repo, "source.txt"), "theirs\n");
+  await writeFile(join(repo, "helper.txt"), "main helper\n");
   git(["add", "."]); git(["commit", "-qm", "main change"]);
   for (let i = 0; i < 50; i++) { await writeFile(join(repo, "main.txt"), `main ${i}\n`); git(["add", "."]); git(["commit", "-qm", `main ${i}`]); }
   git(["push", "-qu", "origin", "main"]);
@@ -216,7 +217,7 @@ async function convergenceFixture() {
   await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='altered-review')c.body+=' altered';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:m==='wrong-main-ref'?'0'.repeat(40):'${base}'}};console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:c):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
   await writeFile(join(root, "codex-fixture.mjs"), CONVERGENCE_CODEX_FIXTURE);
   await writeFile(join(bin, "codex"), `#!/bin/sh\nexec '${process.execPath}' '${join(root, "codex-fixture.mjs")}'\n`, { mode: 0o755 });
-  await writeFile(join(bin, "claude"), `#!${process.execPath}\nconst fs=require('node:fs');process.stdin.resume();process.stdin.on('end',()=>{fs.appendFileSync(process.env.CONVERGENCE_CALLS,'review\\n');if(process.env.CONVERGENCE_MODE==='concurrent-state')fs.writeFileSync(process.env.CONVERGENCE_SOURCE+'/new-untracked.txt','concurrent');const status=process.env.CONVERGENCE_MODE==='review-refuses'?'fail':'pass';console.log(JSON.stringify({is_error:false,result:JSON.stringify({status,summary:'Scripted structural reviewer fixture',findings:[]})}));});\n`, { mode: 0o755 });
+  await writeFile(join(bin, "claude"), `#!${process.execPath}\nconst fs=require('node:fs');let prompt='';process.stdin.on('data',bytes=>prompt+=bytes);process.stdin.on('end',()=>{fs.appendFileSync(process.env.CONVERGENCE_CALLS,'review\\n');if(process.env.CONVERGENCE_MODE==='concurrent-state')fs.writeFileSync(process.env.CONVERGENCE_SOURCE+'/new-untracked.txt','concurrent');const supplied=['packet','original:source.txt','accepted-main:source.txt','projected:source.txt'].every(label=>prompt.includes(JSON.stringify(label)));const status=process.env.CONVERGENCE_MODE==='review-refuses'||(process.env.CONVERGENCE_MODE==='requires-material'&&!supplied)?'fail':'pass';console.log(JSON.stringify({is_error:false,result:JSON.stringify({status,summary:'Scripted structural reviewer fixture',findings:[]})}));});\n`, { mode: 0o755 });
   const inputFile = join(root, "request.json");
   const request = { schema: "rhiz/convergence-request/v1", purpose: "resolve-integration", paths: ["source.txt"], patch, reviewCommentUrl: commentUrl };
   await writeFile(inputFile, JSON.stringify(request));
@@ -339,6 +340,8 @@ test("remote artifacts retain complete packet and projected objects; interrupted
     freshGit(["fetch", "-q", "origin", refs[0]!]);
     const intent = JSON.parse(freshGit(["show", `${intentHead}:artifact.json`]));
     assert.equal(intent.packet.request.patch, f.request.patch);
+    const reviewMaterial = JSON.parse(freshGit(["show", `${intent.reviewMaterial.head}:artifact.json`]));
+    for (const entry of reviewMaterial.blobs.filter((item: { blob?: string }) => item.blob)) assert.ok(freshGit(["cat-file", "blob", entry.blob]));
     assert.equal(freshGit(["rev-parse", `${intent.packet.projected.tree}^{tree}`]), intent.packet.projected.tree);
     assert.equal(freshGit(["show", `${intent.packet.projected.tree}:source.txt`]), "resolved");
     const calls = await readFile(f.calls, "utf8");
@@ -430,4 +433,39 @@ test("convergence binds actual repository main even when PR comparison base is h
       }
     } finally { await rm(f.root, { recursive: true, force: true }); }
   }
+});
+
+
+test("convergence delivers whole independent review material and requires its raw identity before effects", async () => {
+  const f = await convergenceFixture();
+  try {
+    const result = f.run("requires-material");
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    const { readRepositoryWorkLedgers } = await import("../adapters/local/work-ledgers.js");
+    const reading = await readRepositoryWorkLedgers(join(f.repo, ".git"));
+    const events = reading.ledgers.flatMap((ledger) => ledger.events);
+    const review = events.find((event) => event.type === "review.result");
+    assert.ok(review?.evidence.some((entry) => entry.id.startsWith("review-material:") && entry.uri?.startsWith("git:") && entry.digest?.length === 64));
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+
+test("convergence material preserves actual typed absence for an accepted-main-only helper", async () => {
+  const f = await convergenceFixture();
+  try {
+    const request = { ...f.request, paths: ["source.txt", "helper.txt"], patch: f.request.patch + "--- a/helper.txt\n+++ b/helper.txt\n@@ -1 +1 @@\n-main helper\n+main helper adapted\n" };
+    await writeFile(f.inputFile, JSON.stringify(request));
+    const result = f.run("requires-material");
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    const { readRepositoryWorkLedgers } = await import("../adapters/local/work-ledgers.js");
+    const reading = await readRepositoryWorkLedgers(join(f.repo, ".git"));
+    const event = reading.ledgers.flatMap((ledger) => ledger.events).find((item) => item.evidence.some((entry) => entry.id === "convergence:review-material"));
+    assert.ok(event);
+    const uri = event.evidence[0]?.uri;
+    assert.ok(uri);
+    const material = JSON.parse(f.git(["show", uri.slice(4)]));
+    assert.ok(material.blobs.some((entry: { label: string; tree: string; absent?: boolean }) => entry.label === "original:helper.txt" && entry.tree === f.head && entry.absent === true));
+    assert.equal(await readFile(join(f.repo, "helper.txt"), "utf8"), "main helper adapted\n");
+  } finally { await rm(f.root, { recursive: true, force: true }); }
 });
