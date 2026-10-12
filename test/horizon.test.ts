@@ -321,3 +321,30 @@ test("open review can answer corrections between 24h and strictly less than 48h"
   assert.equal(decideHorizon({ ...idle, diffLines: 4_177, divergenceAgeMs: 48 * HOUR }, undefined, review).kind, "tripped");
   assert.equal(decideHorizon({ ...idle, diffLines: 5_222, divergenceAgeMs: 25.6 * HOUR }, undefined, review).kind, "tripped");
 });
+
+test("convergence authorizes only a fixed evidenced effect while ordinary old history stays tripped", async () => {
+  const { convergenceEffectRefusals, HORIZON_CONVERGENCE_WINDOW_MS } = await import("../src/horizon.js");
+  const facts = {
+    purpose: "resolve-integration" as const,
+    signals: { ...idle, commitsAhead: 9, commitsBehind: 77, diffLines: 9254, divergenceAgeMs: 50 * HOUR },
+    sourceStateUnchanged: true, freshIntegrationTarget: true, exactScope: true, immutableArtifact: true,
+    controlledWorkerCompleted: true, controlledVerificationCompleted: true, controlledReviewCompleted: true,
+    independentActors: true, canonicalProofMatches: true, rawReviewDiffMatches: true, withinGrowthBound: true,
+    reviewStartedAtMs: HOUR, nowMs: HOUR + 1,
+  };
+  assert.equal(decideHorizon(facts.signals).kind, "tripped");
+  assert.deepEqual(convergenceEffectRefusals(facts), []);
+  for (const key of ["sourceStateUnchanged", "freshIntegrationTarget", "exactScope", "immutableArtifact", "controlledWorkerCompleted", "controlledVerificationCompleted", "controlledReviewCompleted", "independentActors", "canonicalProofMatches", "rawReviewDiffMatches", "withinGrowthBound"] as const) {
+    assert.ok(convergenceEffectRefusals({ ...facts, [key]: false }).length > 0, key);
+  }
+  assert.ok(convergenceEffectRefusals({ ...facts, signals: { ...facts.signals, commitsAhead: 10 } }).includes("history-or-durability"));
+  for (const upstreamState of ["no-upstream", "ahead-of-remote", "upstream-gone"] as const) {
+    assert.ok(convergenceEffectRefusals({ ...facts, signals: { ...facts.signals, upstreamState } }).length > 0);
+  }
+  assert.ok(convergenceEffectRefusals({ ...facts, purpose: "repair-reviewed-target" }).length > 0);
+  assert.deepEqual(convergenceEffectRefusals({ ...facts, purpose: "repair-reviewed-target", signals: { ...facts.signals, commitsBehind: 0 } }), []);
+  assert.ok(convergenceEffectRefusals({ ...facts, nowMs: HOUR + HORIZON_CONVERGENCE_WINDOW_MS }).length > 0);
+  assert.ok(convergenceEffectRefusals({ ...facts, nowMs: HOUR - 1 }).length > 0);
+  // Applying a complete reconciliation does not forgive the next ordinary write.
+  assert.equal(decideHorizon({ ...facts.signals, commitsAhead: 10, commitsBehind: 0 }).kind, "tripped");
+});
