@@ -78,12 +78,12 @@ test("host requires an open exact-pushed-head review for bounded-age corrections
     // A real review of this newer exact head is a distinct convergence round.
     const commentUrl = "https://github.com/example/project/pull/4375#issuecomment-123";
     const comment = { id: 123, html_url: commentUrl, issue_url: "https://api.github.com/repos/example/project/issues/4375", author_association: "MEMBER", user: { login: "independent-checker" }, body: `## NOT READY at ${head}\n\n<!-- rhiz-review-agent -->\nIndependent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.\n\nRequired authority repair.` };
-    await writeFile(join(bin, "gh"), `#!${process.execPath}\nif(process.env.FORGE_MODE==='failure')process.exit(1);if(process.argv[2]==='api'){const c=JSON.parse(process.env.FORGE_COMMENT);if(process.env.FORGE_MODE==='bad-body')c.body='no reviewed head';if(process.env.FORGE_MODE==='untrusted')c.author_association='NONE';console.log(JSON.stringify(c));}else{console.log(JSON.stringify({number:4375,state:process.env.FORGE_MODE==='closed'?'CLOSED':'OPEN',headRefOid:process.env.FORGE_HEAD,baseRefOid:'${baseHead}',url:'https://github.com/example/project/pull/4375'}));}\n`, { mode: 0o755 });
+    await writeFile(join(bin, "gh"), `#!${process.execPath}\nif(process.env.FORGE_MODE==='failure')process.exit(1);if(process.argv[2]==='api'){const c=JSON.parse(process.env.FORGE_COMMENT);if(process.env.FORGE_MODE==='bad-body')c.body='no reviewed head';if(process.env.FORGE_MODE==='ready-only')c.body=c.body.replace('## NOT READY at','## READY at');if(process.env.FORGE_MODE==='untrusted')c.author_association='NONE';console.log(JSON.stringify(c));}else{console.log(JSON.stringify({number:4375,state:process.env.FORGE_MODE==='closed'?'CLOSED':'OPEN',headRefOid:process.env.FORGE_HEAD,baseRefOid:'${baseHead}',url:'https://github.com/example/project/pull/4375'}));}\n`, { mode: 0o755 });
     const receiptEnv = { ...env, PATH: bin + ":" + (process.env.PATH ?? ""), FORGE_HEAD: head, FORGE_COMMENT: JSON.stringify(comment) };
     delete (receiptEnv as Record<string, string | undefined>).NODE_TEST_CONTEXT;
     const record = (mode: string, url = commentUrl, integration = "origin/main") => spawnSync(process.execPath, [hostScript, "converge", "--repo", repo, "--integration-ref", integration, "--review-receipt", url], { cwd: repo, env: { ...receiptEnv, FORGE_MODE: mode }, encoding: "utf8" });
     const original = await readFile(reviewPath, "utf8");
-    for (const mode of ["bad-body", "untrusted", "closed", "failure"]) {
+    for (const mode of ["bad-body", "ready-only", "untrusted", "closed", "failure"]) {
       assert.notEqual(record(mode).status, 0, mode);
       assert.equal(await readFile(reviewPath, "utf8"), original, "invalid receipt cannot alter an anchor");
     }
@@ -212,7 +212,8 @@ async function convergenceFixture() {
   await writeFile(calls, "");
   const actualGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
   await writeFile(join(bin, "git"), `#!${process.execPath}\nconst cp=require('node:child_process');const args=process.argv.slice(2);if(process.env.CONVERGENCE_MODE==='crash-before-apply'&&args[0]==='apply'&&args.length===2){process.kill(process.ppid,'SIGKILL');process.exit(0)}const r=cp.spawnSync(${JSON.stringify(actualGit)},args,{stdio:'inherit'});if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-add'&&JSON.stringify(args)===JSON.stringify(['add','--','source.txt']))process.kill(process.ppid,'SIGKILL');if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-effect-push'&&args.includes('push')&&args.some(a=>a.endsWith('/effect')))process.kill(process.ppid,'SIGKILL');process.exit(r.status??1);\n`, { mode: 0o755 });
-  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst m=process.env.CONVERGENCE_MODE;const c=${JSON.stringify(comment)};if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='altered-review')c.body+=' altered';if(m==='forge-failure')process.exit(1);console.log(JSON.stringify(process.argv[2]==='api'?c:{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):'${base}',baseRefName:'main',comments:[{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
+  const historicalBase = git(["merge-base", head, base]);
+  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='altered-review')c.body+=' altered';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:m==='wrong-main-ref'?'0'.repeat(40):'${base}'}};console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:c):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
   await writeFile(join(root, "codex-fixture.mjs"), CONVERGENCE_CODEX_FIXTURE);
   await writeFile(join(bin, "codex"), `#!/bin/sh\nexec '${process.execPath}' '${join(root, "codex-fixture.mjs")}'\n`, { mode: 0o755 });
   await writeFile(join(bin, "claude"), `#!${process.execPath}\nconst fs=require('node:fs');process.stdin.resume();process.stdin.on('end',()=>{fs.appendFileSync(process.env.CONVERGENCE_CALLS,'review\\n');if(process.env.CONVERGENCE_MODE==='concurrent-state')fs.writeFileSync(process.env.CONVERGENCE_SOURCE+'/new-untracked.txt','concurrent');const status=process.env.CONVERGENCE_MODE==='review-refuses'?'fail':'pass';console.log(JSON.stringify({is_error:false,result:JSON.stringify({status,summary:'Scripted structural reviewer fixture',findings:[]})}));});\n`, { mode: 0o755 });
@@ -391,4 +392,42 @@ test("late interruption reuses the exact durable receipt despite operator identi
     assert.equal(f.git(["ls-remote", "origin", "refs/rhiz/work/*/effect"]), remoteBefore);
     assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+
+test("READY integration context still requires actual execution and cannot become a terminal correction receipt", async () => {
+  const f = await convergenceFixture();
+  try {
+    const reviewCommentUrl = f.request.reviewCommentUrl.replace("101", "102");
+    await writeFile(f.inputFile, JSON.stringify({ ...f.request, reviewCommentUrl, purpose: "repair-reviewed-target" }));
+    const terminal = f.run("ready-review");
+    assert.notEqual(terminal.status, 0);
+    assert.match(terminal.stderr, /exact-head correction review/);
+    assert.equal(await readFile(f.calls, "utf8"), "");
+    await writeFile(f.inputFile, JSON.stringify({ ...f.request, reviewCommentUrl }));
+    const resolution = f.run("ready-review");
+    assert.equal(resolution.status, 0, resolution.stderr);
+    assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n", "READY context does not skip live Work/Verify/Review");
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
+    assert.equal(f.git(["rev-parse", "HEAD"]), f.head);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("convergence binds actual repository main even when PR comparison base is historical", async () => {
+  for (const mode of ["historical-base", "wrong-main-ref"]) {
+    const f = await convergenceFixture();
+    try {
+      const result = f.run(mode);
+      if (mode === "wrong-main-ref") {
+        assert.notEqual(result.status, 0);
+        assert.equal(await readFile(f.calls, "utf8"), "");
+        assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n");
+        assert.equal(f.git(["rev-parse", "MERGE_HEAD"]), f.base);
+        assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
+      }
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }
 });

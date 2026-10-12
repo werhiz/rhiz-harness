@@ -189,8 +189,8 @@ function committedDiffLines(repo, base, head) {
   return lines;
 }
 
-/** A forge comment is correction evidence, never a READY or acceptance verdict. */
-function reviewComment(repo, pr, commentUrl, head) {
+/** A forge comment supplies context, never source-effect or acceptance authority. */
+function reviewComment(repo, pr, commentUrl, head, allowReadyContext = false) {
   const selected = new URL(commentUrl);
   const target = new URL(pr.url);
   const id = /^#issuecomment-(\d+)$/.exec(selected.hash)?.[1];
@@ -202,7 +202,7 @@ function reviewComment(repo, pr, commentUrl, head) {
   const issue = new URL(comment.issue_url);
   const expectedHost = target.hostname === "github.com" ? "api.github.com" : target.hostname;
   const body = comment.body;
-  const namedHead = typeof body === "string" ? /^## NOT READY at ([a-f0-9]{7,40})\s*$/m.exec(body)?.[1] : undefined;
+  const namedHead = typeof body === "string" ? (allowReadyContext ? /^## (?:NOT READY|READY) at ([a-f0-9]{7,40})\s*$/m : /^## NOT READY at ([a-f0-9]{7,40})\s*$/m).exec(body)?.[1] : undefined;
   // GUARD integration/review-receipt-binds-forge-head
   if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || typeof comment.user?.login !== "string" || !namedHead || !head.startsWith(namedHead) || !body.includes("<!-- rhiz-review-agent -->") || !body.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.`)) throw new Error("receipt is not an attributable exact-head correction review");
   return { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
@@ -491,15 +491,20 @@ function convergenceForge(repo, branch, integrationRef, input) {
   const head = git(repo, ["rev-parse", branch]);
   const upstream = git(repo, ["rev-parse", `${branch}@{upstream}`]);
   const integration = git(repo, ["rev-parse", integrationRef]);
-  if (pr.state !== "OPEN" || pr.baseRefName !== "main" || pr.headRefOid !== head || head !== upstream || pr.baseRefOid !== integration) throw new Error("convergence requires exact durable OPEN head and fresh accepted main");
-  const context = reviewComment(repo, pr, input.reviewCommentUrl, head);
+  const target = new URL(pr.url);
+  const [owner, name] = target.pathname.split("/").filter(Boolean);
+  const acceptedMain = JSON.parse(execFileSync("gh", ["api", "--hostname", target.hostname, `repos/${owner}/${name}/git/ref/heads/main`], { cwd: repo, encoding: "utf8", timeout: 15_000, stdio: ["ignore", "pipe", "ignore"] }));
+  if (pr.state !== "OPEN" || pr.baseRefName !== "main" || pr.headRefOid !== head || head !== upstream || acceptedMain.object?.sha !== integration || acceptedMain.ref !== "refs/heads/main" || acceptedMain.object?.type !== "commit" || !/^[a-f0-9]{40}$/.test(pr.baseRefOid)) throw new Error("convergence requires exact durable OPEN head and fresh accepted repository main");
+  // PR comparison base is historical review evidence, not current main authority.
+  git(repo, ["rev-parse", "--verify", `${pr.baseRefOid}^{commit}`]);
+  const context = reviewComment(repo, pr, input.reviewCommentUrl, head, input.purpose === "resolve-integration");
   const latest = [...(pr.comments ?? [])].reverse().find((comment) => typeof comment.body === "string" && comment.body.includes("<!-- rhiz-review-agent -->"));
   if (!latest || latest.url !== context.commentUrl) throw new Error("convergence review context is not the latest canonical comment");
   const comment = JSON.parse(execFileSync("gh", ["api", "--hostname", new URL(pr.url).hostname, `repos/${new URL(pr.url).pathname.split("/").filter(Boolean).slice(0, 2).join("/")}/issues/comments/${context.commentId}`], { cwd: repo, encoding: "utf8", timeout: 15_000, stdio: ["ignore", "pipe", "ignore"] }));
   if (sha(comment.body) !== context.commentDigest || comment.html_url !== context.commentUrl || comment.user?.login !== context.reviewerLogin) throw new Error("review context changed during forge readback");
   const created = Date.parse(comment.created_at);
   if (!Number.isFinite(created) || created > Date.now() || Date.now() - created >= 4 * 60 * 60 * 1000) throw new Error("active review context is stale or future dated");
-  return { head, integration, prNumber: pr.number, prUrl: pr.url, comment: { ...context, createdAt: comment.created_at }, findings: comment.body };
+  return { head, integration, reviewBase: pr.baseRefOid, prNumber: pr.number, prUrl: pr.url, comment: { ...context, createdAt: comment.created_at }, findings: comment.body };
 }
 
 function patchPaths(repo, patchPath) {
@@ -591,7 +596,7 @@ function qualifiedConvergenceAnchor(repo, branch, forge) {
       git(repo, ["merge-base", "--is-ancestor", receipt.head, forge.head]);
       const actual = reviewComment(repo, { number: forge.prNumber, url: forge.prUrl }, receipt.commentUrl, receipt.head);
       if (actual.commentDigest !== receipt.commentDigest || actual.reviewerLogin !== receipt.reviewerLogin) continue;
-      return committedDiffLines(repo, forge.integration, receipt.head);
+      return committedDiffLines(repo, forge.reviewBase, receipt.head);
     } catch { continue; }
   }
   throw new Error("convergence growth requires an attributable existing correction round; cached numbers confer no authority");

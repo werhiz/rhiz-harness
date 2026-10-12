@@ -602,6 +602,20 @@
       "file": "scripts/horizon.mjs",
       "remove": "Artifact producer only: ",
       "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-current-main-ref",
+      "why": "A frozen historical PR comparison base cannot establish current accepted-main authority; the actual repository branch ref must match local integration.",
+      "file": "scripts/horizon.mjs",
+      "remove": "acceptedMain.object?.sha !== integration || ",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-ready-context-is-resolution-only",
+      "why": "A genuine READY review may supply integration context but never skip actual execution or become an ordinary/terminal correction receipt.",
+      "file": "scripts/horizon.mjs",
+      "remove": ", input.purpose === \"resolve-integration\"",
+      "testFile": "dist/test/horizon-host-review.test.js"
     }
   ]
 }
