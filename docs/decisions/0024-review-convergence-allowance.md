@@ -87,3 +87,82 @@ through existing retained Work artifacts. Raw review material identity accompani
 the existing candidate diff and is required by effect admission, intent and
 recovery. Packaging and deterministic Verify establish identity only; actual
 independent review must judge preservation and repair semantics on supplied bytes.
+
+
+### Complete review beyond one provider input (2026-10-12)
+
+The real #4370 integration at Source `1d354adc` and accepted main `7e1155bd`
+had 22 conflicts. Its original, main and existing stage-1 legs alone contained
+1,180,098 UTF-8 bytes, before projected Source or the packet. The installed
+single-input 200,000-byte Review refused this task correctly. The prior small
+actual-provider proof establishes that smaller exercised scope, not admission
+of this real merge. No file is dropped, no input is truncated and no application
+history or clock is changed to fit review.
+
+The existing operator Review may inspect complete immutable material in ordered
+parts. The host supplies an `integrationLabel` pointing to its whole packet,
+including the entire proposed patch and exact scope. Every part receives that
+complete integration proposal, the existing contract/diff, and its explicitly
+identified UTF-8 ranges. The operator derives the ranges itself, checks exact
+reconstruction and order before provider admission, and invokes the independent
+provider afresh for every semantic part. Source bytes remain untrusted data.
+If a part cannot support semantic judgment with the supplied context, it refuses.
+
+After all parts pass, a separate actual integration review receives the whole
+proposal and ordered, identity-bound semantic results. It must judge cross-file
+interactions and preservation itself. Part statuses are evidence, never an
+aggregate verdict. Only all successful parts and that actual final pass can
+reach one canonical Review append under the existing exclusive Ledger lock,
+which rechecks the original contract revision and verified head/base. No saved
+part result or caller-supplied coverage flag can skip execution.
+
+Each actual provider input is at most 200,000 UTF-8 bytes, including metadata;
+the existing environment option may reduce that ceiling but cannot enlarge it.
+Individual source blobs retain the existing input-size refusal. Complete
+serialized material is bounded at 8 MiB and 64 parts, with a 45-minute total
+review deadline and the existing 15-minute per-provider ceiling. The host wait
+for Review is 46 minutes; other invocations retain their prior bound. Complete
+inputs, including the final reports, must fit before their provider invocation.
+An oversized final report, provider failure, cancellation or timeout refuses
+with partial observations retained in the existing operator reviews directory.
+Only actually reported usage is aggregated; absent usage stays absent.
+
+The raw canonical Review binds both immutable material identity and a digest
+of its ordered range/input identities and final integration input. Horizon
+requires that exact coverage, retains it in the existing durable intent, and
+rechecks it during effect/recovery. Identity Verify still proves identity only.
+The request remains at 128 KiB, every actual conflict must be included, and all
+ordinary age/history/durability, fresh forge, scope and growth checks remain.
+
+The owning regressions use production-sized UTF-8 evidence, reconstruct the
+actual provider inputs, and reject omitted/repeated/reordered/altered ranges,
+forged material, provider/part/final failure, exhausted budget and saved-result
+reuse. Disposable guard removals must make those controls fail. Scripted
+providers establish control flow only; this new size capability requires fresh
+independent exact-candidate, hosted and production-sized actual-provider proof
+before integration or installation.
+
+
+Independent review of the first multipart draft found that local part logs alone
+could not reconstruct the final semantic input after a fresh fetch. It also
+found that slow retained I/O after a successful provider could overrun the total
+deadline. Watched regressions reproduced both before correction. Canonical
+Review now binds a complete semantic observation containing the exact part and
+final prompts and normalized actual semantic decisions, ordered result digests,
+revision, head and material identity. Raw transport envelopes and malformed
+responses stay in private operator custody; they are never copied to public
+checkpoints. Horizon validates and retains the complete semantic observation
+through its existing Work artifact/checkpoint, as a parent of durable intent.
+An intent-only fresh fetch must reconstruct all semantic inputs and decisions.
+The original deadline is rechecked after provider/evidence retention and under
+the existing Ledger lock before recording the canonical Review. Expiry retains
+the actual provider outcome and authorizes no pass, acceptance or Source effect.
+
+
+A subsequent independent review found that a linked private reviews ancestor
+could receive full prompts before the later host refused its path. The owning
+fixture watched the original operator proceed through the link. Review now
+proves each ancestor is an unlinked directory under the actual Git-common root
+before creating its custody, saving any prompt or invoking the provider. The
+negative fixture requires no outside writes and no provider traffic; removing
+the enforcing check must fail it in disposable custody.

@@ -342,6 +342,23 @@ test("remote artifacts retain complete packet and projected objects; interrupted
     assert.equal(intent.packet.request.patch, f.request.patch);
     const reviewMaterial = JSON.parse(freshGit(["show", `${intent.reviewMaterial.head}:artifact.json`]));
     for (const entry of reviewMaterial.blobs.filter((item: { blob?: string }) => item.blob)) assert.ok(freshGit(["cat-file", "blob", entry.blob]));
+    const semanticBytes = freshGit(["show", `${intent.reviewObservation.head}:artifact.json`]);
+    const semantic = JSON.parse(semanticBytes);
+    const { createHash } = await import("node:crypto");
+    assert.equal(createHash("sha256").update(semanticBytes).digest("hex"), intent.reviewObservation.digest);
+    assert.equal(semantic.parts[0].result.verdict.status, "pass");
+    assert.ok(semantic.parts[0].prompt.includes("original:source.txt"));
+    assert.ok(semantic.parts[0].prompt.includes("accepted-main:source.txt"));
+    assert.equal(semantic.candidateHead, intent.artifactHead);
+    const { validateReviewObservation } = await import(new URL(hostScript.replace("horizon.mjs", "rhiz-harness.mjs"), "file:").href);
+    const expected = { workId: intent.workId, revision: 1, head: intent.artifactHead, materialDigest: intent.reviewMaterial.digest };
+    assert.doesNotThrow(() => validateReviewObservation(semantic, intent.receipt.reviewCoverage, expected));
+    assert.throws(() => validateReviewObservation({ ...semantic, parts: [] }, intent.receipt.reviewCoverage, expected));
+    const altered = structuredClone(semantic); altered.parts[0].result.verdict.summary += "forged";
+    assert.throws(() => validateReviewObservation(altered, intent.receipt.reviewCoverage, expected));
+    const replayed = structuredClone(semantic); replayed.candidateHead = "0".repeat(40);
+    assert.throws(() => validateReviewObservation(replayed, intent.receipt.reviewCoverage, expected));
+
     assert.equal(freshGit(["rev-parse", `${intent.packet.projected.tree}^{tree}`]), intent.packet.projected.tree);
     assert.equal(freshGit(["show", `${intent.packet.projected.tree}:source.txt`]), "resolved");
     const calls = await readFile(f.calls, "utf8");
@@ -446,6 +463,7 @@ test("convergence delivers whole independent review material and requires its ra
     const events = reading.ledgers.flatMap((ledger) => ledger.events);
     const review = events.find((event) => event.type === "review.result");
     assert.ok(review?.evidence.some((entry) => entry.id.startsWith("review-material:") && entry.uri?.startsWith("git:") && entry.digest?.length === 64));
+    assert.ok(review?.evidence.some((entry) => entry.id.startsWith("review-material-parts:") && entry.digest?.length === 64));
     assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -390,5 +390,166 @@ test("operator CLI: whole immutable review material is delivered and identity-bo
     const refused = JSON.parse(readFileSync(join(observations, refusedFile), "utf8"));
     assert.equal(refused.recorded, false);
     assert.equal(refused.providerResult.verdict.status, "pass");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+
+test("operator CLI: production-sized multipart review covers exact UTF-8 bytes and requires a fresh integration verdict", async () => {
+  const f = fixture();
+  try {
+    const id = "work:operator-multipart";
+    const files = f.writeWork(id, true);
+    const started = cliRun(f, ["start", "--contract", files.contract, "--verify", files.verify, "--json"]);
+    assert.equal(started.status, 0, started.stderr);
+    const head = json(started).status.verifiedTarget.head as string;
+    const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+    const blob = (value: string) => execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: f.repo, input: value, encoding: "utf8" }).trim();
+    const bodies = Array.from({ length: 88 }, (_, n) => `Source leg ${n}\n` + "Original reviewed coordination: café 🌿\n".repeat(440));
+    const integration = JSON.stringify({ paths: Array.from({ length: 22 }, (_, n) => `source-${n}.ts`), patch: "COMPLETE-PROPOSED-PATCH\n" });
+    const base = { schema: "rhiz/operator-review-material/v1", workId: id, contractRevision: 1, candidateHead: head,
+      integrationLabel: "integration", blobs: [{ label: "integration", blob: blob(integration), digest: hash(integration) },
+        ...bodies.map((body, n) => ({ label: `source-${n}`, blob: blob(body), digest: hash(body) }))] };
+    const material = (value: unknown) => {
+      const raw = JSON.stringify(value);
+      const tree = execFileSync("git", ["mktree"], { cwd: f.repo, input: `100644 blob ${blob(raw)}\tartifact.json\n`, encoding: "utf8" }).trim();
+      return `git:${git(f.repo, ["commit-tree", tree, "-p", head, "-m", "complete review evidence"])}:artifact.json`;
+    };
+    const uri = material(base);
+    const log = join(f.root, "multipart-inputs.jsonl"), mode = join(f.root, "review-mode.txt");
+    const reviewer = join(f.root, "multipart-reviewer.mjs");
+    writeFileSync(reviewer, `#!${process.execPath}\nimport fs from 'node:fs';process.stdin.setEncoding('utf8');let input='';for await(const b of process.stdin)input+=b;fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(input)+'\\n');const mode=fs.existsSync(${JSON.stringify(mode)})?fs.readFileSync(${JSON.stringify(mode)},'utf8'):'';const final=input.includes('FINAL CROSS-FILE INTEGRATION REVIEW');if(mode==='provider-error')process.exit(3);if(mode==='malformed'){process.stdout.write('malformed actual response');process.exit(0)}console.log(JSON.stringify({status:(mode==='part-fail'&&!final)||(mode==='integration-fail'&&final)?'fail':'pass',summary:final?'Cross-file semantic integration judgment':'Actual complete supplied part semantic judgment',findings:[]}));\n`);
+    chmodSync(reviewer, 0o755);
+    const invoke = (input = uri) => spawnSync(process.execPath, [cli, "review", id, "--reviewer-command", reviewer, "--review-material", input, "--json", "--repo", f.repo], {
+      encoding: "utf8", env: { ...process.env, RHIZ_CODEX_COMMAND: f.codex, RHIZ_REVIEW_MAX_DIFF_BYTES: "4000000" }, timeout: 180_000,
+    });
+    const result = invoke();
+    assert.equal(result.status, 0, result.stderr);
+    const record = json(result).review;
+    assert.ok(record.parts.length > 1, "production-sized evidence needs multiple actual provider calls");
+    const prompts = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string);
+    assert.equal(prompts.length, record.parts.length + 1);
+    assert.ok(prompts.every((prompt) => Buffer.byteLength(prompt) <= 200_000));
+    const reconstructed: Record<string, Buffer[]> = {};
+    for (const prompt of prompts.slice(0, -1)) {
+      const ranges = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1));
+      for (const range of ranges) {
+        (reconstructed[range.label] ??= []).push(Buffer.from(range.content));
+      }
+    }
+    for (let n = 0; n < bodies.length; n++) assert.equal(Buffer.concat(reconstructed[`source-${n}`] ?? []).toString(), bodies[n]);
+    assert.ok(prompts.at(-1)?.includes("COMPLETE-PROPOSED-PATCH"));
+    assert.ok(prompts.at(-1)?.includes("Actual complete supplied part semantic judgment"));
+    assert.equal(record.coverage.materialDigest, hash(JSON.stringify(base)));
+    const observationBytes = readFileSync(fileURLToPath(record.observation.uri));
+    assert.equal(hash(observationBytes), record.observation.digest);
+    const observed = JSON.parse(observationBytes.toString());
+    assert.equal(observed.materialDigest, record.material.digest);
+    assert.deepEqual(observed.parts.map((part: { prompt: string }) => part.prompt), prompts.slice(0, -1));
+    assert.equal(observed.integration.prompt, prompts.at(-1));
+    assert.ok(observed.parts.every((part: { result: unknown }) => !JSON.stringify(part.result).includes("providerOutput")), "transport envelopes stay private");
+    assert.deepEqual(record.coverage.partResultDigests, observed.parts.map((part: { result: unknown }) => hash(JSON.stringify(part.result))));
+
+    const common = git(f.repo, ["rev-parse", "--git-common-dir"]);
+    const events = await readDurableLedgerEvents(join(f.repo, common, "rhiz-harness", "ledgers", "work-operator-multipart"));
+    const latest = [...events].reverse().find((event) => event.type === "review.result");
+    assert.ok(latest?.evidence.some((entry) => entry.id.startsWith("review-material-parts:") && entry.digest === record.coverage.digest));
+    const count = () => json(cliRun(f, ["status", id, "--json"])).works[0].review.count;
+    const initial = count();
+    for (const failure of ["integration-fail", "part-fail", "provider-error", "malformed"]) {
+      writeFileSync(mode, failure);
+      const refused = invoke();
+      assert.notEqual(refused.status, 0, `must reject ${failure}`);
+      assert.equal(count(), initial, "partial or integration failure cannot append a canonical passing result");
+    }
+    rmSync(mode);
+    const timeRefusal = cliRun(f, ["review", id, "--reviewer-command", reviewer, "--review-material", uri, "--review-budget-ms", "1", "--json"]);
+    assert.notEqual(timeRefusal.status, 0, "bounded cancellation cannot record review pass");
+    assert.equal(count(), initial);
+    for (const wrong of [
+      { ...base, integrationLabel: "missing" },
+      { ...base, integrationLabel: undefined },
+      { ...base, parts: [{ callerSuppliedCoverage: true }] },
+      { ...base, blobs: [...base.blobs, base.blobs[1]] },
+      { ...base, blobs: base.blobs.map((entry, n) => n === 1 ? { ...entry, digest: "0".repeat(64) } : entry) },
+    ]) {
+      const before = readFileSync(log, "utf8");
+      assert.notEqual(invoke(material(wrong)).status, 0);
+      assert.equal(readFileSync(log, "utf8"), before, "invalid coverage/input refuses before model traffic");
+    }
+    const beforeFresh = readFileSync(log, "utf8").trim().split("\n").length;
+    assert.equal(invoke().status, 0, "no saved part cache substitutes for actual fresh provider execution");
+    assert.equal(readFileSync(log, "utf8").trim().split("\n").length - beforeFresh, prompts.length);
+    const observations = readdirSync(join(f.repo, common, "rhiz-harness", "operator", "work-operator-multipart", "reviews"));
+    assert.ok(observations.filter((name) => name.startsWith("multipart-")).length >= 5, "failures retain partial provider evidence");
+    assert.ok(observations.filter((name) => name.startsWith("multipart-")).some((name) => JSON.parse(readFileSync(join(f.repo, common, "rhiz-harness", "operator", "work-operator-multipart", "reviews", name), "utf8")).providerFailure?.output === "malformed actual response"), "retain actual malformed provider output privately");
+
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+
+test("operator CLI: ordered review ranges reject missing, repeated, reordered and altered UTF-8 bytes", async () => {
+  const { assertReviewPartCoverage } = await import(new URL(cli, "file:").href);
+  const body = { label: "original:a.ts", blob: "a".repeat(40), digest: "b".repeat(64), content: "café🌿done" };
+  const first = { ...body, start: 0, end: Buffer.byteLength("café"), content: "café" };
+  const second = { ...body, start: first.end, end: Buffer.byteLength(body.content), content: "🌿done" };
+  const plan = [{ ranges: [first] }, { ranges: [second] }];
+  assert.doesNotThrow(() => assertReviewPartCoverage([body], plan));
+  for (const ranges of [[first], [first, first, second], [first, second, second], [second, first], [first, { ...second, start: second.start + 1 }], [first, { ...second, content: "🌾done" }], [first, { ...second, blob: "c".repeat(40) }]]) {
+    assert.throws(() => assertReviewPartCoverage([body], [{ ranges }]), /coverage differs/);
+  }
+});
+
+
+test("operator CLI: slow post-provider persistence cannot authorize review past its total deadline", () => {
+  const f = fixture();
+  try {
+    const id = "work:operator-deadline", files = f.writeWork(id, true);
+    const started = cliRun(f, ["start", "--contract", files.contract, "--verify", files.verify, "--json"]);
+    assert.equal(started.status, 0, started.stderr);
+    const head = json(started).status.verifiedTarget.head as string;
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: f.repo, input: "actual source", encoding: "utf8" }).trim();
+    const material = JSON.stringify({ schema: "rhiz/operator-review-material/v1", workId: id, contractRevision: 1, candidateHead: head,
+      blobs: [{ label: "source", blob, digest: createHash("sha256").update("actual source").digest("hex") }] });
+    const materialBlob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: f.repo, input: material, encoding: "utf8" }).trim();
+    const tree = execFileSync("git", ["mktree"], { cwd: f.repo, input: `100644 blob ${materialBlob}\tartifact.json\n`, encoding: "utf8" }).trim();
+    const commit = git(f.repo, ["commit-tree", tree, "-p", head, "-m", "deadline material"]);
+    const preload = join(f.root, "slow-private-evidence.cjs");
+    writeFileSync(preload, `const fs=require('node:fs/promises');const write=fs.writeFile;let delayed=false;fs.writeFile=async function(path,data,...args){if(!delayed&&String(path).includes('multipart-')&&String(data).includes('providerResult')){delayed=true;await new Promise(resolve=>setTimeout(resolve,2500));}return write.call(this,path,data,...args)};`);
+    const refused = spawnSync(process.execPath, [cli, "review", id, "--reviewer-command", f.reviewer("deadline-review.sh", "pass"), "--review-material", `git:${commit}:artifact.json`, "--review-budget-ms", "2000", "--repo", f.repo, "--json"], {
+      encoding: "utf8", env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, RHIZ_CODEX_COMMAND: f.codex }, timeout: 20_000,
+    });
+    assert.notEqual(refused.status, 0, "actual provider pass plus slow retained I/O must not overrun total deadline");
+    assert.equal(json(cliRun(f, ["status", id, "--json"])).works[0].review.count, 0);
+    const common = git(f.repo, ["rev-parse", "--git-common-dir"]);
+    const dir = join(f.repo, common, "rhiz-harness", "operator", "work-operator-deadline", "reviews");
+    const observation = JSON.parse(readFileSync(join(dir, readdirSync(dir).find((name) => name.startsWith("multipart-"))!), "utf8"));
+    assert.equal(observation.parts[0].providerResult.verdict.status, "pass", "retain genuine successful provider outcome on expiry");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+
+test("operator CLI: linked private review custody refuses before source writes or provider traffic", () => {
+  const f = fixture();
+  try {
+    const id = "work:operator-linked-review", files = f.writeWork(id, true);
+    const started = cliRun(f, ["start", "--contract", files.contract, "--verify", files.verify, "--json"]);
+    assert.equal(started.status, 0, started.stderr);
+    const head = json(started).status.verifiedTarget.head as string;
+    const source = "PRIVATE-SOURCE-INPUT\n";
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: f.repo, input: source, encoding: "utf8" }).trim();
+    const raw = JSON.stringify({ schema: "rhiz/operator-review-material/v1", workId: id, contractRevision: 1, candidateHead: head,
+      blobs: [{ label: "private source", blob, digest: createHash("sha256").update(source).digest("hex") }] });
+    const materialBlob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: f.repo, input: raw, encoding: "utf8" }).trim();
+    const tree = execFileSync("git", ["mktree"], { cwd: f.repo, input: `100644 blob ${materialBlob}\tartifact.json\n`, encoding: "utf8" }).trim();
+    const commit = git(f.repo, ["commit-tree", tree, "-p", head, "-m", "private custody material"]);
+    const common = git(f.repo, ["rev-parse", "--git-common-dir"]), outside = join(f.root, "outside"), marker = join(f.root, "provider-called");
+    mkdirSync(outside);
+    symlinkSync(outside, join(f.repo, common, "rhiz-harness", "operator", "work-operator-linked-review", "reviews"));
+    const reviewer = f.reviewer("linked-review.sh", "pass");
+    writeFileSync(reviewer, `#!/bin/sh\ncat >/dev/null\ntouch '${marker}'\nprintf '%s' '{"status":"pass","summary":"actual scripted provider result","findings":[]}'\n`);
+    const refused = cliRun(f, ["review", id, "--reviewer-command", reviewer, "--review-material", `git:${commit}:artifact.json`, "--json"]);
+    assert.notEqual(refused.status, 0, "linked review custody must refuse");
+    assert.deepEqual(readdirSync(outside), [], "private source cannot be written outside owned custody");
+    assert.equal(existsSync(marker), false, "custody refusal precedes provider invocation");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
