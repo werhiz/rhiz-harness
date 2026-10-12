@@ -147,7 +147,11 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  else if(m.method==='initialized')return;
  else if(m.method==='thread/start'){cwd=m.params.cwd;send({id:m.id,result:{thread:{id:threadId},model:'fixture',modelProvider:'fixture',serviceTier:null,cwd,instructionSources:[],approvalPolicy:'untrusted',approvalsReviewer:'user',sandbox:{type:'readOnly',networkAccess:false},reasoningEffort:null}});}
  else if(m.method==='turn/start'){
-  const text=m.params.input[0].text;const name=/into (tools\/horizon-convergence-artifacts\/[^ ]+\/artifact.json)/.exec(text)[1];target=join(cwd,name);
+  const text=m.params.input[0].text;
+  // Agent-boundary fixture mirrors the observed native refusal when a shared
+  // objective makes this producer responsible for the reviewer's packet work.
+  if(!text.includes('Artifact producer only:')||!text.includes('Independent review only:')){process.stderr.write('producer/reviewer responsibilities are not separated\n');process.exit(2)}
+  const name=/into (tools\/horizon-convergence-artifacts\/[^ ]+\/artifact.json)/.exec(text)[1];target=join(cwd,name);
   const folder=join(process.env.CONVERGENCE_SOURCE,'.context/horizon-convergence');content=readFileSync(join(folder,readdirSync(folder)[0]),'utf8');
   if(process.env.CONVERGENCE_MODE==='bad-artifact')content='{}';
   appendFileSync(process.env.CONVERGENCE_CALLS,'worker\n');send({id:m.id,result:{turn:{id:turnId,status:'inProgress'}}});

@@ -595,6 +595,13 @@
       "file": "scripts/horizon.mjs",
       "remove": "    await recordConvergenceArtifact(canonical, workId, \"intent\", intent);\n",
       "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-producer-does-not-review",
+      "why": "The actual native producer refused packaging when a shared objective assigned it the independent reviewer\u2019s packet inspection; producer and reviewer responsibilities must stay distinct.",
+      "file": "scripts/horizon.mjs",
+      "remove": "Artifact producer only: ",
+      "testFile": "dist/test/horizon-host-review.test.js"
     }
   ]
 }
