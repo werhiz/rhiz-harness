@@ -4,6 +4,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { parseDocument } from "yaml";
 
 const ROOT = process.cwd();
 const SCRIPT = resolve(ROOT, "scripts/check-ci-trigger-budget.mjs");
@@ -122,5 +123,75 @@ test("a workflow file with an upper-case extension is part of the inventory", ()
     assert.match(result.stderr, /workflow inventory changed: .*evil\.YML/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+// Compare the decoded hosted stages with the owning local gate, rather than
+// maintain another list of what counts as complete validation.
+function assertHostedProofPlacement(source: string): void {
+  const workflow = parseDocument(source).toJS() as {
+    jobs: Record<string, { needs?: string[]; if?: unknown; "continue-on-error"?: unknown;
+      steps: Array<{ run?: string; if?: unknown; "continue-on-error"?: unknown }> }>;
+  };
+  const scripts = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")).scripts as Record<string, string>;
+  const check = scripts.check;
+  assert.ok(typeof check === "string");
+  const stages = check.split(" && ");
+  const guards = "npm run check:guards";
+  assert.equal(stages.filter((stage) => stage === guards).length, 1);
+  const jobs = workflow.jobs;
+  assert.deepEqual(Object.keys(jobs).sort(), ["check", "dsh-keyless", "guards"]);
+  const dsh = jobs["dsh-keyless"];
+  assert.ok(dsh);
+  assert.deepEqual(dsh.needs?.slice().sort(), ["check", "guards"]);
+  for (const name of ["check", "guards"]) {
+    const job = jobs[name];
+    assert.ok(job);
+    assert.equal(job.needs, undefined, `${name} must execute independently`);
+    assert.equal(job.if, undefined, `${name} cannot skip its proof`);
+    assert.equal(job["continue-on-error"], undefined, `${name} cannot ignore its proof`);
+    for (const step of job.steps) {
+      assert.equal(step.if, undefined, `${name} cannot skip a stage`);
+      assert.equal(step["continue-on-error"], undefined, `${name} cannot ignore a stage`);
+    }
+  }
+  const commands = (name: string) => {
+    const job = jobs[name];
+    assert.ok(job);
+    return job.steps.flatMap((step) => {
+      const lines = (step.run ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+      if (!lines.some((line) => /^npm run |^node --test /.test(line))) return [];
+      if (lines.length > 1) assert.equal(lines.shift(), "set -euo pipefail", "proof blocks have one unconditional shell prelude");
+      assert.ok(lines.every((line) => /^npm run |^node --test /.test(line)), "a proof cannot early-exit or be wrapped in a conditional");
+      return lines;
+    });
+  };
+  assert.deepEqual(commands("check"), stages.filter((stage) => stage !== guards));
+  assert.deepEqual(commands("guards"), ["npm run build", guards]);
+}
+
+test("hosted Kernel executes every local proof stage with guards isolated and both gates required", () => {
+  assertHostedProofPlacement(KERNEL);
+});
+
+test("hosted proof placement refuses a missing, narrowed, duplicated or bypassed required stage", () => {
+  const mutations = [
+    (s: string) => s.replace("needs: [check, guards]", "needs: [check]"),
+    (s: string) => s.replace("          npm run check:portable-boundary\n", ""),
+    (s: string) => s.replace("          node --test dist/test/*.test.js", "          node --test --test-name-pattern=one dist/test/*.test.js"),
+    (s: string) => s.replace("          npm run proof:falsifiability\n", ""),
+    (s: string) => s.replace("          npm run check:ci-parity\n", ""),
+    (s: string) => s.replace("run: npm run check:guards", "run: npm run check:guards -- --only one"),
+    (s: string) => s.replace("          npm run check:barrel\n", "          exit 0\n          npm run check:barrel\n"),
+    (s: string) => s.replace("          npm run check:barrel\n", "          if false; then\n          npm run check:barrel\n          fi\n"),
+    (s: string) => s.replace("  guards:\n", "  guards:\n    if: false\n"),
+    (s: string) => s.replace("  check:\n", "  check:\n    continue-on-error: true\n"),
+    (s: string) => s.replace("          npm run check:barrel\n", "          npm run check:barrel\n          npm run check:barrel\n"),
+  ];
+  for (const mutate of mutations) {
+    const candidate = mutate(KERNEL);
+    assert.notEqual(candidate, KERNEL, "negative control must change actual workflow bytes");
+    assert.throws(() => assertHostedProofPlacement(candidate));
   }
 });

@@ -268,3 +268,48 @@ export const CALIBRATED_INTEGRATION_HORIZON: IntegrationHorizonPolicy = Object.f
     return decideHorizon(signals).kind === "tripped";
   },
 });
+
+/** A source-convergence effect is separate from permission to advance ordinary work. */
+export type HorizonConvergencePurpose = "resolve-integration" | "repair-reviewed-target";
+
+/** Runtime observations qualified by the owning host, never a caller's receipt JSON. */
+export interface HorizonConvergenceEvidence {
+  readonly purpose: HorizonConvergencePurpose;
+  readonly signals: IntegrationHorizonSignals;
+  readonly sourceStateUnchanged: boolean;
+  readonly freshIntegrationTarget: boolean;
+  readonly exactScope: boolean;
+  readonly immutableArtifact: boolean;
+  readonly controlledWorkerCompleted: boolean;
+  readonly controlledVerificationCompleted: boolean;
+  readonly controlledReviewCompleted: boolean;
+  readonly independentActors: boolean;
+  readonly canonicalProofMatches: boolean;
+  readonly rawReviewDiffMatches: boolean;
+  readonly withinGrowthBound: boolean;
+  readonly reviewStartedAtMs: number;
+  readonly nowMs: number;
+}
+
+export const HORIZON_CONVERGENCE_WINDOW_MS = 4 * HOUR_MS;
+
+/**
+ * Qualify one fixed artifact effect. The ordinary verdict retains actual age,
+ * history and divergence. Integration may resolve its measured divergence;
+ * terminal repair requires it already resolved. Neither grants general writes.
+ */
+export function convergenceEffectRefusals(evidence: HorizonConvergenceEvidence): readonly string[] {
+  const reasons: string[] = [];
+  if (!["resolve-integration", "repair-reviewed-target"].includes(evidence.purpose)) reasons.push("unsupported-purpose");
+  // GUARD integration/convergence-preserves-history
+  if (evidence.signals.upstreamState !== "pushed" || evidence.signals.commitsAhead >= HORIZON_THRESHOLDS.commitsAhead) reasons.push("history-or-durability");
+  // GUARD integration/convergence-terminal-is-integrated
+  if (evidence.purpose === "repair-reviewed-target" && evidence.signals.commitsBehind !== 0) reasons.push("terminal-target-not-integrated");
+  // GUARD integration/convergence-requires-live-execution
+  if (!evidence.controlledWorkerCompleted || !evidence.controlledVerificationCompleted || !evidence.controlledReviewCompleted) reasons.push("controlled-execution-missing");
+  // GUARD integration/convergence-requires-exact-evidence
+  if (!evidence.sourceStateUnchanged || !evidence.freshIntegrationTarget || !evidence.exactScope || !evidence.immutableArtifact || !evidence.independentActors || !evidence.canonicalProofMatches || !evidence.rawReviewDiffMatches || !evidence.withinGrowthBound) reasons.push("exact-evidence-missing");
+  // GUARD integration/convergence-window-is-bounded
+  if (!Number.isFinite(evidence.nowMs) || !Number.isFinite(evidence.reviewStartedAtMs) || evidence.reviewStartedAtMs > evidence.nowMs || evidence.nowMs - evidence.reviewStartedAtMs >= HORIZON_CONVERGENCE_WINDOW_MS) reasons.push("convergence-window-expired");
+  return reasons;
+}

@@ -539,6 +539,97 @@
       "file": "scripts/horizon.mjs",
       "remove": "      if (committedDiffLines(repo, pr.baseRefOid, receipt.head) !== receipt.anchorDiffLines) continue;\n",
       "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-preserves-history",
+      "why": "A fixed convergence effect must not grant ordinary writes or bypass its evidenced authority boundary.",
+      "file": "src/horizon.ts",
+      "remove": "  if (evidence.signals.upstreamState !== \"pushed\" || evidence.signals.commitsAhead >= HORIZON_THRESHOLDS.commitsAhead) reasons.push(\"history-or-durability\");\n",
+      "testFile": "dist/test/horizon.test.js"
+    },
+    {
+      "id": "integration/convergence-terminal-is-integrated",
+      "why": "A fixed convergence effect must not grant ordinary writes or bypass its evidenced authority boundary.",
+      "file": "src/horizon.ts",
+      "remove": "  if (evidence.purpose === \"repair-reviewed-target\" && evidence.signals.commitsBehind !== 0) reasons.push(\"terminal-target-not-integrated\");\n",
+      "testFile": "dist/test/horizon.test.js"
+    },
+    {
+      "id": "integration/convergence-requires-live-execution",
+      "why": "A fixed convergence effect must not grant ordinary writes or bypass its evidenced authority boundary.",
+      "file": "src/horizon.ts",
+      "remove": "  if (!evidence.controlledWorkerCompleted || !evidence.controlledVerificationCompleted || !evidence.controlledReviewCompleted) reasons.push(\"controlled-execution-missing\");\n",
+      "testFile": "dist/test/horizon.test.js"
+    },
+    {
+      "id": "integration/convergence-requires-exact-evidence",
+      "why": "A fixed convergence effect must not grant ordinary writes or bypass its evidenced authority boundary.",
+      "file": "src/horizon.ts",
+      "remove": "  if (!evidence.sourceStateUnchanged || !evidence.freshIntegrationTarget || !evidence.exactScope || !evidence.immutableArtifact || !evidence.independentActors || !evidence.canonicalProofMatches || !evidence.rawReviewDiffMatches || !evidence.withinGrowthBound) reasons.push(\"exact-evidence-missing\");\n",
+      "testFile": "dist/test/horizon.test.js"
+    },
+    {
+      "id": "integration/convergence-window-is-bounded",
+      "why": "A fixed convergence effect must not grant ordinary writes or bypass its evidenced authority boundary.",
+      "file": "src/horizon.ts",
+      "remove": "  if (!Number.isFinite(evidence.nowMs) || !Number.isFinite(evidence.reviewStartedAtMs) || evidence.reviewStartedAtMs > evidence.nowMs || evidence.nowMs - evidence.reviewStartedAtMs >= HORIZON_CONVERGENCE_WINDOW_MS) reasons.push(\"convergence-window-expired\");\n",
+      "testFile": "dist/test/horizon.test.js"
+    },
+    {
+      "id": "integration/convergence-artifact-durability",
+      "why": "Remote Work artifacts must retain the full reviewed packet and projected objects, not just strings naming local objects.",
+      "file": "scripts/horizon.mjs",
+      "remove": "  pushHarnessCheckpoint({ repositoryRoot: repo, ref, head });\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-custody-is-in-root",
+      "why": "A linked nested Context directory must not redirect private input custody outside the source repository.",
+      "file": "scripts/horizon.mjs",
+      "remove": "if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(\"convergence custody ancestor is not an owned directory\");",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-intent-precedes-effect",
+      "why": "A killed operator must leave a durable exact effect intent before source mutation and support observation-only recovery.",
+      "file": "scripts/horizon.mjs",
+      "remove": "    await recordConvergenceArtifact(canonical, workId, \"intent\", intent);\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-producer-does-not-review",
+      "why": "The actual native producer refused packaging when a shared objective assigned it the independent reviewer\u2019s packet inspection; producer and reviewer responsibilities must stay distinct.",
+      "file": "scripts/horizon.mjs",
+      "remove": "Artifact producer only: ",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-current-main-ref",
+      "why": "A frozen historical PR comparison base cannot establish current accepted-main authority; the actual repository branch ref must match local integration.",
+      "file": "scripts/horizon.mjs",
+      "remove": "acceptedMain.object?.sha !== integration || ",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/convergence-ready-context-is-resolution-only",
+      "why": "A genuine READY review may supply integration context but never skip actual execution or become an ordinary/terminal correction receipt.",
+      "file": "scripts/horizon.mjs",
+      "remove": ", input.purpose === \"resolve-integration\"",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "operator/review-material-is-delivered",
+      "why": "A manifest-only model verdict cannot judge referenced source semantics; whole immutable source evidence must reach the actual independent reviewer.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": ", material.text",
+      "testFile": "dist/test/operator-cli.test.js"
+    },
+    {
+      "id": "operator/review-material-is-durable",
+      "why": "A passing review must durably bind the material actually supplied alongside its candidate diff; an opaque pass cannot authorize source convergence.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": ", ...(material ? [material.evidence] : [])",
+      "testFile": "dist/test/operator-cli.test.js"
     }
   ]
 }

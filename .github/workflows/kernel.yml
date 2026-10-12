@@ -19,14 +19,8 @@ jobs:
   check:
     name: Build and replay contracts
     runs-on: ubuntu-latest
-    # The falsifiability gate re-proves every guard by deleting its enforcing
-    # code in a disposable derivative and requiring the named test to go red, so
-    # its cost grows with the guard count: 45 guards took 9m40s of a 10m budget
-    # on 2026-08-25 and the job was killed mid-gate, which reads as a failing
-    # check on work that is green. The ceiling is a backstop against a hung job,
-    # not a performance target; raise it rather than let it silently truncate
-    # the proof. If this is reached again, parallelize the guard proofs instead
-    # of raising it further.
+    # The complete guard mutation lane has its own equal-sized budget below.
+    # Splitting execution retains every local stage without raising the ceiling.
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -45,11 +39,46 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Validate Kernel contracts
-        run: npm run check
+        run: |
+          set -euo pipefail
+          npm run check:ci-trigger-budget
+          npm run check:portable-boundary
+          npm run check:barrel
+          npm run check:operator-scripts
+          npm run build
+          node --test dist/test/*.test.js
+          npm run proof:falsifiability
+          npm run check:ci-parity
+
+  guards:
+    name: Complete guard falsifiers
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Verify npm version
+        run: test "$(npm --version)" = "11.17.0"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build exact candidate
+        run: npm run build
+
+      - name: Prove every declared guard
+        run: npm run check:guards
 
   dsh-keyless:
     name: Real DSH SDK and product composition
-    needs: check
+    needs: [check, guards]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
