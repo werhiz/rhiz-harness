@@ -166,3 +166,14 @@ proves each ancestor is an unlinked directory under the actual Git-common root
 before creating its custody, saving any prompt or invoking the provider. The
 negative fixture requires no outside writes and no provider traffic; removing
 the enforcing check must fail it in disposable custody.
+
+
+Exact candidate `42b5c032` hosted proof passed its build/replay/proof/parity lane
+and proved 98 of 100 guards, but two early semantic-pass declarations remained
+unproven: later observation validation independently enforced the same refusal.
+DSH was skipped and the candidate was not installable. Its local gate was
+cancelled after 908 passing units; incomplete stages and raw failure receipts
+were retained. Live and retained part/final decisions now use one shared strict
+semantic-pass predicate with one corresponding watched removal declaration.
+No part check, actual final review, refusal or evidence requirement was deleted.
+A new head must pass every exact-candidate gate; the failed head is never reused.

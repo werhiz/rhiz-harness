@@ -496,6 +496,10 @@ export function assertReviewPartCoverage(bodies, plan) {
   if (cursor !== actual.length) throw new Error("review part coverage differs from complete material");
 }
 
+function assertSemanticReviewPass(result, phase) {
+  if (result?.verdict?.status !== "pass") throw new Error(`independent semantic ${phase} review refused`);
+}
+
 export function assertReviewDeadline(deadline, now = Date.now()) {
   if (!Number.isFinite(deadline) || now >= deadline) throw new Error("complete review time budget expired");
 }
@@ -510,10 +514,12 @@ export function validateReviewObservation(observation, coverage, expected) {
   if (!Array.isArray(observation.parts) || !observation.parts.length || observation.parts.length !== coverage.parts?.length || observation.parts.length > MAX_REVIEW_PARTS || observation.parts.length !== coverage.partResultDigests?.length) throw new Error("review observation omits ordered semantic results");
   for (let index = 0; index < observation.parts.length; index++) {
     const part = observation.parts[index], proof = coverage.parts[index];
-    if (part.index !== index || proof.index !== index || reviewDigest(part.prompt) !== proof.inputDigest || Buffer.byteLength(part.prompt) > MAX_REVIEW_DIFF_BYTES || part.result.verdict.status !== "pass" || reviewDigest(JSON.stringify(part.result)) !== coverage.partResultDigests[index] || JSON.stringify(part.ranges.map(({ content, ...range }) => range)) !== JSON.stringify(proof.ranges)) throw new Error("review observation has altered, reordered or failing semantic results");
+    assertSemanticReviewPass(part.result, `retained part ${index + 1}`);
+    if (part.index !== index || proof.index !== index || reviewDigest(part.prompt) !== proof.inputDigest || Buffer.byteLength(part.prompt) > MAX_REVIEW_DIFF_BYTES || reviewDigest(JSON.stringify(part.result)) !== coverage.partResultDigests[index] || JSON.stringify(part.ranges.map(({ content, ...range }) => range)) !== JSON.stringify(proof.ranges)) throw new Error("review observation has altered, reordered or failing semantic results");
   }
   if (observation.parts.length > 1) {
-    if (!observation.integration || reviewDigest(observation.integration.prompt) !== coverage.integrationInputDigest || Buffer.byteLength(observation.integration.prompt) > MAX_REVIEW_DIFF_BYTES || observation.integration.result.verdict.status !== "pass" || reviewDigest(JSON.stringify(observation.integration.result)) !== coverage.integrationResultDigest) throw new Error("review observation lacks its actual integration verdict");
+    assertSemanticReviewPass(observation.integration?.result, "retained cross-file integration");
+    if (!observation.integration || reviewDigest(observation.integration.prompt) !== coverage.integrationInputDigest || Buffer.byteLength(observation.integration.prompt) > MAX_REVIEW_DIFF_BYTES || reviewDigest(JSON.stringify(observation.integration.result)) !== coverage.integrationResultDigest) throw new Error("review observation lacks its actual integration verdict");
   } else if (observation.integration !== undefined || coverage.integrationInputDigest !== null || coverage.integrationResultDigest !== null) throw new Error("single-input review observation has foreign integration evidence");
   if (expected.bodies) assertReviewPartCoverage(expected.bodies, observation.parts);
 }
@@ -556,7 +562,7 @@ async function completeMaterialReview(repo, dir, contract, diff, history, materi
       observation.parts.push({ index, prompt: part.prompt, inputDigest: reviewDigest(part.prompt), inputBytes: Buffer.byteLength(part.prompt), ranges: part.ranges, providerResult: result });
       await retain();
       assertReviewDeadline(deadline);
-      if (result.verdict.status !== "pass") throw new Error(`independent semantic review refused part ${index + 1}`);
+      assertSemanticReviewPass(result, `part ${index + 1}`);
     }
     let result = observation.parts[0].providerResult;
     let integrationInputDigest = null;
@@ -571,7 +577,7 @@ async function completeMaterialReview(repo, dir, contract, diff, history, materi
       observation.integration = { prompt: finalPrompt, inputDigest: integrationInputDigest, inputBytes: Buffer.byteLength(finalPrompt), providerResult: result };
       await retain();
       assertReviewDeadline(deadline);
-      if (result.verdict.status !== "pass") throw new Error("independent cross-file integration review refused");
+      assertSemanticReviewPass(result, "cross-file integration");
     }
     const coverage = { materialDigest: material.evidence.digest, parts: observation.parts.map((part) => ({ index: part.index, inputDigest: part.inputDigest,
       ranges: part.ranges.map(({ content, ...identity }) => identity) })), integrationInputDigest,

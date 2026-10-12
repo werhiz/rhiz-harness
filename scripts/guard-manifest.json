@@ -654,16 +654,9 @@
     },
     {
       "id": "operator/review-parts-all-semantic-results-pass",
-      "why": "Complete multipart evidence and actual independent semantic/integration review are required before one canonical Review can authorize convergence.",
+      "why": "One shared semantic admission predicate requires every live and retained part/final reviewer decision to pass; missing/malformed statuses refuse, and deleting the predicate must fail actual admission controls.",
       "file": "scripts/rhiz-harness.mjs",
-      "remove": "      if (result.verdict.status !== \"pass\") throw new Error(`independent semantic review refused part ${index + 1}`);\n",
-      "testFile": "dist/test/operator-cli.test.js"
-    },
-    {
-      "id": "operator/review-parts-final-integration-required",
-      "why": "Complete multipart evidence and actual independent semantic/integration review are required before one canonical Review can authorize convergence.",
-      "file": "scripts/rhiz-harness.mjs",
-      "remove": "      if (result.verdict.status !== \"pass\") throw new Error(\"independent cross-file integration review refused\");\n",
+      "remove": "  if (result?.verdict?.status !== \"pass\") throw new Error(`independent semantic ${phase} review refused`);\n",
       "testFile": "dist/test/operator-cli.test.js"
     },
     {
