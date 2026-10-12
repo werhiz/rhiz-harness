@@ -539,6 +539,20 @@
       "file": "scripts/horizon.mjs",
       "remove": "      if (committedDiffLines(repo, pr.baseRefOid, receipt.head) !== receipt.anchorDiffLines) continue;\n",
       "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "crew/empty-ship-attempt-is-not-finished",
+      "why": "A SHIP worker that made no Guard-allowed write and left its workspace unchanged produced no candidate. Recording it as finished parks the Work in verifying with 'authorship is unproven' as the only reason, and operators retry the same blocked Work (Protocol #3019 r1-r9).",
+      "file": "src/crew.ts",
+      "remove": "      if (deadlineObservedAt === undefined && result?.status === \"finished\" && changeViolations.length === 0\n        && workspace.mode === \"isolated-write\" && allowedWrites === 0\n        && before !== undefined && after !== undefined\n        && after.head === before.head && after.digest === before.digest) {\n        producedNoCandidate = true;\n      }\n",
+      "testFile": "dist/test/crew.test.js"
+    },
+    {
+      "id": "board/claimed-candidate-keeps-authorship-refusal",
+      "why": "Once a verification claims a candidate, who wrote it is exactly the question. The no-candidate reason must step aside there, or a candidate with no Guard-allowed write would be reported as an empty attempt instead of unproven authorship.",
+      "file": "src/board.ts",
+      "remove": "  if (board.verifications.some((verification) => verification.contractRevision === board.contractRevision)) return true;\n",
+      "testFile": "dist/test/no-candidate.test.js"
     }
   ]
 }

@@ -454,6 +454,44 @@ test("Crew bounds a finished worker summary to the attempt event contract", asyn
   await run.close();
 });
 
+test("a SHIP worker that finishes without changing its workspace fails its attempt as producing no candidate", async () => {
+  // The -r6/-r7 shape: the worker ran, said it could not do the Work, and
+  // edited nothing. Recording that as attempt.finished left the Work in
+  // `verifying`, where the only reason anyone was given was "authorship is
+  // unproven". The attempt produced nothing; the Ledger must say so.
+  const work = crewWork({ id: "work:changed-nothing", type: "SHIP", preferredProviders: ["worker:ship"] });
+  const ledger = new InMemoryEventLedger();
+  const workspaceProvider = new FakeWorkspaceProvider();
+  const summary = "I can't complete this from the attached material. No files were edited.";
+  const run = await new CrewSupervisor({
+    plan: parseCrewPlan({
+      id: "crew:changed-nothing",
+      objective: "Record an empty SHIP attempt honestly",
+      baseRevision: "abc123",
+      missions: [{ work, workspace: { strategy: "fresh", mode: "isolated-write" }, requiredCapabilities: [] }],
+    }),
+    ledger,
+    workerCatalog: sandboxCapableCatalog(new SelectionProvider("worker:ship", "workspace")),
+    workspaceProvider,
+    workerResolver: new ScriptedResolver(workspaceProvider, { "worker:ship": { mutate: [], summary } }),
+    actor: human,
+  }).run();
+  try {
+    const mission = run.receipt.missions[0]!;
+    assert.equal(mission.status, "failed");
+    assert.match(mission.error ?? "", /produced no candidate/);
+    assert.match(mission.error ?? "", /No files were edited/);
+    const events = await ledger.replay(streamIdForWork(work.id));
+    assert.equal(events.some((item) => item.type === "attempt.finished"), false);
+    const failed = events.find((item) => item.type === "attempt.failed");
+    assert.ok(failed && failed.type === "attempt.failed");
+    assert.match(failed.payload.reason, /^worker finished without changing its workspace, so the attempt produced no candidate: /);
+    assert.match(failed.payload.reason, /No files were edited/);
+  } finally {
+    await run.close();
+  }
+});
+
 test("Crew preserves provider usage on finished, failed and scope-refused attempts", async () => {
   for (const mode of ["finished", "failed", "scope"] as const) {
     const work = crewWork({ id: `work:usage-${mode}`, type: "SHIP", preferredProviders: ["worker:ship"] });
@@ -465,7 +503,7 @@ test("Crew preserves provider usage on finished, failed and scope-refused attemp
         missions: [{ work, workspace: { strategy: "fresh", mode: "isolated-write" } }] }),
       ledger, workspaceProvider: workspaces, workerCatalog: sandboxCapableCatalog(new SelectionProvider("worker:ship", "workspace")), actor: human,
       workerResolver: new ScriptedResolver(workspaces, { "worker:ship": {
-        status: mode === "failed" ? "failed" : "finished", mutate: mode === "scope" ? ["outside.ts"] : [], observedUsage,
+        status: mode === "failed" ? "failed" : "finished", mutate: mode === "scope" ? ["outside.ts"] : mode === "finished" ? ["src/feature.ts"] : [], observedUsage,
       } }),
     }).run();
     try {
@@ -818,7 +856,7 @@ test("Crew serializes the same Work stream before workspace or worker effects", 
     workerResolver: resolver,
     actor: human,
   });
-  const firstResolver = new ScriptedResolver(workspaceProvider, {});
+  const firstResolver = new ScriptedResolver(workspaceProvider, { "worker:solo": { mutate: ["src/feature.ts"] } });
   const secondResolver = new ScriptedResolver(workspaceProvider, {});
 
   const firstRunPromise = makeSupervisor("crew:concurrent:first", firstResolver).run();
