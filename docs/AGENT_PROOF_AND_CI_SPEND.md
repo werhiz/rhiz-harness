@@ -133,3 +133,13 @@ execution and retains partial failures. Review the measured actual proof and
 usage against the exact candidate before landing; until then, the new capability
 has no observed model-success or saving claim. The prior smaller single-input
 proof and public CI success cannot establish this larger semantic admission.
+
+The #4370 complete-review lane observed the 6df3d9b guard job cancel at its
+unchanged 30-minute ceiling (run 38316378225), with four available CPUs and
+three resolved workers; build succeeded and DSH skipped. Physical test grouping
+now routes each declared predicate to its nearest complete owning cases. Every
+original case and assertion remains in the full unit glob; neither concurrency
+nor the workflow ceiling changes. The original stalled local stdin control is
+retained as failure. Local extracted timings are observations, not a claimed
+hosted per-guard timing or identical green baseline. Owner: #4370 release lead;
+review date: 2026-10-12. All exact-head hosted gates remain mandatory.

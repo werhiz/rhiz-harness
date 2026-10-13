@@ -417,8 +417,9 @@ async function commandConverge(repo, integrationRef) {
 
 const CONVERGENCE_SCHEMA = "rhiz/convergence-request/v1";
 const ARTIFACT_SCHEMA = "rhiz/convergence-artifact/v1";
-const MAX_CONVERGENCE_BYTES = 128 * 1024;
+const MAX_CONVERGENCE_BYTES = 192 * 1024;
 const MAX_CONVERGENCE_PATHS = 64;
+const MAX_SOURCE_INDEX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const stable = (value) => JSON.stringify(value);
 
@@ -455,7 +456,7 @@ function parseConvergenceRequest(filename) {
 
 function captureSourceState(repo, branch) {
   const head = git(repo, ["rev-parse", branch]);
-  const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } });
+  const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, maxBuffer: 64 * 1024 * 1024 });
   const entries = status.split("\0").filter(Boolean);
   const dirty = new Set();
   for (let i = 0; i < entries.length; i++) {
@@ -464,8 +465,8 @@ function captureSourceState(repo, branch) {
     if (row[0] === "R" || row[1] === "R" || row[0] === "C" || row[1] === "C") dirty.add(safeSourcePath(entries[++i], false));
   }
   const files = [...dirty].sort().map((name) => [name, sourceFileIdentity(repo, name)]);
-  const index = execFileSync("git", ["ls-files", "--stage", "-z"], { cwd: repo, encoding: "utf8" });
-  const unmerged = execFileSync("git", ["ls-files", "--unmerged", "-z"], { cwd: repo, encoding: "utf8" });
+  const index = execFileSync("git", ["ls-files", "--stage", "-z"], { cwd: repo, encoding: "utf8", maxBuffer: MAX_SOURCE_INDEX_OUTPUT_BYTES });
+  const unmerged = execFileSync("git", ["ls-files", "--unmerged", "-z"], { cwd: repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const mergeHead = tryGit(repo, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
   const state = { head, currentBranch: currentBranch(repo), mergeHead: mergeHead ?? null, statusDigest: sha(status), indexDigest: sha(index), unmergedDigest: sha(unmerged), files };
   return { ...state, digest: sha(stable(state)), unmergedPaths: [...new Set(unmerged.split("\0").filter(Boolean).map((row) => safeSourcePath(row.slice(row.indexOf("\t") + 1), false)))].sort() };
@@ -474,7 +475,7 @@ function captureSourceState(repo, branch) {
 function assertCanonicalMergeStages(repo, sourceHead, integrationHead) {
   const bases = git(repo, ["merge-base", "--all", sourceHead, integrationHead]).split("\n");
   if (bases.length !== 1) throw new Error("convergence requires a single reconstructible merge base");
-  const raw = execFileSync("git", ["ls-files", "--unmerged", "-z"], { cwd: repo, encoding: "utf8" });
+  const raw = execFileSync("git", ["ls-files", "--unmerged", "-z"], { cwd: repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const entries = raw.split("\0").filter(Boolean).map((row) => {
     const [metadata, name] = row.split("\t");
     const [mode, blob, stageText] = metadata.split(" ");
@@ -623,7 +624,7 @@ function validateConvergenceReviewObservation(repo, review, material, coverage, 
   const bytes = execFileSync("git", [...HARDENED_GIT_FLAGS, "show", `${artifact.head}:artifact.json`], { cwd: repo, env: hardenedGitEnv(), maxBuffer: 32 * 1024 * 1024 });
   if (sha(bytes) !== artifact.digest || !review?.evidence.some((entry) => entry.id === `review-observation:${artifact.digest}` && entry.digest === artifact.digest && entry.uri === artifact.sourceUri)) throw new Error("durable review observation differs from canonical review evidence");
   const definition = JSON.parse(git(repo, ["show", `${material.head}:artifact.json`]));
-  const bodies = definition.blobs.map((entry) => entry.absent ? entry : { ...entry, content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(execFileSync("git", [...HARDENED_GIT_FLAGS, "cat-file", "blob", entry.blob], { cwd: repo, env: hardenedGitEnv(), maxBuffer: 200_000 })) });
+  const bodies = definition.blobs.map((entry) => entry.absent ? entry : { ...entry, content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(execFileSync("git", [...HARDENED_GIT_FLAGS, "cat-file", "blob", entry.blob], { cwd: repo, env: hardenedGitEnv(), maxBuffer: 8 * 1024 * 1024 })) });
   validateReviewObservation(JSON.parse(bytes.toString("utf8")), coverage, { workId, revision: 1, head, materialDigest: material.digest, bodies });
 }
 
@@ -657,11 +658,22 @@ function qualifiedConvergenceAnchor(repo, branch, forge) {
   throw new Error("convergence growth requires an attributable existing correction round; cached numbers confer no authority");
 }
 
+const CONVERGENCE_RETENTION_GIT_TIMEOUT_MS = 30_000;
+
 // Retain complete evidence through the existing immutable Work checkpoint path.
-function retainConvergenceArtifact(repo, workId, label, value, parents) {
-  const run = (args, input) => execFileSync("git", [...HARDENED_GIT_FLAGS, ...args], { cwd: repo, env: hardenedGitEnv(), encoding: "utf8", ...(input === undefined ? {} : { input }) }).trim();
-  const blob = run(["hash-object", "-w", "--stdin"], stable(value));
-  const tree = run(["mktree"], `100644 blob ${blob}\tartifact.json\n`);
+function retainConvergenceArtifact(repo, workId, label, value, parents, extraFiles = []) {
+  const run = (args, input) => execFileSync("git", [...HARDENED_GIT_FLAGS, ...args], { cwd: repo, env: hardenedGitEnv(), encoding: "utf8", timeout: CONVERGENCE_RETENTION_GIT_TIMEOUT_MS, ...(input === undefined ? {} : { input }) }).trim();
+  const retainBlob = (content) => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "rhiz-convergence-retention-")));
+    const filename = join(directory, "artifact.json");
+    try {
+      writeFileSync(filename, stable(content), { mode: 0o600, flag: "wx" });
+      return run(["hash-object", "-w", "--no-filters", filename]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  };
+  const blob = retainBlob(value);
+  const extras = extraFiles.map(([name, content]) => ({ name, blob: retainBlob(content), digest: sha(stable(content)) }));
+  const tree = run(["mktree"], `100644 blob ${blob}\tartifact.json\n` + extras.map((file) => `100644 blob ${file.blob}\t${file.name}\n`).join(""));
   const date = run(["show", "-s", "--format=%cI", parents[0]]);
   const head = execFileSync("git", [...HARDENED_GIT_FLAGS, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent])], { cwd: repo, env: { ...hardenedGitEnv(), GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date, GIT_AUTHOR_NAME: "Harness Convergence", GIT_COMMITTER_NAME: "Harness Convergence", GIT_AUTHOR_EMAIL: "horizon-convergence@rhiz.invalid", GIT_COMMITTER_EMAIL: "horizon-convergence@rhiz.invalid" }, encoding: "utf8", input: `rhiz: ${label} for ${workId}\n` }).trim();
   const ref = `refs/rhiz/work/${harnessGitRefSegment(workId)}/${label}`;
@@ -669,7 +681,7 @@ function retainConvergenceArtifact(repo, workId, label, value, parents) {
   if (existing !== undefined && existing !== head) throw new Error("immutable local convergence artifact already names different history");
   git(repo, ["update-ref", ref, head]);
   pushHarnessCheckpoint({ repositoryRoot: repo, ref, head });
-  return { ref, head, blob, digest: sha(stable(value)) };
+  return { ref, head, blob, digest: sha(stable(value)), ...(extras.length ? { files: extras } : {}) };
 }
 
 async function recordConvergenceArtifact(canonical, workId, label, artifact, recovered = false) {
@@ -819,10 +831,15 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     if (!target || target.head !== started.receipt.candidate.head) throw new Error("actual producer receipt differs from canonical integration proof");
     const actual = JSON.parse(git(repo, ["show", `${target.head}:${artifactPath}`]));
     validateConvergencePacket(actual, manifestDigest);
-    const reviewMaterial = retainConvergenceArtifact(repo, workId, "review-material", { schema: "rhiz/operator-review-material/v1", workId, contractRevision: 1, candidateHead: target.head, integrationLabel: "packet", blobs: reviewBlobs }, [retainedInput.head, target.head]);
+    const brief = { purpose: input.purpose, scope: input.paths, sourceHead: before.head, acceptedMain: forge.integration, projectedTree: projected.tree, packetDigest,
+      criteria: "Inspect the supplied complete ordered source ranges for preservation of both source legs and repair-only scope. The complete packet is included in ordered part coverage. Final integration independently judges the entire patch and every actual semantic result. Refuse if this context cannot support judgment.", activeFindings: forge.findings };
+    const proposal = { purpose: input.purpose, scope: input.paths, sourceHead: before.head, acceptedMain: forge.integration, projectedTree: projected.tree, packetDigest, activeFindings: forge.findings, patch: input.patch };
+    const reviewInputs = retainConvergenceArtifact(repo, workId, "review-inputs", { schema: "rhiz/convergence-review-inputs/v1", packetDigest }, [retainedInput.head, target.head], [["part-context.json", brief], ["integration-proposal.json", proposal]]);
+    const supplemental = reviewInputs.files.map((file) => ({ label: file.name === "part-context.json" ? "part-context" : "integration-proposal", blob: file.blob, digest: file.digest, tree: reviewInputs.head, path: file.name }));
+    const reviewMaterial = retainConvergenceArtifact(repo, workId, "review-material", { schema: "rhiz/operator-review-material/v1", workId, contractRevision: 1, candidateHead: target.head, integrationLabel: "integration-proposal", partContextLabel: "part-context", blobs: [...reviewBlobs, ...supplemental] }, [retainedInput.head, target.head, reviewInputs.head]);
     await recordConvergenceArtifact(produced, workId, "review-material", reviewMaterial);
     const reviewStartedAtMs = Date.now();
-    const reviewed = invoke(["review", workId, "--reviewer", "claude", "--review-material", `git:${reviewMaterial.head}:artifact.json`]);
+    const reviewed = invoke(["review", workId, "--reviewer", "claude", "--review-material", `git:${reviewMaterial.head}:artifact.json`, "--review-max-calls", "20"]);
     const canonical = await canonicalConvergenceWork(repo, workId);
     const board = canonical?.board;
     const readiness = board && acceptanceReadiness(board);

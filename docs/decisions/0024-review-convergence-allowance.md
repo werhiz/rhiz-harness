@@ -118,8 +118,8 @@ part result or caller-supplied coverage flag can skip execution.
 
 Each actual provider input is at most 200,000 UTF-8 bytes, including metadata;
 the existing environment option may reduce that ceiling but cannot enlarge it.
-Individual source blobs retain the existing input-size refusal. Complete
-serialized material is bounded at 8 MiB and 64 parts, with a 45-minute total
+Legacy material without a part-context binding retains its individual input-size
+refusal. Complete serialized material is bounded at 8 MiB and 64 parts, with a 45-minute total
 review deadline and the existing 15-minute per-provider ceiling. The host wait
 for Review is 46 minutes; other invocations retain their prior bound. Complete
 inputs, including the final reports, must fit before their provider invocation.
@@ -131,7 +131,7 @@ The raw canonical Review binds both immutable material identity and a digest
 of its ordered range/input identities and final integration input. Horizon
 requires that exact coverage, retains it in the existing durable intent, and
 rechecks it during effect/recovery. Identity Verify still proves identity only.
-The request remains at 128 KiB, every actual conflict must be included, and all
+The request is bounded at 192 KiB, every actual conflict must be included, and all
 ordinary age/history/durability, fresh forge, scope and growth checks remain.
 
 The owning regressions use production-sized UTF-8 evidence, reconstruct the
@@ -177,3 +177,60 @@ were retained. Live and retained part/final decisions now use one shared strict
 semantic-pass predicate with one corresponding watched removal declaration.
 No part check, actual final review, refusal or evidence requirement was deleted.
 A new head must pass every exact-candidate gate; the failed head is never reused.
+
+
+### Measured real Source capacity (2026-10-12)
+
+The complete 33-path reconciliation request measured 165,448 UTF-8 bytes even
+with standard one-line unified context, preserving all changed bytes. Its
+planning packet measured 352,017 bytes and the old repeated whole-packet
+integration input exceeded 375 KB before reports. Raising only the request
+bound would move the refusal to another stage. The request is now bounded at
+192 KiB; ordinary age/history/durability/growth limits do not change.
+
+The generic reader admits at most 8 MiB cumulative unique blob bytes before
+reading each body, plus the existing serialized complete-material bound. A
+manifest with a bound part-context label may include a larger immutable packet;
+legacy single-input material retains its smaller body refusal. All packet,
+original/main/projected/base, scope context and entire proposal bytes remain
+in ordered complete coverage. Semantic parts receive the full explicit scope,
+source identities, criteria and active findings instead of repeating the entire
+packet. A part that cannot support judgment refuses. Final integration receives
+the raw whole proposal/scope and complete actual ordered normalized semantic
+reports, with identities; redundant range metadata need not be repeated there.
+No source evidence, finding or semantic report is truncated. Every actual input
+still fits 200,000 bytes before its call; overflow retains outcomes and refuses.
+Convergence declares at most 20 total reviewer calls and the same 45-minute
+review budget before provider execution. Actual context/reports must be measured
+before any real-provider claim, not inferred from planning placeholders.
+
+The real app stage snapshot also measured 1,261,006 bytes, exceeding Node's
+1 MiB default exec buffer. A real Git/index fixture watched the old snapshot
+read fail with ENOBUFS before forge refusal. The owning snapshot now uses the
+existing explicit 64 MiB Git read ceiling; the default-buffer removal must fail
+that regression. This is complete Source measurement, not a policy waiver.
+
+The complete-material reader also accounts every logical entry, including repeated
+blob aliases, metadata, separators, JSON escaping and UTF-8 surrogate handling,
+before aggregate serialization. The watched alias negative observes an unread
+tail blob being read on the old path and refused before reading on the corrected
+path; a unique-object cache alone is not an allocation bound.
+
+The existing convergence artifact retainer writes exact canonical bytes to a
+fresh private regular mode-600 temporary file, hashes with Git filters disabled,
+and cleans the temporary directory in a finally block. Its Git runner has a
+30-second bound. This prevents an unbounded retention boundary after Review;
+no production stdin hang is claimed. The observed test-fixture stdin deadlock
+and the explicitly scripted old-form refusal remain distinct evidence.
+A complete multi-leg scripted review produces an observation above 5 MiB; real
+Git digest/readback, temporary custody/cleanup and timeout-before-effect are
+required controls. Actual-provider semantic proof remains separate.
+
+The expiry fixture controls its phase with a test-only clock: the actual scripted
+provider returns, its complete outcome is persisted, and only then does the
+clock advance beyond the declared deadline. Its real subprocess remains bounded
+at 30 seconds. The production clock and source-history age are unchanged.
+A prior full-run missing-part failure remains unexplained; a separately retained
+simulated pre-provider I/O stall shows a possible phase miss, not its cause.
+The named deadline-case body is the second explicit preservation exception to
+the physical extraction inventory. No acceptance or result is fabricated.
