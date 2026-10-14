@@ -207,7 +207,8 @@ function reviewComment(repo, pr, commentUrl, head, allowReadyContext = false) {
   const namedHead = namedVerdict?.[2];
   // GUARD integration/review-receipt-binds-forge-head
   if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || typeof comment.user?.login !== "string" || !namedHead || !head.startsWith(namedHead) || !body.includes("<!-- rhiz-review-agent -->") || !body.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.`)) throw new Error("receipt is not an attributable exact-head correction review");
-  return { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login, verdict };
+  const receipt = { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
+  return allowReadyContext ? { ...receipt, verdict } : receipt;
 }
 
 function commandReviewReceipt(repo, integrationRef, branch, commentUrl) {

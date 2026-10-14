@@ -99,6 +99,10 @@ test("host requires an open exact-pushed-head review for bounded-age corrections
     const rounds = JSON.parse(await readFile(reviewPath, "utf8"));
     assert.equal(rounds.reviews.feature.anchorDiffLines, 400, "first anchor remains unchanged");
     assert.equal(rounds.reviews.feature.correctionReceipts.length, 1);
+    assert.deepEqual(Object.keys(rounds.reviews.feature.correctionReceipts[0]).sort(), [
+      "anchorDiffLines", "commentDigest", "commentId", "commentUrl",
+      "head", "integrationHead", "recordedAt", "reviewerLogin",
+    ], "ordinary NOT READY correction receipts retain their established schema");
     assert.equal(rounds.reviews.feature.correctionReceipts[0].head, head);
     assert.equal(rounds.reviews.feature.correctionReceipts[0].anchorDiffLines, 500);
     assert.equal(record("open").status, 0, "identical receipt replay is idempotent");
