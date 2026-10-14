@@ -1,8 +1,8 @@
 # ADR 0024: A change under open review may answer its review past the size horizon
 
-Status: proposed
+Status: accepted
 
-Refines ADR 0023. Authorized by founder ruling, 2026-09-24.
+Refines ADR 0023. Accepted by founder ruling, 2026-09-24 and 2026-10-14.
 
 ## Context
 
@@ -87,3 +87,37 @@ through existing retained Work artifacts. Raw review material identity accompani
 the existing candidate diff and is required by effect admission, intent and
 recovery. Packaging and deterministic Verify establish identity only; actual
 independent review must judge preservation and repair semantics on supplied bytes.
+
+## Founder-approved READY anchor for integration effects (2026-10-14)
+
+Authority record: in response to the question, “Approve the narrow Harness
+amendment allowing a fresh exact-head READY review to establish the size anchor
+for a governed integration resolution, retaining the existing 125% bound,
+independent artifact review, current-main checks, and all merge gates?”, the
+founder replied, “Approve the bounded READY-review amendment” on 2026-10-14.
+The direct response item is
+`call_20d74309a0eb429e9f838660f12c40d0`; the contemporaneous transcription is
+`/tmp/rhiz-landing-decisions-20261014.md`.
+
+Within that scope, for `resolve-integration` only, the latest attributable
+canonical READY verdict for the exact durable OPEN source head may establish
+the effect-only growth anchor as that head's full committed diff against the
+forge review base. This does not create or change a correction receipt and
+grants no ordinary write permission. The complete projected integration tree
+must remain strictly below the existing inclusive 125% growth bound and still
+pass fresh controlled Work, Verify, and independent whole-packet Review before
+the one exact resolution effect.
+
+Persisted NOT READY correction receipts remain unchanged and continue to be
+preferred when an attributable receipt exists. An unrecorded NOT READY comment
+does not establish an anchor. READY does not authorize `repair-reviewed-target`,
+`converge --review-receipt`, or ordinary writes. Fresh exact-head and upstream
+durability, OPEN state, current accepted-main binding, four-hour review context,
+less-than-ten-ahead boundary, complete conflict scope, unchanged source state,
+and revalidation before effect remain required. No clock, 125% threshold,
+main binding, review work, or verification requirement changes.
+
+Reconsider or disable this fallback if a falsifier shows that another purpose,
+NOT READY or stale/foreign review, ordinary check, terminal correction, or
+receipt write can use it; re-enable only after the owning controls prove the
+same bounded behavior on an exact candidate.

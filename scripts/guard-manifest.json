@@ -541,6 +541,13 @@
       "testFile": "dist/test/horizon-host-review.test.js"
     },
     {
+      "id": "integration/ready-anchor-is-effect-only",
+      "why": "A fresh READY may anchor only the exact resolve-integration effect; removing its purpose and verdict binding must make the real-Git positive control refuse before effect.",
+      "file": "scripts/horizon.mjs",
+      "remove": "  if (purpose === \"resolve-integration\" && forge.comment.verdict === \"READY\") {\n    return committedDiffLines(repo, forge.reviewBase, forge.head);\n  }\n",
+      "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
       "id": "integration/convergence-preserves-history",
       "why": "A fixed convergence effect must not grant ordinary writes or bypass its evidenced authority boundary.",
       "file": "src/horizon.ts",
