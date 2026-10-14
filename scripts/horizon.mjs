@@ -202,10 +202,13 @@ function reviewComment(repo, pr, commentUrl, head, allowReadyContext = false) {
   const issue = new URL(comment.issue_url);
   const expectedHost = target.hostname === "github.com" ? "api.github.com" : target.hostname;
   const body = comment.body;
-  const namedHead = typeof body === "string" ? (allowReadyContext ? /^## (?:NOT READY|READY) at ([a-f0-9]{7,40})\s*$/m : /^## NOT READY at ([a-f0-9]{7,40})\s*$/m).exec(body)?.[1] : undefined;
+  const namedVerdict = typeof body === "string" ? (allowReadyContext ? /^## (NOT READY|READY) at ([a-f0-9]{7,40})\s*$/m : /^## (NOT READY) at ([a-f0-9]{7,40})\s*$/m).exec(body) : undefined;
+  const verdict = namedVerdict?.[1];
+  const namedHead = namedVerdict?.[2];
   // GUARD integration/review-receipt-binds-forge-head
   if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || typeof comment.user?.login !== "string" || !namedHead || !head.startsWith(namedHead) || !body.includes("<!-- rhiz-review-agent -->") || !body.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.`)) throw new Error("receipt is not an attributable exact-head correction review");
-  return { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
+  const receipt = { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
+  return allowReadyContext ? { ...receipt, verdict } : receipt;
 }
 
 function commandReviewReceipt(repo, integrationRef, branch, commentUrl) {
@@ -614,7 +617,7 @@ function matchesReviewMaterial(event, material) {
   return !!event?.evidence.some((entry) => entry.id === `review-material:${material.digest}` && entry.kind === "artifact-identity" && entry.uri === `git:${material.head}:artifact.json` && entry.digest === material.digest);
 }
 
-function qualifiedConvergenceAnchor(repo, branch, forge) {
+function qualifiedConvergenceAnchor(repo, branch, forge, purpose) {
   const stored = readReviews(repo)[branch];
   for (const receipt of [...(stored?.correctionReceipts ?? [])].reverse()) {
     try {
@@ -623,6 +626,10 @@ function qualifiedConvergenceAnchor(repo, branch, forge) {
       if (actual.commentDigest !== receipt.commentDigest || actual.reviewerLogin !== receipt.reviewerLogin) continue;
       return committedDiffLines(repo, forge.reviewBase, receipt.head);
     } catch { continue; }
+  }
+  // GUARD integration/ready-anchor-is-effect-only
+  if (purpose === "resolve-integration" && forge.comment.verdict === "READY") {
+    return committedDiffLines(repo, forge.reviewBase, forge.head);
   }
   throw new Error("convergence growth requires an attributable existing correction round; cached numbers confer no authority");
 }
@@ -731,7 +738,7 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
   if (stable(patchPaths(repo, patchPath)) !== stable(input.paths)) throw new Error("patch paths differ from exact reviewed scope");
   git(repo, ["apply", "--check", patchPath]);
   const projected = await projectConvergenceTree(repo, privateRoot, input, originals, forge.integration);
-  const anchor = qualifiedConvergenceAnchor(repo, branch, forge);
+  const anchor = qualifiedConvergenceAnchor(repo, branch, forge, input.purpose);
   if (projected.diffLines >= Math.ceil(anchor * 1.25)) throw new Error("projected convergence exceeds the existing inclusive growth bound");
   const packet = { schema: ARTIFACT_SCHEMA, request: input, source: before, forge, originals, projected, mergeStages };
   const packetDigest = sha(stable(packet));
@@ -800,7 +807,7 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     const exactDiff = `git:${before.head}..${target.head}`;
     const current = captureSourceState(repo, branch);
     const freshForge = convergenceForge(repo, branch, integrationRef, input);
-    const freshAnchor = qualifiedConvergenceAnchor(repo, branch, freshForge);
+    const freshAnchor = qualifiedConvergenceAnchor(repo, branch, freshForge, input.purpose);
     const freshMeasurement = measureBranchDrift({ repositoryRoot: repo, integrationRef, branch });
     if (freshMeasurement.kind !== "measured" || stable(freshMeasurement.signals) !== stable({ ...measured.signals, divergenceAgeMs: freshMeasurement.signals.divergenceAgeMs })) throw new Error("source drift changed during controlled execution");
     const refusals = convergenceEffectRefusals({ purpose: input.purpose, signals: freshMeasurement.signals,

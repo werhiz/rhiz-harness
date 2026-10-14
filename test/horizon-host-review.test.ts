@@ -99,6 +99,10 @@ test("host requires an open exact-pushed-head review for bounded-age corrections
     const rounds = JSON.parse(await readFile(reviewPath, "utf8"));
     assert.equal(rounds.reviews.feature.anchorDiffLines, 400, "first anchor remains unchanged");
     assert.equal(rounds.reviews.feature.correctionReceipts.length, 1);
+    assert.deepEqual(Object.keys(rounds.reviews.feature.correctionReceipts[0]).sort(), [
+      "anchorDiffLines", "commentDigest", "commentId", "commentUrl",
+      "head", "integrationHead", "recordedAt", "reviewerLogin",
+    ], "ordinary NOT READY correction receipts retain their established schema");
     assert.equal(rounds.reviews.feature.correctionReceipts[0].head, head);
     assert.equal(rounds.reviews.feature.correctionReceipts[0].anchorDiffLines, 500);
     assert.equal(record("open").status, 0, "identical receipt replay is idempotent");
@@ -226,8 +230,13 @@ async function convergenceFixture() {
     delete (childEnv as Record<string, string | undefined>).NODE_TEST_CONTEXT;
     return spawnSync(process.execPath, [hostScript, "converge", "--repo", repo, "--artifact-request", inputFile], { cwd: repo, env: childEnv, encoding: "utf8", timeout: 180000 });
   };
+  const check = (mode = "normal") => {
+    const childEnv = { ...env, PATH: bin + ":" + (process.env.PATH ?? ""), CONVERGENCE_MODE: mode };
+    delete (childEnv as Record<string, string | undefined>).NODE_TEST_CONTEXT;
+    return spawnSync(process.execPath, [hostScript, "check", "--repo", repo, "--integration-ref", "origin/main", "--json"], { cwd: repo, env: childEnv, encoding: "utf8" });
+  };
   const recover = (workId: string, changedIdentity = false) => spawnSync(process.execPath, [hostScript, "converge", "--repo", repo, "--recover-effect", workId], { cwd: repo, env: { ...env, ...(changedIdentity ? { GIT_AUTHOR_NAME: "Changed author", GIT_AUTHOR_EMAIL: "changed-author@example.invalid", GIT_COMMITTER_NAME: "Changed committer", GIT_COMMITTER_EMAIL: "changed-committer@example.invalid" } : {}) }, encoding: "utf8" });
-  return { root, repo, git, head, base, original, inputFile, request, run, recover, calls, anchor, remote };
+  return { root, repo, git, head, base, original, inputFile, request, run, check, recover, calls, anchor, remote };
 }
 
 test("fixed convergence executes new Work/Verify/Review before one bounded real merge effect", async () => {
@@ -249,6 +258,91 @@ test("fixed convergence executes new Work/Verify/Review before one bounded real 
     assert.equal(measured.signals.commitsAhead, 10);
     assert.equal(measured.signals.commitsBehind, 0);
     assert.equal(measured.state, "tripped", "complete convergence does not forgive subsequent general writes");
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+// Falsifies: integration/ready-anchor-is-effect-only
+test("a fresh exact-head READY anchors only resolve-integration when no correction receipt exists", async () => {
+  const f = await convergenceFixture();
+  try {
+    const reviewPath = join(f.repo, ".rhiz-horizon-reviews.json");
+    const reviews = JSON.parse(await readFile(reviewPath, "utf8"));
+    delete reviews.reviews.feature.correctionReceipts;
+    await writeFile(reviewPath, JSON.stringify(reviews));
+    const reviewCommentUrl = f.request.reviewCommentUrl.replace("101", "102");
+    await writeFile(f.inputFile, JSON.stringify({ ...f.request, reviewCommentUrl }));
+
+    const ordinary = f.check("ready-review");
+    assert.equal(JSON.parse(ordinary.stdout).state, "tripped", "READY does not grant ordinary write permission");
+    assert.equal(await readFile(f.calls, "utf8"), "");
+
+    const result = f.run("ready-review");
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n", "the READY anchor does not skip fresh Work, Verify, or independent Review");
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
+    assert.equal(f.git(["rev-parse", "HEAD"]), f.head);
+
+    const reading = await readRepositoryWorkLedgers(join(f.repo, ".git"));
+    assert.equal(reading.unreadable.length, 0);
+    const events = reading.ledgers.flatMap((ledger) => ledger.events);
+    const effect = events.find((event) => event.evidence.some((entry) => entry.id === "convergence:effect"));
+    assert.ok(effect);
+    const effectUri = effect.evidence.find((entry) => entry.id === "convergence:effect")!.uri!;
+    const effectHead = /^git:([^:]+):artifact.json$/.exec(effectUri)![1];
+    const receipt = JSON.parse(f.git(["show", `${effectHead}:artifact.json`]));
+    const workCreated = events.find((event) => event.workId === receipt.workId && event.type === "work.created");
+    const verification = events.find((event) => event.id === receipt.verificationEventId);
+    const review = events.find((event) => event.id === receipt.reviewEventId);
+    assert.ok(workCreated, "the exact effect is linked to its new durable Work");
+    assert.equal(verification?.type, "verification.result");
+    assert.equal(verification?.payload.status, "pass");
+    assert.equal(review?.type, "review.result");
+    assert.equal(review?.payload.status, "pass");
+    assert.notEqual(review?.actor.id, verification?.actor.id, "independent Review remains required");
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("an unrecorded NOT READY context cannot anchor an integration effect", async () => {
+  const f = await convergenceFixture();
+  try {
+    const reviewPath = join(f.repo, ".rhiz-horizon-reviews.json");
+    const reviews = JSON.parse(await readFile(reviewPath, "utf8"));
+    delete reviews.reviews.feature.correctionReceipts;
+    await writeFile(reviewPath, JSON.stringify(reviews));
+    const result = f.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /attributable existing correction round/);
+    assert.equal(await readFile(f.calls, "utf8"), "", "refusal occurs before Work or provider invocation");
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
+    assert.ok(f.git(["ls-files", "--unmerged"]));
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("fresh READY at the inclusive 125 percent boundary is refused before execution", async () => {
+  const f = await convergenceFixture();
+  try {
+    const reviewPath = join(f.repo, ".rhiz-horizon-reviews.json");
+    const reviews = JSON.parse(await readFile(reviewPath, "utf8"));
+    delete reviews.reviews.feature.correctionReceipts;
+    await writeFile(reviewPath, JSON.stringify(reviews));
+
+    // The feature adds 8 * 65 lines. Resolving the one-line accepted-main
+    // conflict adds two diff lines, so this patch reaches ceil(anchor * 1.25).
+    const boundary = Math.ceil(f.anchor * 1.25);
+    const resolvedLineCount = boundary - 521;
+    assert.ok(resolvedLineCount > 1);
+    const originalLines = f.original.trimEnd().split("\n");
+    const resolvedLines = ["resolved", ...Array.from({ length: resolvedLineCount - 1 }, (_, index) => `extra ${index}`)];
+    const patch = `--- a/source.txt\n+++ b/source.txt\n@@ -1,${originalLines.length} +1,${resolvedLines.length} @@\n${originalLines.map((line) => `-${line}`).join("\n")}\n${resolvedLines.map((line) => `+${line}`).join("\n")}\n`;
+    const reviewCommentUrl = f.request.reviewCommentUrl.replace("101", "102");
+    await writeFile(f.inputFile, JSON.stringify({ ...f.request, patch, reviewCommentUrl }));
+
+    const result = f.run("ready-review");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exceeds the existing inclusive growth bound/);
+    assert.equal(await readFile(f.calls, "utf8"), "", "the boundary refuses before Work or provider invocation");
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
+    assert.ok(f.git(["ls-files", "--unmerged"]));
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
