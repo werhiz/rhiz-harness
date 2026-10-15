@@ -2,11 +2,13 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
+  chmodSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,6 +28,7 @@ import {
   manifestChangedPaths,
   type ExecutionRootDigestLimits,
 } from "../../src/workspace-digest.js";
+import { isValidatedGovernedConvergencePolicy, type ValidatedGovernedConvergencePolicy } from "./governed-convergence-policy.js";
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -108,6 +111,42 @@ function changedPaths(cwd: string): string[] {
   return [...paths].sort();
 }
 
+function policyPathExists(root: string, policyPath: string): boolean {
+  let current = root;
+  const segments = policyPath.split("/");
+  for (const [index, segment] of segments.entries()) {
+    current = join(current, segment);
+    let stat: ReturnType<typeof lstatSync>;
+    try { stat = lstatSync(current); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+    if (stat.isSymbolicLink()) throw new Error("governed policy path traverses a symbolic link");
+    if (index === segments.length - 1) return true;
+    if (!stat.isDirectory()) throw new Error("governed policy path has a non-directory ancestor");
+  }
+  return false;
+}
+
+function assertOwnedPolicyPath(executionRoot: string, policyPath: string): string {
+  const expected = resolve(executionRoot, policyPath);
+  const rootStat = lstatSync(executionRoot);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error("governed execution root changed identity");
+  for (const directory of [join(executionRoot, ".claude"), join(executionRoot, ".claude/hooks")]) {
+    const stat = lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("governed hook ancestors must be owned nonsymlink directories");
+  }
+  const stat = lstatSync(expected);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("governed hook must be a regular nonsymlink file");
+  return expected;
+}
+
+function policyPathInScope(policyPath: string, request: CrewWorkspaceAcquireRequest): boolean {
+  const target = `repo://source/${policyPath}`;
+  return request.work.writeScope.some((resource) => {
+    const uri = resource.uri.replace(/\/$/, "");
+    return uri === "repo://source" || uri === target || target.startsWith(`${uri}/`);
+  });
+}
+
 /**
  * Retired: the git-scoped workspace digest.
  *
@@ -128,6 +167,7 @@ interface WorkspaceRecord {
    * write show up as a changed path.
    */
   baselineManifest: ReadonlyMap<string, string>;
+  governedPolicy?: ValidatedGovernedConvergencePolicy;
 }
 
 export interface GitWorktreeWorkspaceProviderOptions {
@@ -145,6 +185,8 @@ export interface GitWorktreeWorkspaceProviderOptions {
    * cases fail before the workspace is admitted.
    */
   prepareWorkspace?: (executionRoot: string) => Promise<void> | void;
+  /** Exact validated policy for the one governed convergence Work. */
+  governedConvergencePolicy?: ValidatedGovernedConvergencePolicy;
 }
 
 export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
@@ -155,6 +197,7 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
   readonly #idFactory: () => string;
   readonly #digestLimits: Partial<ExecutionRootDigestLimits>;
   readonly #prepareWorkspace: ((executionRoot: string) => Promise<void> | void) | undefined;
+  readonly #governedPolicy: ValidatedGovernedConvergencePolicy | undefined;
   readonly #records = new Map<string, WorkspaceRecord>();
   #closed = false;
 
@@ -168,12 +211,23 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
     this.#idFactory = options.idFactory ?? randomUUID;
     this.#digestLimits = options.digestLimits ?? {};
     this.#prepareWorkspace = options.prepareWorkspace;
+    if (options.governedConvergencePolicy !== undefined && !isValidatedGovernedConvergencePolicy(options.governedConvergencePolicy)) {
+      throw new Error("governed convergence policy must come from the repository validator");
+    }
+    if (options.governedConvergencePolicy?.mode === "overlay" && createHash("sha256").update(options.governedConvergencePolicy.acceptedBytes).digest("hex") !== options.governedConvergencePolicy.accepted.sha256) {
+      throw new Error("validated governed policy bytes were changed after validation");
+    }
+    this.#governedPolicy = options.governedConvergencePolicy;
   }
 
   async acquire(rawRequest: CrewWorkspaceAcquireRequest): Promise<CrewWorkspace> {
     if (this.#closed) throw new Error("Git worktree workspace provider is closed");
     const request = CrewWorkspaceAcquireRequestSchema.parse(rawRequest);
 
+    // GUARD integration/governed-convergence-cannot-inherit-workspace
+    if (request.sourceWorkspace !== undefined && this.#governedPolicy) {
+      throw new Error("governed convergence Work cannot inherit another workspace");
+    }
     if (request.sourceWorkspace !== undefined) {
       const source = request.sourceWorkspace;
       const record = this.#records.get(source.workspaceId);
@@ -193,6 +247,11 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
     }
 
     const baseRevision = gitText(this.repositoryRoot, ["rev-parse", `${request.baseRevision}^{commit}`]);
+    const policy = this.#governedPolicy;
+    if (policy && (request.work.id !== policy.workId || baseRevision !== policy.sourceHead || policyPathInScope(policy.path, request))) {
+      throw new Error("validated governed policy does not match this exact Work, base, or write scope");
+    }
+    if (policy?.mode === "overlay" && createHash("sha256").update(policy.acceptedBytes).digest("hex") !== policy.accepted.sha256) throw new Error("validated governed runtime bytes changed before workspace acquisition");
     const workspaceId = `workspace:${this.#idFactory()}`;
     const executionRoot = join(
       this.worktreeRoot,
@@ -221,6 +280,27 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
         }
       }
 
+      if (policy) {
+        const commonDir = resolve(this.repositoryRoot, gitText(this.repositoryRoot, ["rev-parse", "--git-common-dir"]));
+        const ownDir = resolve(executionRoot, gitText(executionRoot, ["rev-parse", "--git-dir"]));
+        const worktreeParent = resolve(this.worktreeRoot, "..");
+        const expectedName = `${safeSegment(request.crewId)}-${safeSegment(request.work.id)}-${safeSegment(workspaceId)}`;
+        if (ownDir === commonDir || !executionRoot.startsWith(`${worktreeParent}/`) || !/^rhiz-repository-work-[A-Za-z0-9]+$/.test(worktreeParent.split("/").at(-1) ?? "") || executionRoot.split("/").at(-1) !== expectedName) {
+          throw new Error("governed policy requires the exact linked detached repository Work shape");
+        }
+        const stage = gitText(executionRoot, ["ls-files", "--stage", "--", policy.path]);
+        if (policy.mode === "overlay") {
+          if (stage !== `100755 ${policy.source.blob} 0\t${policy.path}`) throw new Error("governed source hook index identity mismatch");
+          const hookPath = assertOwnedPolicyPath(executionRoot, policy.path);
+          // Materialize the accepted policy bytes as runtime-only execution input.
+          rmSync(hookPath);
+          writeFileSync(hookPath, policy.acceptedBytes, { flag: "wx", mode: 0o755 });
+          chmodSync(hookPath, 0o755);
+        } else if (stage || gitBuffer(executionRoot, ["ls-tree", "-z", baseRevision, "--", policy.path]).length || policyPathExists(executionRoot, policy.path)) {
+          throw new Error("no-overlay convergence requires the Horizon hook to be absent from source Git state and runtime workspace");
+        }
+      }
+
       // Ignored dependencies created by trusted preparation are included by the
       // execution-root digest. The resulting baseline therefore identifies the
       // bytes the worker and verifier will actually execute, not only git truth.
@@ -230,6 +310,7 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
         executionRoot,
         baseRevision,
         baselineManifest: baseline.manifest,
+        ...(policy ? { governedPolicy: policy } : {}),
       });
       return CrewWorkspaceSchema.parse({
         leaseId: `lease:${this.#idFactory()}`,
@@ -258,6 +339,33 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
     }
     if (!existsSync(record.executionRoot)) throw new Error(`workspace ${workspace.workspaceId} no longer exists`);
     const identity = await digestExecutionRoot(record.executionRoot, { limits: this.#digestLimits });
+    if (record.governedPolicy) {
+      const policy = record.governedPolicy;
+      const head = gitText(record.executionRoot, ["rev-parse", "HEAD"]);
+      if (policy.mode === "overlay") {
+        const hookPath = assertOwnedPolicyPath(record.executionRoot, policy.path);
+        const hook = lstatSync(hookPath);
+        const bytes = readFileSync(hookPath);
+        if (!hook.isFile() || hook.isSymbolicLink() || (hook.mode & 0o777) !== 0o755 || createHash("sha256").update(bytes).digest("hex") !== policy.accepted.sha256) {
+          throw new Error("governed runtime policy bytes or mode changed inside the Work");
+        }
+        const headHook = gitBuffer(record.executionRoot, ["ls-tree", "-z", head, "--", policy.path]).toString("utf8").split("\0").filter(Boolean);
+        if (headHook.length !== 1 || headHook[0] !== `100755 blob ${policy.source.blob}\t${policy.path}` || gitText(record.executionRoot, ["ls-files", "--stage", "--", policy.path]) !== `100755 ${policy.source.blob} 0\t${policy.path}`) {
+          throw new Error("governed source hook HEAD or index identity changed");
+        }
+      } else if (gitBuffer(record.executionRoot, ["ls-tree", "-z", head, "--", policy.path]).length || gitText(record.executionRoot, ["ls-files", "--stage", "--", policy.path]) || policyPathExists(record.executionRoot, policy.path)) {
+        throw new Error("no-overlay convergence introduced a Horizon hook into its runtime or candidate tree");
+      }
+      if (head !== policy.sourceHead) {
+        const parents = gitText(record.executionRoot, ["rev-list", "--parents", "-n", "1", head]).split(" ").slice(1);
+        const expectedArtifact = `tools/horizon-convergence-artifacts/${policy.workId.slice(-40)}/artifact.json`;
+        const changed = gitBuffer(record.executionRoot, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", policy.sourceHead, head]).toString("utf8").split("\0").filter(Boolean);
+        const artifactEntry = gitBuffer(record.executionRoot, ["ls-tree", "-z", head, "--", expectedArtifact]).toString("utf8").split("\0").filter(Boolean);
+        if (parents.length !== 1 || parents[0] !== policy.sourceHead || JSON.stringify(changed) !== JSON.stringify([expectedArtifact]) || artifactEntry.length !== 1 || !artifactEntry[0]!.startsWith(`100644 blob `) || !artifactEntry[0]!.endsWith(`\t${expectedArtifact}`)) {
+          throw new Error("governed candidate HEAD is outside the exact one-artifact checkpoint lineage");
+        }
+      }
+    }
     // Union of two views on purpose. The manifest diff is the authority and is
     // the only one that can see an ignored path; git's view is retained because
     // it still reports staged intent that leaves file content identical.
@@ -265,6 +373,7 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
       ...manifestChangedPaths(record.baselineManifest, identity.manifest),
       ...changedPaths(record.executionRoot),
     ]);
+    if (record.governedPolicy?.mode === "overlay") changed.delete(record.governedPolicy.path);
     return CrewWorkspaceSnapshotSchema.parse({
       workspaceId: workspace.workspaceId,
       head: gitText(record.executionRoot, ["rev-parse", "HEAD"]),

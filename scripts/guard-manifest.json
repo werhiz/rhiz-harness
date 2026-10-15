@@ -606,9 +606,9 @@
     {
       "id": "integration/convergence-producer-does-not-review",
       "why": "The actual native producer refused packaging when a shared objective assigned it the independent reviewer\u2019s packet inspection; producer and reviewer responsibilities must stay distinct.",
-      "file": "scripts/horizon.mjs",
+      "file": "adapters/git/governed-convergence-policy.ts",
       "remove": "Artifact producer only: ",
-      "testFile": "dist/test/horizon-host-review.test.js"
+      "testFile": "dist/test/governed-convergence-policy.test.js"
     },
     {
       "id": "integration/convergence-current-main-ref",
@@ -623,6 +623,48 @@
       "file": "scripts/horizon.mjs",
       "remove": ", input.purpose === \"resolve-integration\"",
       "testFile": "dist/test/horizon-host-review.test.js"
+    },
+    {
+      "id": "integration/governed-review-heading-binds-full-head",
+      "why": "Canonical short review headings must remain bound to exact full-head attribution and canonical reviewer identity.",
+      "file": "adapters/git/governed-convergence-policy.ts",
+      "remove": "  if (!head.startsWith(match[2]!) || !body.includes(\"<!-- rhiz-review-agent -->\") || !body.includes(`Independent review by the \\`pr-reviewer\\` agent (\\`scripts/review-pr.mts\\`) of head \\`${head}\\`.`)) return undefined;\n",
+      "testFile": "dist/test/governed-convergence-policy.test.js"
+    },
+    {
+      "id": "integration/governed-workspace-cannot-inherit",
+      "why": "An exact single-Work runtime policy exception cannot flow through workspace inheritance to a dependent Work.",
+      "file": "adapters/git/worktrees.ts",
+      "remove": "    if (request.sourceWorkspace !== undefined && this.#governedPolicy) {\n      throw new Error(\"governed convergence Work cannot inherit another workspace\");\n    }\n",
+      "testFile": "dist/test/governed-convergence-policy.test.js"
+    },
+    {
+      "id": "integration/governed-source-hook-retains-index-and-tree",
+      "why": "The accepted runtime overlay must never replace the source hook in the candidate or its staged index.",
+      "file": "adapters/git/worktrees.ts",
+      "remove": "        if (headHook.length !== 1 || headHook[0] !== `100755 blob ${policy.source.blob}\\t${policy.path}` || gitText(record.executionRoot, [\"ls-files\", \"--stage\", \"--\", policy.path]) !== `100755 ${policy.source.blob} 0\\t${policy.path}`) {\n          throw new Error(\"governed source hook HEAD or index identity changed\");\n        }\n",
+      "testFile": "dist/test/governed-convergence-policy.test.js"
+    },
+    {
+      "id": "integration/governed-runtime-overlay-is-exact",
+      "why": "Runtime policy overlay bytes and executable mode must remain the exact accepted-main hook and candidate history may contain only its one artifact.",
+      "file": "adapters/git/worktrees.ts",
+      "remove": "        if (!hook.isFile() || hook.isSymbolicLink() || (hook.mode & 0o777) !== 0o755 || createHash(\"sha256\").update(bytes).digest(\"hex\") !== policy.accepted.sha256) {\n          throw new Error(\"governed runtime policy bytes or mode changed inside the Work\");\n        }\n",
+      "testFile": "dist/test/governed-convergence-policy.test.js"
+    },
+    {
+      "id": "integration/governed-candidate-is-artifact-only",
+      "why": "A policy-bearing Work may create only its exact one-artifact direct-child checkpoint while retaining source hook identity.",
+      "file": "adapters/git/worktrees.ts",
+      "remove": "        if (parents.length !== 1 || parents[0] !== policy.sourceHead || JSON.stringify(changed) !== JSON.stringify([expectedArtifact]) || artifactEntry.length !== 1 || !artifactEntry[0]!.startsWith(`100644 blob `) || !artifactEntry[0]!.endsWith(`\\t${expectedArtifact}`)) {\n          throw new Error(\"governed candidate HEAD is outside the exact one-artifact checkpoint lineage\");\n        }\n",
+      "testFile": "dist/test/governed-convergence-policy.test.js"
+    },
+    {
+      "id": "integration/governed-execution-identity-is-shared",
+      "why": "Independent Verify must observe the exact same execution-root bytes as the governed worker, including the runtime-only policy overlay.",
+      "file": "adapters/git/governed-convergence-policy.ts",
+      "remove": "  if (!workerDigest || workerDigest !== verifierDigest) throw new Error(\"worker and verifier did not observe the same governed execution-root digest\");\n",
+      "testFile": "dist/test/governed-convergence-policy.test.js"
     },
     {
       "id": "operator/review-material-is-delivered",
