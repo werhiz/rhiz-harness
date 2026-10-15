@@ -1,0 +1,86 @@
+# Native independent review adapter
+
+Status: implementation candidate, October 15, 2026. This is a local runner under
+the existing Codex adapter, exported by `@werhiz/rhiz-harness/codex`. It does not
+parse review verdicts, write Ledger events, post PR comments, or authorize integration.
+Existing consumers retain exact-candidate/material binding, actor independence,
+verdict/leak checks, quota selection, durable evidence and acceptance authority.
+
+`runNativeCodexReview` invokes the installed Darwin native `codex-cli 0.162.1`.
+The caller provides a trusted absolute executable, explicit eligible model,
+trusted reviewer instructions, unchanged untrusted packet, detached disposable
+checkout, separate scratch, common Git directory and reviewed toolchain roots.
+The executable and catalog must remain outside model-writable scopes.
+
+The canonical operator auth backend must actually be `file`, with a signed-in
+ChatGPT account reported by native metadata. A new 0700 control directory contains
+an empty trusted cwd, private host HOME, native model catalog snapshot and an auth-only
+CODEX_HOME alias. Its sole credential path is a symlink to the operator-owned
+private regular canonical `auth.json`. The adapter never reads, hashes, copies,
+prints, logs in, logs out, or explicitly refreshes credential contents. Native
+metadata compares original and alias account type/email/plan in memory without
+returning the principal. Cleanup unlinks the alias and removes only this control
+directory. The native host remains the sole auth consumer; model tools are denied
+both original auth home and private control paths.
+
+The reviewed model record fingerprint is a required trusted policy input. The
+source must be the canonical operator-owned regular `models_cache.json`, and may
+not be an auth hardlink. The exact unmodified selected record is SHA256-hashed as
+`JSON.stringify(record)` and copied into a private per-run catalog. Drift refuses
+before inference. Do not derive the expected fingerprint automatically from the
+supplied source. Do not edit model metadata to manufacture a narrower registry.
+
+The October 15 installed-host probe admitted the unmodified `gpt-6-astra` record
+with fingerprint
+`3734f758dc47ef93a1dde955cdd9382cc5decf678e125439cfedfd1cc6f3b285`.
+That observation does not admit another model, version or updated catalog.
+Its actual native registry included `functions.exec`, `functions.wait` and
+`functions.request_user_input_async`; the request tool remains present despite
+its configuration switch. Nested exec exposed only patch, exec, stdin, three
+MCP resource metadata/read methods and clock. The admission evidence must include
+normal startup and effectless unavailable/unsolicited tool handling, alongside
+positive sandboxed command/patch proof. A startup failure is never a no-tool contract.
+
+The native process ignores user configuration/repository rules, disables skills,
+hooks, apps/plugins, browser/computer, images, memory, delegation and shell snapshots,
+and supplies a named managed permission profile without legacy sandbox overrides.
+Child commands receive scratch HOME/TMPDIR, a fixed PATH and null global/system Git
+configuration, without inherited loader variables, provider keys or CODEX_HOME.
+The trusted native host has a separate fixed environment. The profile denies
+home, real temporary roots, canonical auth and control, writes only checkout/scratch,
+and admits only explicit toolchain/common-Git reads. Native-managed executable shims
+are the sole permitted extra read entry at startup.
+
+The result requires successful process exit, exactly one anchored native
+SessionConfiguredEvent matching model/provider/profile/cwd/filesystem/network,
+and one completed JSON event turn with a nonempty final and valid usage. Errors,
+unknown tool items, failed or unfinished items, conflicting final, malformed or
+truncated output, process failure and timeout refuse. This conservative parser may
+refuse native commentary emitted as a separate agent message; it never promotes
+partial output. Reported model identity is native startup evidence, not a claim
+about an undisclosed backend implementation.
+
+`nativeCodexReviewInvocation` is a module-level deterministic probe seam, absent
+from the package barrel. Tests may override its provider flags only against a
+local fake endpoint. The public production runner has no provider/test override.
+No upstream source was copied: this is original integration code invoking an
+external native backend through its installed CLI/RPC interfaces.
+
+## Proof and remaining acceptance
+
+The scoped implementation executor used deterministic shell, TypeScript and Node
+on Darwin. No model inference, credential mutation, install, push, PR or full gate
+was used for this candidate. Existing Codex adapter tests plus the new native suite
+pass locally; destructive/negative fixtures run through `src/disposable.ts` and
+re-pin their source after removal. Scripted executables test metadata/process/cleanup
+custody only and are never evidence of OS containment or model access.
+
+Before an existing consumer can use the runner's review: independently review this
+exact candidate; repeat installed-native tool/startup/network/socket/auth/env canaries
+against its exact invocation; prove dummy file refresh/save/replacement/concurrency;
+run a real independently reviewed planted defect and repaired exact head under fresh
+eligible quota; retain native model/usage evidence; run all existing consumer
+wrong-head/material/actor/leak/interruption tests and normal integration gates.
+The real operator credentials must never be used in login/refresh experiments.
+Packet consumers still must prove their capability contract; this runner exposes
+bounded test-running tools and does not promise a tool-free packet session.

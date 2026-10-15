@@ -637,6 +637,27 @@
       "file": "scripts/rhiz-harness.mjs",
       "remove": ", ...(material ? [material.evidence] : [])",
       "testFile": "dist/test/operator-cli.test.js"
+    },
+    {
+      "id": "codex/native-review-model-provider-profile-attestation",
+      "why": "Caller model intent cannot stand in for native observed model/provider/profile identity.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "    if (!session.includes(fragment)) throw new Error(\"native review model/provider/profile drift\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-filesystem-profile-attestation",
+      "why": "A successfully completed review cannot certify a startup profile whose read/write scopes drifted.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "    if (observed.get(scope) !== access) throw new Error(\"native review filesystem profile drift\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-denies-model-network",
+      "why": "The signed-in native host may use the provider but all model command/test children require an enforced network deny.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": " \"permissions.review.network.enabled\": false,",
+      "testFile": "dist/test/codex-native-review.test.js"
     }
   ]
 }
