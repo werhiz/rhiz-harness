@@ -134,3 +134,28 @@ active findings context. It does not widen ordinary writes, correction receipts,
 terminal repair, history limits, the growth bound, or any Work/Verify/independent
 Review requirement. The required owner tests include real-Git NOT READY positive
 and negative controls and the guard falsifier.
+
+
+### Accepted-main policy as a bounded runtime-only overlay (2026-10-15)
+
+For the exact governed convergence Work, the validated accepted-main hook bytes
+may be materialized in its isolated execution workspace as runtime input after
+that Work is durably created. This overlay is derived from the same-repository
+current `main` commit and is bound to the retained packet, exact source hook
+blob/mode, accepted hook blob/mode, and execution-root digest. It does not alter
+the source branch, source index, candidate tree, or source hook identity. The
+only candidate checkpoint is the direct child of the exact source head that
+adds the one Work-specific artifact. The overlay cannot pass through workspace
+inheritance to a dependent Work; each acquire validates the single exact Work
+identity. This exception is runtime-only and grants no general hook, source,
+branch, merge, acceptance, or effect authority. Removal falsifiers cover exact
+review admission, inheritance refusal, source hook/index retention, accepted
+bytes and mode, and artifact-only candidate lineage.
+
+When both pinned source and accepted-main Git trees prove that the exact hook
+path is absent, the same generic convergence may use a derived no-overlay
+policy. No caller flag selects this mode. If either tree contains the path,
+both sides must instead provide valid regular executable hook blobs and the
+full overlay binding applies; one-sided, malformed, non-executable, or linked
+paths refuse. The common exact Work, Verify, independent whole-packet Review,
+actor, and bounded effect gates remain required in either mode.

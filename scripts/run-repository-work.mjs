@@ -9,12 +9,14 @@ import { dirname, join, resolve } from "node:path";
 import { CodexAppServerHost } from "../dist/adapters/codex/app-server.js";
 import { aggregateAttemptUsage, createRepositoryBenchmarkRun, repositoryRunContext } from "../dist/src/benchmark.js";
 import {
+  assertGovernedExecutionRootIdentity,
   candidatePathScopesFromResources,
   GitWorkIntegrationExecutor,
   GitWorktreeWorkspaceProvider,
   harnessGitRefSegment,
   initializeWorkIntegrationRef,
   preserveCandidateRemotely,
+  validateGovernedConvergencePolicy,
 } from "../dist/adapters/git/index.js";
 import { DurableEventLedger } from "../dist/adapters/local/durable-ledger.js";
 import { readRepositoryWorkEvents } from "../dist/adapters/local/work-ledgers.js";
@@ -216,6 +218,12 @@ resolvedBaseRevision = baseRevision;
 const work = parseWorkContract(JSON.parse(await readFile(resolve(args.contract), "utf8")));
 resolvedWorkId = work.id;
 recordedContextStrategy = work.context.strategy;
+const governedEnvelopeFilename = args["governed-convergence-envelope"];
+if (work.id.startsWith("work:horizon-convergence-") && !governedEnvelopeFilename) throw new Error("fixed Horizon convergence Work requires its persisted governed policy envelope");
+if (governedEnvelopeFilename && !work.id.startsWith("work:horizon-convergence-")) throw new Error("governed convergence policy is unavailable to generic Work");
+const governedPolicy = governedEnvelopeFilename
+  ? validateGovernedConvergencePolicy({ repositoryRoot, baseRevision, contract: work, envelopeFilename: resolve(governedEnvelopeFilename) })
+  : undefined;
 const verificationPlan = parseVerificationPlan(
   JSON.parse(await readFile(resolve(args.verify), "utf8")),
 );
@@ -295,6 +303,7 @@ earlyLedger = ledger;
 const workspaceProvider = new GitWorktreeWorkspaceProvider({
   repositoryRoot,
   worktreeRoot,
+  ...(governedPolicy ? { governedConvergencePolicy: governedPolicy } : {}),
   prepareWorkspace:
     preparation === null
       ? undefined
@@ -354,7 +363,9 @@ for (const resource of work.context.resources) {
   if (!absolutePath.startsWith(`${repositoryRoot}/`)) {
     throw new Error(`context resource escapes repository root: ${resource.uri}`);
   }
-  contextFiles[relativePath] = await readFile(absolutePath, "utf8");
+  if (governedPolicy && relativePath === `.context/horizon-convergence/${work.id.slice(-40)}.json`) {
+    contextFiles[relativePath] = new TextDecoder("utf-8", { fatal: true }).decode(governedPolicy.manifestBytes);
+  } else contextFiles[relativePath] = await readFile(absolutePath, "utf8");
 }
 const runContext = repositoryRunContext({
   work,
@@ -609,6 +620,13 @@ try {
       snapshot: preCommitSnapshot,
       allowed: candidatePathScopesFromResources(work.writeScope),
     });
+    if (governedPolicy) {
+      const policyTreeEntry = git(repositoryRoot, ["ls-tree", "-z", candidate.head, "--", governedPolicy.path]).split("\0").filter(Boolean);
+      if (governedPolicy.mode === "overlay") {
+        if (!governedPolicy.source || policyTreeEntry.length !== 1 || policyTreeEntry[0] !== `100755 blob ${governedPolicy.source.blob}\t${governedPolicy.path}`) throw new Error("candidate does not preserve the original source hook identity");
+        if (candidate.changedPaths.includes(governedPolicy.path)) throw new Error("runtime policy overlay entered authored candidate scope");
+      } else if (policyTreeEntry.length !== 0) throw new Error("hook-free convergence candidate introduced a Horizon hook");
+    }
 
     const committedSnapshot = await workspaceProvider.snapshot(workspace);
     assert.equal(committedSnapshot.head, candidate.head);
@@ -629,6 +647,10 @@ try {
     });
     assert.equal(verification.target.head, candidate.head);
     assert.equal(verification.projectionViolationCount, 0);
+    if (governedPolicy) {
+      assertGovernedExecutionRootIdentity(mission.workspaceAfter?.digest, verification.target.digest);
+      if (JSON.stringify(candidate.changedPaths) !== JSON.stringify([`tools/horizon-convergence-artifacts/${work.id.slice(-40)}/artifact.json`])) throw new Error("governed convergence candidate contains paths beyond its exact artifact");
+    }
 
     attempts.push({
       attemptNumber,
@@ -859,6 +881,20 @@ try {
         ? null
         : { command: preparation.command, args: preparation.args },
     workerProviderId: mission.workerProviderId ?? null,
+    ...(governedPolicy ? { governedConvergencePolicy: {
+      mode: governedPolicy.mode,
+      sourceHead: governedPolicy.sourceHead,
+      sourcePolicyBlob: governedPolicy.source?.blob ?? null,
+      sourcePolicySha256: governedPolicy.source?.sha256 ?? null,
+      acceptedPolicyHead: governedPolicy.acceptedHead,
+      runtimePolicyBlob: governedPolicy.accepted?.blob ?? null,
+      runtimePolicySha256: governedPolicy.accepted?.sha256 ?? null,
+      manifestDigest: governedPolicy.manifestDigest,
+      packetDigest: governedPolicy.packetDigest,
+      baselineExecutionRootDigest: mission.workspaceBefore?.digest ?? null,
+      workerExecutionRootDigest: mission.workspaceAfter?.digest ?? null,
+      verifierExecutionRootDigest: verification.target?.digest ?? null,
+    } } : {}),
     // Every attempt this Work cost, in order, with the candidate each one
     // authored and what the independent verifier said about it. A run that
     // converged on the second attempt says so here rather than presenting

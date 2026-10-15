@@ -170,7 +170,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });
 `;
 
-async function convergenceFixture(featureCommits = 9) {
+async function convergenceFixture(featureCommits = 9, hookShape: "none" | "source-only" | "main-only" | "source-non-executable" | "source-symlink" | "claude-readme" | "hooks-readme" | "claude-file-parent" | "claude-symlink-parent" = "none") {
   const root = await mkdtemp(join(tmpdir(), "horizon-convergence-host-"));
   const repo = join(root, "repo");
   const bin = join(root, "bin");
@@ -182,12 +182,37 @@ async function convergenceFixture(featureCommits = 9) {
   git(["config", "user.name", "Horizon"]);
   git(["config", "user.email", "horizon@example.invalid"]);
   await writeFile(join(repo, ".gitignore"), ".context/\n");
+  if (hookShape === "claude-readme") {
+    await mkdir(join(repo, ".claude"), { recursive: true });
+    await writeFile(join(repo, ".claude", "README.md"), "ordinary project instructions\n");
+  } else if (hookShape === "hooks-readme") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, ".claude", "hooks", "README.md"), "ordinary hook documentation\n");
+  } else if (hookShape === "claude-file-parent") {
+    await writeFile(join(repo, ".claude"), "not a directory\n");
+  } else if (hookShape === "claude-symlink-parent") {
+    await mkdir(join(repo, "hook-parent-target"), { recursive: true });
+    await writeFile(join(repo, "hook-parent-target", "README.md"), "symlink target\n");
+    await symlink("hook-parent-target", join(repo, ".claude"));
+  }
   await writeFile(join(repo, "source.txt"), "base\n");
   await writeFile(join(repo, "foreign.txt"), "foreign\n");
   git(["add", "."]); git(["commit", "-qm", "base"]);
   execFileSync("git", ["init", "--bare", "-q", remote]);
-  git(["remote", "add", "origin", remote]); git(["push", "-qu", "origin", "main"]);
+  const forgeOrigin = "https://github.com/example/project.git";
+  git(["remote", "add", "origin", forgeOrigin]); git(["config", `url.file://${remote}.insteadOf`, forgeOrigin]);
+  git(["push", "-qu", "origin", "main"]); git(["fetch", "-q", "origin"]);
   git(["checkout", "-qb", "feature"]);
+  if (hookShape === "source-only" || hookShape === "source-non-executable") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, ".claude", "hooks", "horizon-check.sh"), "#!/bin/sh\nexit 0\n", { mode: hookShape === "source-only" ? 0o755 : 0o644 });
+    git(["add", ".claude/hooks/horizon-check.sh"]); git(["commit", "-qm", "source hook shape"]);
+  } else if (hookShape === "source-symlink") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, "hook-target.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await symlink("../../../hook-target.sh", join(repo, ".claude", "hooks", "horizon-check.sh"));
+    git(["add", "hook-target.sh", ".claude/hooks/horizon-check.sh"]); git(["commit", "-qm", "source hook symlink"]);
+  }
   const when = new Date(Date.now() - 50 * HOUR).toISOString();
   for (let i = 0; i < featureCommits; i++) {
     await writeFile(join(repo, i === 0 ? "source.txt" : `feature-${i}.txt`), i === 0 ? "ours\n" : "feature\n".repeat(65));
@@ -197,6 +222,11 @@ async function convergenceFixture(featureCommits = 9) {
   const head = git(["rev-parse", "HEAD"]);
   git(["push", "-qu", "origin", "feature"]);
   git(["checkout", "-q", "main"]);
+  if (hookShape === "main-only") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, ".claude", "hooks", "horizon-check.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    git(["add", ".claude/hooks/horizon-check.sh"]);
+  }
   await writeFile(join(repo, "source.txt"), "theirs\n");
   await writeFile(join(repo, "helper.txt"), "main helper\n");
   git(["add", "."]); git(["commit", "-qm", "main change"]);
@@ -218,7 +248,7 @@ async function convergenceFixture(featureCommits = 9) {
   const actualGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
   await writeFile(join(bin, "git"), `#!${process.execPath}\nconst cp=require('node:child_process');const args=process.argv.slice(2);if(process.env.CONVERGENCE_MODE==='crash-before-apply'&&args[0]==='apply'&&args.length===2){process.kill(process.ppid,'SIGKILL');process.exit(0)}const r=cp.spawnSync(${JSON.stringify(actualGit)},args,{stdio:'inherit'});if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-add'&&JSON.stringify(args)===JSON.stringify(['add','--','source.txt']))process.kill(process.ppid,'SIGKILL');if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-effect-push'&&args.includes('push')&&args.some(a=>a.endsWith('/effect')))process.kill(process.ppid,'SIGKILL');process.exit(r.status??1);\n`, { mode: 0o755 });
   const historicalBase = git(["merge-base", head, base]);
-  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst fs=require('node:fs');const m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:m==='wrong-main-ref'?'0'.repeat(40):'${base}'}};let apiComment=c;if(m==='altered-review'&&endpoint.endsWith('/101')){const countPath=${JSON.stringify(join(root, "altered-comment-count"))};let count=0;try{count=Number(fs.readFileSync(countPath,'utf8'))}catch{}fs.writeFileSync(countPath,String(count+1));if(count>=1)apiComment={...c,body:c.body+' altered'}}console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:apiComment):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
+  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst fs=require('node:fs');const m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:require('node:child_process').execFileSync(${JSON.stringify(actualGit)},['--git-dir',${JSON.stringify(remote)},'rev-parse','refs/heads/main'],{encoding:'utf8'}).trim()}};let apiComment=c;if(m==='altered-review'&&endpoint.endsWith('/101')){const countPath=${JSON.stringify(join(root, "altered-comment-count"))};let count=0;try{count=Number(fs.readFileSync(countPath,'utf8'))}catch{}fs.writeFileSync(countPath,String(count+1));if(count>=1)apiComment={...c,body:c.body+' altered'}}console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:apiComment):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
   await writeFile(join(root, "codex-fixture.mjs"), CONVERGENCE_CODEX_FIXTURE);
   await writeFile(join(bin, "codex"), `#!/bin/sh\nexec '${process.execPath}' '${join(root, "codex-fixture.mjs")}'\n`, { mode: 0o755 });
   await writeFile(join(bin, "claude"), `#!${process.execPath}\nconst fs=require('node:fs');let prompt='';process.stdin.on('data',bytes=>prompt+=bytes);process.stdin.on('end',()=>{fs.appendFileSync(process.env.CONVERGENCE_CALLS,'review\\n');if(process.env.CONVERGENCE_MODE==='concurrent-state')fs.writeFileSync(process.env.CONVERGENCE_SOURCE+'/new-untracked.txt','concurrent');const supplied=['packet','original:source.txt','accepted-main:source.txt','projected:source.txt'].every(label=>prompt.includes(JSON.stringify(label)));const status=process.env.CONVERGENCE_MODE==='review-refuses'||(process.env.CONVERGENCE_MODE==='requires-material'&&!supplied)?'fail':'pass';console.log(JSON.stringify({is_error:false,result:JSON.stringify({status,summary:'Scripted structural reviewer fixture',findings:[]})}));});\n`, { mode: 0o755 });
@@ -259,6 +289,31 @@ test("fixed convergence executes new Work/Verify/Review before one bounded real 
     assert.equal(measured.signals.commitsBehind, 0);
     assert.equal(measured.state, "tripped", "complete convergence does not forgive subsequent general writes");
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("convergence derives hook-free policy from both Git trees and refuses one-sided or malformed hooks", async () => {
+  for (const shape of ["source-only", "main-only", "source-non-executable", "source-symlink", "claude-file-parent", "claude-symlink-parent"] as const) {
+    const f = await convergenceFixture(8, shape);
+    try {
+      const result = f.run();
+      assert.notEqual(result.status, 0, shape);
+      assert.match(result.stderr + result.stdout, /governed overlay requires matching valid hooks|must be a regular executable file|hook must be absent or one tracked regular executable|non-directory ancestor|traverses a symbolic link/);
+      assert.equal(await readFile(f.calls, "utf8"), "", `${shape} refuses before worker/reviewer`);
+      assert.ok(f.git(["ls-files", "--unmerged"]), `${shape} preserves original conflict state`);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("hook-free convergence accepts ordinary .claude and .claude/hooks directories", async () => {
+  for (const shape of ["claude-readme", "hooks-readme"] as const) {
+    const f = await convergenceFixture(9, shape);
+    try {
+      const result = f.run();
+      assert.equal(result.status, 0, `${shape}: ${result.stderr}${result.stdout}`);
+      assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
+      assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }
 });
 
 // Falsifies: integration/review-context-anchor-is-effect-only
@@ -574,11 +629,29 @@ test("convergence binds actual repository main even when PR comparison base is h
   for (const mode of ["historical-base", "wrong-main-ref"]) {
     const f = await convergenceFixture();
     try {
+      const snapshot = async () => ({
+        head: f.git(["rev-parse", "HEAD"]), integration: f.git(["rev-parse", "origin/main"]),
+        index: f.git(["ls-files", "--stage"]), status: f.git(["status", "--porcelain=v1", "--untracked-files=all"]),
+        remoteArtifacts: f.git(["--git-dir", f.remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/rhiz/"]),
+        source: await readFile(join(f.repo, "source.txt"), "utf8"),
+        reviews: await readFile(join(f.repo, ".rhiz-horizon-reviews.json"), "utf8"),
+      });
+      const before = await snapshot();
+      if (mode === "wrong-main-ref") {
+        // Advance the actual remote branch, leaving the captured local integration
+        // and PR comparison base intact. Forge transport reads that real ref.
+        const newerMain = f.git(["--git-dir", f.remote, "commit-tree", `${f.base}^{tree}`, "-p", f.base, "-m", "accepted main advances"]);
+        f.git(["--git-dir", f.remote, "update-ref", "refs/heads/main", newerMain, f.base]);
+        assert.notEqual(newerMain, f.base);
+        assert.equal(f.git(["--git-dir", f.remote, "rev-parse", "refs/heads/main"]), newerMain);
+        assert.equal(f.git(["rev-parse", "origin/main"]), f.base, "local integration remains stale");
+      }
       const result = f.run(mode);
       if (mode === "wrong-main-ref") {
         assert.notEqual(result.status, 0);
-        assert.equal(await readFile(f.calls, "utf8"), "");
-        assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
+        assert.deepEqual(await snapshot(), before, "stale main refuses before any source or durable artifact effect");
+        assert.match(result.stderr, /exact durable OPEN head and fresh accepted repository main/);
+        assert.equal(await readFile(f.calls, "utf8"), "", "stale accepted main refuses before worker/reviewer");
       } else {
         assert.equal(result.status, 0, result.stderr);
         assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n");
