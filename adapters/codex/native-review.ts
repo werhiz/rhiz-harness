@@ -224,7 +224,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
         if (event.item.type === "file_change" && event.item.status !== "completed") throw new Error("native review file change incomplete");
         if (event.item.type === "command_execution") {
           const code = event.item.exit_code;
-          if (activeItems.get(event.item.id) !== "command_execution" || typeof event.item.aggregated_output !== "string" || typeof code !== "number" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === "completed") || (code >= 1 && code <= 125 && event.item.status === "failed"))) throw new Error("native review command result inadmissible");
+          if (activeItems.get(event.item.id) !== "command_execution" || typeof event.item.aggregated_output !== "string" || typeof code !== "number" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === "completed") || (code >= 1 && code <= 127 && event.item.status === "failed"))) throw new Error("native review command result inadmissible");
         }
         activeItems.delete(event.item.id);
         finishedItems.add(event.item.id);
