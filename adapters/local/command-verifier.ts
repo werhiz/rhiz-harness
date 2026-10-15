@@ -9,6 +9,7 @@ import { requireSandbox } from "../../src/sandbox.js";
 import type { VerificationCheckResult, VerifierDescriptor, VerifierProvider, VerifierRequest } from "../../src/verify.js";
 import { VerificationCheckResultSchema, VerifierDescriptorSchema } from "../../src/verify.js";
 import { EvidenceKindSchema, EvidenceRefSchema } from "../../src/schemas.js";
+import type { EvidenceRef } from "../../src/schemas.js";
 
 const text = z.string().trim().min(1);
 export const LocalCommandCheckConfigSchema = z.object({
@@ -24,6 +25,36 @@ export const LocalCommandCheckConfigSchema = z.object({
   }
 });
 export type LocalCommandCheckConfig = z.infer<typeof LocalCommandCheckConfigSchema>;
+
+type Immutable<T> = T extends object ? { readonly [K in keyof T]: Immutable<T[K]> } : T;
+/** Actual execution evidence, not a command request or a source-defect verdict. */
+export type LocalCommandExecutionCapture = Immutable<{
+  schema: "rhiz/local-command-execution/v1";
+  workId: string;
+  contractRevision: number;
+  checkId: string;
+  providerId: string;
+  workspace: VerifierRequest["workspace"];
+  target: VerifierRequest["target"];
+  config: LocalCommandCheckConfig;
+  execution: { command: string; args: string[] };
+  outcome: Omit<CommandOutcome, "stdout" | "stderr"> & { stdoutBase64: string; stderrBase64: string };
+  outcomeDigest: string;
+  startedAt: string;
+  finishedAt: string;
+}>;
+
+function immutableCopy<T>(value: T): Immutable<T> {
+  const copy = JSON.parse(JSON.stringify(value));
+  const freeze = (item: unknown): void => {
+    if (item !== null && typeof item === "object") {
+      Object.values(item).forEach(freeze);
+      Object.freeze(item);
+    }
+  };
+  freeze(copy);
+  return copy;
+}
 
 export interface LocalCommandVerifierOptions {
   id?: string;
@@ -48,6 +79,17 @@ export interface LocalCommandVerifierOptions {
    * check genuinely needs a populated home.
    */
   homeDirectory?: string;
+  /**
+   * Trusted controller only; never read from check/Work/CLI configuration.
+   * Retain canonical JSON outside the checked writable workspace, apply output
+   * secret review before remote retention, and return a receipt with a nonempty
+   * retrieval URI whose
+   * digest is SHA256 of those exact JSON bytes. A failed retention refuses the check.
+   * Deadline abort is cooperative; late storage effects are not accepted proof.
+   */
+  retainOutcome?: (capture: LocalCommandExecutionCapture, signal: AbortSignal) => Promise<EvidenceRef>;
+  /** Host retention deadline, default 5s, at most 120s. Never a check option. */
+  outcomeRetentionTimeoutMs?: number;
 }
 interface CommandOutcome {
   exitCode: number | null;
@@ -283,6 +325,8 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
   readonly #scratchHome: string | undefined;
   readonly #sandbox: SandboxLauncher | null;
   readonly #requireContainment: boolean;
+  readonly #retainOutcome: LocalCommandVerifierOptions["retainOutcome"];
+  readonly #outcomeRetentionTimeoutMs: number;
 
   constructor(options: LocalCommandVerifierOptions = {}) {
     this.id = options.id ?? "verifier:local-command";
@@ -295,6 +339,9 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
       evidenceKinds: ["test", "static-analysis", "log", "receipt", "other"],
     });
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#retainOutcome = options.retainOutcome;
+    this.#outcomeRetentionTimeoutMs = options.outcomeRetentionTimeoutMs ?? 5000;
+    if (!Number.isSafeInteger(this.#outcomeRetentionTimeoutMs) || this.#outcomeRetentionTimeoutMs < 1 || this.#outcomeRetentionTimeoutMs > 120_000) throw new RangeError("command outcome retention deadline must be 1..120000ms");
     if (options.homeDirectory === undefined) {
       this.#scratchHome = mkdtempSync(join(tmpdir(), "rhiz-verifier-home-"));
       this.#home = this.#scratchHome;
@@ -321,6 +368,11 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
   async describe(): Promise<VerifierDescriptor> { return VerifierDescriptorSchema.parse(this.#descriptor); }
   async verify(request: VerifierRequest): Promise<VerificationCheckResult> {
     const config = LocalCommandCheckConfigSchema.parse(request.check.config);
+    const checkId = request.check.id, targetDigest = request.target.digest;
+    const binding = this.#retainOutcome ? immutableCopy({
+      workId: request.work.id, contractRevision: request.contractRevision,
+      checkId, providerId: this.id, workspace: request.workspace, target: request.target,
+    }) : undefined;
     const startedAt = this.#now();
     try {
       const executionRoot = request.workspace.executionRoot;
@@ -345,9 +397,9 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
         this.#env,
       ).finally(async () => { await disposeSandbox?.(); });
       const evidence = EvidenceRefSchema.parse({
-        id: `evidence:${request.check.id}:${request.target.digest}`.slice(0, 200),
+        id: `evidence:${checkId}:${targetDigest}`.slice(0, 200),
         kind: config.evidenceKind,
-        uri: `verify://local-command/${encodeURIComponent(request.check.id)}`,
+        uri: `verify://local-command/${encodeURIComponent(checkId)}`,
         digest: outcomeDigest(config, outcome),
       });
       const expected = outcome.exitCode !== null && config.expectedExitCodes.includes(outcome.exitCode);
@@ -356,8 +408,32 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
       const status = expected && !outcome.timedOut && !outcome.processLeak ? "pass" as const : "fail" as const;
       const exit = outcome.exitCode === null ? `signal ${outcome.signal ?? "unknown"}` : `exit ${outcome.exitCode}`;
       const truncation = outcome.stdoutTruncated || outcome.stderrTruncated ? "; output bounded" : "";
+      const finishedAt = this.#now();
+      const evidenceRefs = [evidence];
+      const retainOutcome = this.#retainOutcome;
+      if (retainOutcome && binding) {
+        const { stdout, stderr, ...terminal } = outcome;
+        const capture = immutableCopy({
+          schema: "rhiz/local-command-execution/v1" as const, ...binding, config, execution: effective,
+          outcome: { ...terminal, stdoutBase64: stdout.toString("base64"), stderrBase64: stderr.toString("base64") },
+          outcomeDigest: evidence.digest!, startedAt, finishedAt,
+        });
+        const controller = new AbortController();
+        const timeout = new Error("command outcome retention timed out");
+        let timer: NodeJS.Timeout | undefined;
+        try {
+          const deadline = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => { reject(timeout); controller.abort(); }, this.#outcomeRetentionTimeoutMs);
+          });
+          const retained = EvidenceRefSchema.parse(await Promise.race([Promise.resolve().then(() => retainOutcome(capture, controller.signal)), deadline]));
+          const digest = `sha256:${createHash("sha256").update(JSON.stringify(capture)).digest("hex")}`;
+          if (retained.kind !== "receipt" || !retained.uri?.trim() || retained.digest !== digest) throw new Error("capture identity mismatch");
+          evidenceRefs.push(retained);
+        } catch (error) { throw error === timeout ? timeout : new Error("command outcome retention failed"); }
+        finally { if (timer) clearTimeout(timer); }
+      }
       return VerificationCheckResultSchema.parse({
-        checkId: request.check.id,
+        checkId,
         providerId: this.id,
         status,
         summary: outcome.processLeak
@@ -365,14 +441,14 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
           : outcome.timedOut
             ? `command timed out after ${config.timeoutMs}ms and its process group was terminated${truncation}`
             : `${exit}; expected ${config.expectedExitCodes.join(", ")}${truncation}`,
-        evidence: [evidence],
+        evidence: evidenceRefs,
         startedAt,
-        finishedAt: this.#now(),
+        finishedAt,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return VerificationCheckResultSchema.parse({
-        checkId: request.check.id,
+        checkId,
         providerId: this.id,
         status: "error",
         summary: `command verifier could not execute: ${message.replace(/\s+/g, " ").slice(0, 3000)}`,

@@ -8,7 +8,9 @@
 // docs/reviews/2026-08-20-stack-review.md
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +21,8 @@ import { LocalCommandVerifierProvider } from "../adapters/local/command-verifier
 import { requireSandbox, SandboxUnavailableError, parseSandboxPolicy } from "../src/sandbox.js";
 import { parseWorkContract, type WorkContract } from "../src/schemas.js";
 import type { VerificationTarget } from "../src/verify.js";
+import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js";
+import { requireProven, runDisposableProof, TempDirectoryDerivativeFactory } from "../src/disposable.js";
 
 const darwin = process.platform === "darwin";
 const skipUnlessDarwin = darwin ? false : "sandbox-exec containment requires darwin";
@@ -150,6 +154,41 @@ test("a contained check cannot write outside its execution root", { skip: skipUn
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
   }
+});
+
+test("a checked process cannot forge the trusted controller outcome receipt", { skip: skipUnlessDarwin }, async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "rhiz-capture-custody-")));
+  execFileSync("git", ["init", "-q", root]);
+  writeFileSync(join(root, "fixture.txt"), "receipt custody fixture");
+  try {
+    requireProven(await runDisposableProof({
+      candidateRoot: root, probe: new GitCandidateIdentityProbe(), factory: new TempDirectoryDerivativeFactory(),
+      proof: async (derivative) => {
+        mkdirSync(derivative.resolve("workspace")); mkdirSync(derivative.resolve("controller"));
+        const filename = derivative.resolve("controller/receipt.json");
+        const provider = new LocalCommandVerifierProvider({
+          sandbox: new MacosSandboxExecLauncher(), requireContainment: true,
+          retainOutcome: async (capture) => {
+            writeFileSync(filename, JSON.stringify(capture), { flag: "wx", mode: 0o600 });
+            return { id: "receipt:owned", kind: "receipt", uri: filename, digest: `sha256:${createHash("sha256").update(JSON.stringify(capture)).digest("hex")}` };
+          },
+        });
+        try {
+          await derivative.mutate("workspace/attack.cjs", "try{require('node:fs').writeFileSync(process.argv[2],'FORGED');console.log('WRITE_ALLOWED')}catch(e){console.log(e.code);process.exitCode=7}", "attempt to replace controller-owned execution evidence");
+          const result = await provider.verify(request(derivative.resolve("workspace"), process.execPath, [derivative.resolve("workspace/attack.cjs"), filename]));
+          assert.equal(result.status, "fail"); assert.equal(result.evidence.length, 2);
+          const capture = JSON.parse(readFileSync(filename, "utf8"));
+          assert.equal(capture.schema, "rhiz/local-command-execution/v1");
+          assert.equal(capture.outcome.exitCode, 7);
+          assert.equal(Buffer.from(capture.outcome.stdoutBase64, "base64").toString().trim(), "EPERM");
+          assert.equal(capture.config.command, process.execPath);
+          assert.equal(capture.execution.command, "/usr/bin/sandbox-exec");
+          assert.equal(capture.outcomeDigest, result.evidence[0]!.digest);
+        } finally { await provider.close(); }
+        return true;
+      },
+    }));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("a contained check cannot write to the operator home directory", { skip: skipUnlessDarwin }, async () => {

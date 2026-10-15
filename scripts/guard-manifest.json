@@ -2,6 +2,20 @@
   "$comment": "Each entry names one safety guard, the exact code that enforces it, and the test that must go red when that code is removed. A guard with no falsifying test is not a guard, it is a comment that compiles.",
   "guards": [
     {
+      "id": "verify/command-capture-retains-exact-evidence",
+      "why": "A trusted capture must retain the exact observed command, target and bounded outcome before its result can carry evidence; altered receipt identities cannot become verification proof.",
+      "file": "adapters/local/command-verifier.ts",
+      "remove": "          if (retained.kind !== \"receipt\" || !retained.uri?.trim() || retained.digest !== digest) throw new Error(\"capture identity mismatch\");\n",
+      "testFile": "dist/test/local-command-verifier.test.js"
+    },
+    {
+      "id": "verify/command-capture-retention-deadline",
+      "why": "A bounded checked command cannot hang Verify forever when trusted evidence retention never settles.",
+      "file": "adapters/local/command-verifier.ts",
+      "remove": "            timer = setTimeout(() => { reject(timeout); controller.abort(); }, this.#outcomeRetentionTimeoutMs);\n",
+      "testFile": "dist/test/local-command-verifier.test.js"
+    },
+    {
       "id": "board/execution-actor-cannot-accept",
       "why": "An execution actor accepting its own Work is the self-certification the Constitution separates completion from acceptance to prevent.",
       "file": "src/board.ts",
