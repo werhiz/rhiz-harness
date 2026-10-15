@@ -56,6 +56,7 @@ import {
 const EXIT_CLEAR = 0;
 const EXIT_TRIPPED = 1;
 const EXIT_UNAVAILABLE = 2;
+const MAX_CAPTURED_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const BASELINE_FILE = ".rhiz-horizon-baseline.json";
 const REVIEW_FILE = ".rhiz-horizon-reviews.json";
@@ -72,6 +73,13 @@ const flag = (name) => process.argv.includes(`--${name}`);
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
+}
+
+function captureGitOutput(cwd, args, maxBuffer = MAX_CAPTURED_GIT_OUTPUT_BYTES, env = process.env) {
+  if (!Number.isSafeInteger(maxBuffer) || maxBuffer < 1 || maxBuffer > MAX_CAPTURED_GIT_OUTPUT_BYTES) {
+    throw new RangeError(`Git output buffer must be between 1 and ${MAX_CAPTURED_GIT_OUTPUT_BYTES} bytes`);
+  }
+  return execFileSync("git", args, { cwd, maxBuffer, env });
 }
 
 function tryGit(cwd, args) {
@@ -454,10 +462,10 @@ function parseConvergenceRequest(filename) {
   return input;
 }
 
-function captureSourceState(repo, branch) {
+export function captureSourceState(repo, branch, maxBuffer = MAX_CAPTURED_GIT_OUTPUT_BYTES) {
   const head = git(repo, ["rev-parse", branch]);
-  const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } });
-  const entries = status.split("\0").filter(Boolean);
+  const status = captureGitOutput(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], maxBuffer, { ...process.env, GIT_OPTIONAL_LOCKS: "0" });
+  const entries = status.toString("utf8").split("\0").filter(Boolean);
   const dirty = new Set();
   for (let i = 0; i < entries.length; i++) {
     const row = entries[i];
@@ -465,11 +473,12 @@ function captureSourceState(repo, branch) {
     if (row[0] === "R" || row[1] === "R" || row[0] === "C" || row[1] === "C") dirty.add(safeSourcePath(entries[++i], false));
   }
   const files = [...dirty].sort().map((name) => [name, sourceFileIdentity(repo, name)]);
-  const index = execFileSync("git", ["ls-files", "--stage", "-z"], { cwd: repo, encoding: "utf8" });
-  const unmerged = execFileSync("git", ["ls-files", "--unmerged", "-z"], { cwd: repo, encoding: "utf8" });
+  const index = captureGitOutput(repo, ["ls-files", "--stage", "-z"], maxBuffer);
+  const unmerged = captureGitOutput(repo, ["ls-files", "--unmerged", "-z"], maxBuffer);
   const mergeHead = tryGit(repo, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+  const unmergedText = unmerged.toString("utf8");
   const state = { head, currentBranch: currentBranch(repo), mergeHead: mergeHead ?? null, statusDigest: sha(status), indexDigest: sha(index), unmergedDigest: sha(unmerged), files };
-  return { ...state, digest: sha(stable(state)), unmergedPaths: [...new Set(unmerged.split("\0").filter(Boolean).map((row) => safeSourcePath(row.slice(row.indexOf("\t") + 1), false)))].sort() };
+  return { ...state, digest: sha(stable(state)), unmergedPaths: [...new Set(unmergedText.split("\0").filter(Boolean).map((row) => safeSourcePath(row.slice(row.indexOf("\t") + 1), false)))].sort() };
 }
 
 function assertCanonicalMergeStages(repo, sourceHead, integrationHead) {
@@ -863,9 +872,11 @@ async function main() {
   }
 }
 
-try {
-  process.exit(await main());
-} catch (error) {
-  console.error(`horizon: UNAVAILABLE (${error.message})`);
-  process.exit(EXIT_UNAVAILABLE);
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+  try {
+    process.exit(await main());
+  } catch (error) {
+    console.error(`horizon: UNAVAILABLE (${error.message})`);
+    process.exit(EXIT_UNAVAILABLE);
+  }
 }
