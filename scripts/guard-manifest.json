@@ -658,6 +658,20 @@
       "file": "adapters/codex/native-review.ts",
       "remove": " \"permissions.review.network.enabled\": false,",
       "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-shell-startup-environment",
+      "why": "Non-login zsh still loads scratch HOME/.zshenv; startup state must come from an empty immutable control scope.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": " ZDOTDIR: shellHome, BASH_ENV: \"/dev/null\", ENV: \"/dev/null\"",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-terminal-deny-globs",
+      "why": "Minimal grants terminal access; explicit overriding deny globs must preserve isolation from other sessions.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": ", \"/dev/tty*\": \"deny\", \"/dev/ptmx*\": \"deny\"",
+      "testFile": "dist/test/codex-native-review.test.js"
     }
   ]
 }

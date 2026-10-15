@@ -8,7 +8,7 @@ verdict/leak checks, quota selection, durable evidence and acceptance authority.
 
 `runNativeCodexReview` invokes the installed Darwin native `codex-cli 0.162.1`.
 The caller provides a trusted absolute executable, explicit eligible model,
-trusted reviewer instructions, unchanged untrusted packet, detached disposable
+trusted reviewer instructions, unchanged untrusted packet, explicit high reasoning, detached disposable
 checkout, separate scratch, common Git directory and reviewed toolchain roots.
 The executable and catalog must remain outside model-writable scopes.
 
@@ -46,13 +46,16 @@ hooks, apps/plugins, browser/computer, images, memory, delegation and shell snap
 and supplies a named managed permission profile without legacy sandbox overrides.
 Child commands receive scratch HOME/TMPDIR, a fixed PATH and null global/system Git
 configuration, without inherited loader variables, provider keys or CODEX_HOME.
+ZDOTDIR points at a separate empty read-only directory inside private control;
+BASH_ENV and ENV are fixed to `/dev/null`. Disabling login shells alone is
+insufficient: the installed non-login zsh executes scratch HOME/.zshenv.
 The trusted native host has a separate fixed environment. The profile denies
 home, real temporary roots, canonical auth and control, writes only checkout/scratch,
 and admits only explicit toolchain/common-Git reads. Native-managed executable shims
 are the sole permitted extra read entry at startup.
 
 The result requires successful process exit, exactly one anchored native
-SessionConfiguredEvent matching model/provider/profile/cwd/filesystem/network,
+SessionConfiguredEvent matching model/provider/high reasoning/profile/cwd/filesystem/network,
 and one completed JSON event turn with a nonempty final and valid usage. Errors,
 unknown tool items, failed or unfinished items, conflicting final, malformed or
 truncated output, process failure and timeout refuse. This conservative parser may
@@ -81,6 +84,27 @@ against its exact invocation; prove dummy file refresh/save/replacement/concurre
 run a real independently reviewed planted defect and repaired exact head under fresh
 eligible quota; retain native model/usage evidence; run all existing consumer
 wrong-head/material/actor/leak/interruption tests and normal integration gates.
+The first real defect canary on the prior candidate found the planted defect but
+could not execute file-based Node tests: denying shared temp also denied ancestor
+metadata resolution. That result was refused and is not successful acceptance.
+The successor admits the native Minimal platform preset explicitly, with bounded
+overriding `/dev/tty*` and `/dev/ptmx*` deny globs alongside it. Literal
+device carveouts did not override the native baseline and were rejected. This preset supports metadata traversal and
+fixed platform services, including selected system Mach IPC and system logging;
+it does not mean that every local IPC channel is denied. Arbitrary TCP/UNIX
+socket tests and private directory listing must still fail. Bare Minimal grants
+unconditional terminal writes and is inadmissible for this runner. The combined
+installed-native successor fixture denied private PTY reads/writes, `/dev/ptmx`
+and noncontrolling `/dev/tty`, while actual Node file tests and Git still ran.
+Its strict parser accepted the exact Minimal, two deny globs and high reasoning.
+
+The separate successor shell fixture used the exact production builder with a
+local deterministic provider and fake credentials. Before its first command,
+scratch contained a planted `.zshenv`. The hook did not run; writing the trusted
+shell directory returned EPERM; a real file-based Node test passed, Git returned
+the fixture SHA, and home/auth/listing/network refusals remained intact. This is
+physical shell-startup boundary evidence, not real model review evidence.
+
 The real operator credentials must never be used in login/refresh experiments.
 Packet consumers still must prove their capability contract; this runner exposes
 bounded test-running tools and does not promise a tool-free packet session.

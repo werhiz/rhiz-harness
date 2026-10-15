@@ -9,10 +9,10 @@ import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js
 import { nativeCodexReviewInvocation, parseNativeCodexReview, runNativeCodexReview } from "../adapters/codex/native-review.js";
 import { requireProven, runDisposableProof, TempDirectoryDerivativeFactory } from "../src/disposable.js";
 
-const expected = { model: "gpt-6-astra", provider: "openai", filesystem: { "/": "read", "/private/tmp": "deny", "/fixture/checkout": "write" }, codexHome: "/fixture/control/codex", cwd: "/fixture/control/trusted" };
+const expected = { model: "gpt-6-astra", provider: "openai", filesystem: { ":minimal": "read", "/dev/tty*": "deny", "/dev/ptmx*": "deny", "/": "read", "/private/tmp": "deny", "/fixture/checkout": "write" }, codexHome: "/fixture/control/codex", cwd: "/fixture/control/trusted" };
 function attestation(filesystem: Record<string, string> = expected.filesystem): string {
-  const entries = Object.entries(filesystem).map(([scope, access]) => `FileSystemSandboxEntry { path: Path { path: PathUri(Url { scheme: "file", cannot_be_a_base: false, username: "", password: None, host: None, port: None, path: ${JSON.stringify(scope)}, query: None, fragment: None }) }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }`);
-  return `2026-10-15T11:09:08.667394Z  INFO codex.exec{otel.kind="internal" thread.id="fixture"}: codex_exec: Codex initialized with event: SessionConfiguredEvent { model: "gpt-6-astra", model_provider_id: "openai", approval_policy: Never, permission_profile: Managed { file_system: Restricted { entries: [${entries.join(", ")}], glob_scan_max_depth: None }, network: Restricted }, active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None }), cwd: AbsolutePathBuf("/fixture/control/trusted") }\n`;
+  const entries = Object.entries(filesystem).map(([scope, access]) => scope === ":minimal" ? `FileSystemSandboxEntry { path: Special { value: Minimal }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }` : (scope === "/dev/tty*" || scope === "/dev/ptmx*") ? `FileSystemSandboxEntry { path: GlobPattern { pattern: ${JSON.stringify(scope)} }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }` : `FileSystemSandboxEntry { path: Path { path: PathUri(Url { scheme: "file", cannot_be_a_base: false, username: "", password: None, host: None, port: None, path: ${JSON.stringify(scope)}, query: None, fragment: None }) }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }`);
+  return `2026-10-15T11:09:08.667394Z  INFO codex.exec{otel.kind="internal" thread.id="fixture"}: codex_exec: Codex initialized with event: SessionConfiguredEvent { model: "gpt-6-astra", model_provider_id: "openai", approval_policy: Never, reasoning_effort: Some(High), permission_profile: Managed { file_system: Restricted { entries: [${entries.join(", ")}], glob_scan_max_depth: None }, network: Restricted }, active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None }), cwd: AbsolutePathBuf("/fixture/control/trusted") }\n`;
 }
 const events = [
   { type: "thread.started", thread_id: "fixture" },
@@ -45,6 +45,12 @@ test("native review fail-closed cases mutate disposable evidence only", async (t
     { name: "model fallback", value: { ...good, stderr: good.stderr.replace("gpt-6-astra", "gpt-6.1-sol") } },
     { name: "provider fallback", value: { ...good, stderr: good.stderr.replace('model_provider_id: "openai"', 'model_provider_id: "other"') } },
     { name: "approval escalation", value: { ...good, stderr: good.stderr.replace("approval_policy: Never", "approval_policy: OnRequest") } },
+    { name: "reasoning default", value: { ...good, stderr: good.stderr.replace("reasoning_effort: Some(High)", "reasoning_effort: None") } },
+    { name: "minimal writable", value: { ...good, stderr: attestation({ ...expected.filesystem, ":minimal": "write" }) } },
+    { name: "terminal glob widened", value: { ...good, stderr: attestation({ ...expected.filesystem, "/dev/tty*": "read" }) } },
+    { name: "master glob widened", value: { ...good, stderr: attestation({ ...expected.filesystem, "/dev/ptmx*": "read" }) } },
+    { name: "unexpected glob", value: { ...good, stderr: good.stderr.replace('/dev/tty*', '/dev/*') } },
+    { name: "unexpected special", value: { ...good, stderr: good.stderr.replace("value: Minimal", "value: Root") } },
     { name: "network grant", value: { ...good, stderr: good.stderr.replace("network: Restricted", "network: Enabled") } },
     { name: "extra home scope", value: { ...good, stderr: attestation({ ...expected.filesystem, "/fixture/private": "read" }) } },
     { name: "write widened", value: { ...good, stderr: attestation({ ...expected.filesystem, "/private/tmp": "write" }) } },
@@ -80,16 +86,18 @@ test("native review fail-closed cases mutate disposable evidence only", async (t
 test("production invocation uses explicit isolated configuration and separate host/child environment", () => {
   process.env.RHIZ_FAKE_TOKEN_CANARY = "fixture-only";
   try {
-    const invocation = nativeCodexReviewInvocation({ model: expected.model, instructions: "trusted instructions", trusted: expected.cwd, alias: expected.codexHome, hostHome: "/fixture/control/home", scratch: "/fixture/scratch", catalogPath: "/fixture/control/native-model.json", filesystem: expected.filesystem });
+    const invocation = nativeCodexReviewInvocation({ model: expected.model, instructions: "trusted instructions", trusted: expected.cwd, alias: expected.codexHome, hostHome: "/fixture/control/home", scratch: "/fixture/scratch", shellHome: "/fixture/control/shell-home", catalogPath: "/fixture/control/native-model.json", filesystem: { "/fixture/checkout": "write" } });
     const flags = invocation.args.join("\n");
-    for (const flag of ["--ignore-user-config", "--ignore-rules", "--ephemeral", "--strict-config", "--json", "gpt-6-astra", 'permissions.review.network.enabled=false', "allow_login_shell=false", 'shell_environment_policy.inherit="none"']) {
+    for (const flag of ["--ignore-user-config", "--ignore-rules", "--ephemeral", "--strict-config", "--json", "gpt-6-astra", 'permissions.review.network.enabled=false', 'model_reasoning_effort="high"', "allow_login_shell=false", 'shell_environment_policy.inherit="none"']) {
       assert(flags.includes(flag), flag);
     }
+    for (const scope of [':minimal', '/dev/tty*', '/dev/ptmx*']) assert(flags.includes(JSON.stringify(scope) + '=' + JSON.stringify(scope === ':minimal' ? 'read' : 'deny')));
     assert(!flags.includes("--sandbox")); assert(!flags.includes("--dangerously"));
     assert.equal(invocation.env.CODEX_HOME, expected.codexHome);
     assert.deepEqual(Object.keys(invocation.env).sort(), ["CODEX_HOME", "HOME", "PATH", "RUST_LOG"]);
     assert(!JSON.stringify(invocation).includes("fixture-only"));
     const childConfig = invocation.args.find((arg) => arg.startsWith("shell_environment_policy.set="))!;
+    assert(childConfig.includes('"ZDOTDIR"="/fixture/control/shell-home"')); assert(childConfig.includes('"BASH_ENV"="/dev/null"')); assert(childConfig.includes('"ENV"="/dev/null"'));
     assert(childConfig.includes('"HOME"="/fixture/scratch"')); assert(!childConfig.includes("CODEX_HOME"));
   } finally { delete process.env.RHIZ_FAKE_TOKEN_CANARY; }
 });
@@ -133,9 +141,9 @@ if(args[0]==='app-server'){
  if(mode==='timeout')return setInterval(()=>{},1000);
  const raw=args.find(a=>a.startsWith('permissions.review.filesystem=')).slice('permissions.review.filesystem='.length);
  const scopes=JSON.parse(raw.replace(/("(?:[^"\\\\]|\\\\.)*")=/g,'$1:'));
- const entries=Object.entries(scopes).map(([p,a])=>'FileSystemSandboxEntry { path: Path { path: PathUri(Url { scheme: "file", cannot_be_a_base: false, username: "", password: None, host: None, port: None, path: '+JSON.stringify(p)+', query: None, fragment: None }) }, access: '+a[0].toUpperCase()+a.slice(1)+', missing_path_behavior: None }');
+ const entries=Object.entries(scopes).map(([p,a])=>p===':minimal'?'FileSystemSandboxEntry { path: Special { value: Minimal }, access: '+a[0].toUpperCase()+a.slice(1)+', missing_path_behavior: None }':(p==='/dev/tty*'||p==='/dev/ptmx*')?'FileSystemSandboxEntry { path: GlobPattern { pattern: '+JSON.stringify(p)+' }, access: '+a[0].toUpperCase()+a.slice(1)+', missing_path_behavior: None }':'FileSystemSandboxEntry { path: Path { path: PathUri(Url { scheme: "file", cannot_be_a_base: false, username: "", password: None, host: None, port: None, path: '+JSON.stringify(p)+', query: None, fragment: None }) }, access: '+a[0].toUpperCase()+a.slice(1)+', missing_path_behavior: None }');
  const model=args[args.indexOf('-m')+1];
- process.stderr.write('2026-10-15T11:09:08.667394Z  INFO codex.exec{otel.kind="internal"}: codex_exec: Codex initialized with event: SessionConfiguredEvent { model: '+JSON.stringify(model)+', model_provider_id: "openai", approval_policy: Never, permission_profile: Managed { file_system: Restricted { entries: ['+entries.join(', ')+'], glob_scan_max_depth: None }, network: Restricted }, active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None }), cwd: AbsolutePathBuf('+JSON.stringify(process.cwd())+') }\\n');
+ process.stderr.write('2026-10-15T11:09:08.667394Z  INFO codex.exec{otel.kind="internal"}: codex_exec: Codex initialized with event: SessionConfiguredEvent { model: '+JSON.stringify(model)+', model_provider_id: "openai", approval_policy: Never, reasoning_effort: Some(High), permission_profile: Managed { file_system: Restricted { entries: ['+entries.join(', ')+'], glob_scan_max_depth: None }, network: Restricted }, active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None }), cwd: AbsolutePathBuf('+JSON.stringify(process.cwd())+') }\\n');
  if(mode==='alias-materialize'){fs.unlinkSync(path.join(process.env.CODEX_HOME,'auth.json'));fs.writeFileSync(path.join(process.env.CODEX_HOME,'auth.json'),'DUMMY_MATERIALIZATION')}
  process.stdout.write(${JSON.stringify(jsonl(events))});
  if(mode==='truncated')process.stdout.write('{"type":');

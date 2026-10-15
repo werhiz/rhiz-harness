@@ -25,7 +25,7 @@ export interface NativeCodexReviewOptions {
 
 export interface NativeCodexReviewResult {
   text: string;
-  executor: { executable: string; version: "0.162.1"; modelCatalogSha256: string; model: string; provider: "openai"; profile: "review" };
+  executor: { executable: string; version: "0.162.1"; modelCatalogSha256: string; reasoningEffort: "high"; model: string; provider: "openai"; profile: "review" };
   usage: Readonly<Record<string, number>>;
   /** Raw JSONL for the existing consumer's evidence/leak checks, never acceptance. */
   events: string;
@@ -62,6 +62,7 @@ function hostEnvironment(home: string, codexHome: string): NodeJS.ProcessEnv {
 async function directory(value: string): Promise<string> {
   if (!isAbsolute(value)) throw new Error("review paths must be absolute");
   const resolved = await realpath(value);
+  if (/[?*\[\]{}]/.test(resolved)) throw new Error("native review directory cannot contain glob syntax");
   if (!(await stat(resolved)).isDirectory()) throw new Error("review scope must be a directory");
   return resolved;
 }
@@ -142,7 +143,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
   const sessions = output.stderr.split("\n").filter((line) => /^\d{4}-\d\d-\d\dT\S+\s+INFO codex\.exec\{[^\n]*\}: codex_exec: Codex initialized with event: SessionConfiguredEvent \{/.test(line));
   if (sessions.length !== 1) throw new Error("native review startup attestation missing or ambiguous");
   const session = sessions[0]!;
-  for (const fragment of [`model: ${JSON.stringify(expected.model)},`, `model_provider_id: ${JSON.stringify(expected.provider)},`, "approval_policy: Never,", 'active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None })', `cwd: AbsolutePathBuf(${JSON.stringify(expected.cwd)})`]) {
+  for (const fragment of [`model: ${JSON.stringify(expected.model)},`, `model_provider_id: ${JSON.stringify(expected.provider)},`, "approval_policy: Never,", "reasoning_effort: Some(High),", 'active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None })', `cwd: AbsolutePathBuf(${JSON.stringify(expected.cwd)})`]) {
     if (!session.includes(fragment)) throw new Error("native review model/provider/profile drift");
   }
   if (!session.includes("permission_profile: Managed { file_system: Restricted {") || !session.includes("network: Restricted }")) throw new Error("native review permission profile missing");
@@ -150,8 +151,19 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
   const entry = /FileSystemSandboxEntry \{ path: Path \{ path: PathUri\(Url \{[^}]*path: ("(?:[^"\\]|\\.)*")[^}]*\}\) \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
   for (const match of session.matchAll(entry)) {
     const scope = JSON.parse(match[1]!) as string;
+    if (/[?*\[\]{}]/.test(scope)) throw new Error("native review literal path contains glob syntax");
     if (observed.has(scope)) throw new Error("native review duplicate permission scope");
     observed.set(scope, match[2]!.toLowerCase());
+  }
+  const minimal = /FileSystemSandboxEntry \{ path: Special \{ value: Minimal \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
+  for (const match of session.matchAll(minimal)) {
+    if (observed.has(":minimal")) throw new Error("native review duplicate minimal permission");
+    observed.set(":minimal", match[1]!.toLowerCase());
+  }
+  const terminalGlob = /FileSystemSandboxEntry \{ path: GlobPattern \{ pattern: "(\/dev\/(?:tty|ptmx)\*)" \}, access: Deny, missing_path_behavior: None \}/g;
+  for (const match of session.matchAll(terminalGlob)) {
+    if (observed.has(match[1]!)) throw new Error("native review duplicate terminal deny glob");
+    observed.set(match[1]!, "deny");
   }
   for (const [scope, access] of Object.entries(expected.filesystem)) {
     if (observed.get(scope) !== access) throw new Error("native review filesystem profile drift");
@@ -195,16 +207,21 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
   return { text: final, usage };
 }
 
+function nativeReviewFilesystem(scopes: Readonly<Record<string, string>>): Record<string, string> {
+  // Globs compile to overriding Seatbelt denies; literal device carveouts do not.
+  return { ...scopes, ":minimal": "read", "/dev/tty*": "deny", "/dev/ptmx*": "deny" };
+}
+
 /** Production flags/environment shared with deterministic native-provider probes. No provider override. */
 export function nativeCodexReviewInvocation(input: {
   model: string; instructions: string; trusted: string; alias: string; hostHome: string;
-  scratch: string; catalogPath: string; filesystem: Readonly<Record<string, string>>;
+  scratch: string; shellHome: string; catalogPath: string; filesystem: Readonly<Record<string, string>>;
 }): { args: string[]; env: NodeJS.ProcessEnv } {
-  const { trusted, alias, hostHome, scratch, filesystem, catalogPath } = input;
-  const shellEnvironment = { HOME: scratch, TMPDIR: scratch, PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const { trusted, alias, hostHome, scratch, shellHome, filesystem, catalogPath } = input;
+  const shellEnvironment = { HOME: scratch, TMPDIR: scratch, PATH: "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", ZDOTDIR: shellHome, BASH_ENV: "/dev/null", ENV: "/dev/null" };
   const config: Config = {
-    model_catalog_json: catalogPath, cli_auth_credentials_store: "file", model_provider: "openai", approval_policy: "never", default_permissions: "review",
-    "permissions.review.filesystem": filesystem, "permissions.review.network.enabled": false,
+    model_reasoning_effort: "high", model_catalog_json: catalogPath, cli_auth_credentials_store: "file", model_provider: "openai", approval_policy: "never", default_permissions: "review",
+    "permissions.review.filesystem": nativeReviewFilesystem(filesystem), "permissions.review.network.enabled": false,
     "skills.include_instructions": false, "skills.bundled.enabled": false, project_doc_max_bytes: 0,
     "agents.enabled": false, "features.multi_agent_v2": false, "features.send_message_to_user_async": false,
     "tools.update_plan.enabled": false, "tools.experimental_request_user_input.enabled": false,
@@ -244,8 +261,8 @@ export async function runNativeCodexReview(options: NativeCodexReviewOptions): P
     }
     if (contains(checkout, executable) || contains(scratch, executable) || contains(checkout, catalogFile) || contains(scratch, catalogFile)) throw new Error("native review controls must be outside target writable scopes");
     if (contains(checkout, common) || contains(scratch, common) || contains(checkout, scratch) || contains(scratch, checkout)) throw new Error("native review scopes overlap");
-    const trusted = join(control, "trusted"), alias = join(control, "codex"), hostHome = join(control, "home");
-    for (const path of [trusted, alias, hostHome]) await mkdir(path, { mode: 0o700 });
+    const trusted = join(control, "trusted"), alias = join(control, "codex"), hostHome = join(control, "home"), shellHome = join(control, "shell-home");
+    for (const path of [trusted, alias, hostHome, shellHome]) await mkdir(path, { mode: 0o700 });
     await symlink(auth, join(alias, "auth.json"));
     const catalogPath = join(control, "native-model.json");
     await writeFile(catalogPath, JSON.stringify({ models: records }), { mode: 0o600, flag: "wx" });
@@ -253,14 +270,14 @@ export async function runNativeCodexReview(options: NativeCodexReviewOptions): P
     if (version.stdout.trim() !== "codex-cli 0.162.1") throw new Error("native review CLI version is unproven");
     const originalAccount = await accountMetadata(executable, canonical, home, trusted, remaining(), true);
     if (await accountMetadata(executable, alias, hostHome, trusted, remaining(), false) !== originalAccount) throw new Error("native review auth alias principal mismatch");
-    const filesystem: Record<string, string> = { "/": "read", [home]: "deny", [canonical]: "deny", "/private/tmp": "deny", "/private/var/folders": "deny", [control]: "deny", [checkout]: "write", [scratch]: "write", [common]: "read" };
+    const filesystem = nativeReviewFilesystem({ "/": "read", [home]: "deny", [canonical]: "deny", "/private/tmp": "deny", "/private/var/folders": "deny", [control]: "deny", [shellHome]: "read", [checkout]: "write", [scratch]: "write", [common]: "read" });
     for (const toolchain of toolchains) filesystem[toolchain] = "read";
-    const invocation = nativeCodexReviewInvocation({ model: options.model, instructions: options.instructions, trusted, alias, hostHome, scratch, filesystem, catalogPath });
+    const invocation = nativeCodexReviewInvocation({ model: options.model, instructions: options.instructions, trusted, alias, hostHome, scratch, shellHome, filesystem, catalogPath });
     const output = await invoke(executable, invocation.args, trusted, invocation.env, options.packet, remaining());
     const parsed = parseNativeCodexReview(output, { model: options.model, provider: "openai", filesystem, codexHome: alias, cwd: trusted });
     const aliasStat = await lstat(join(alias, "auth.json")), finalAuthStat = await lstat(auth);
     if (!aliasStat.isSymbolicLink() || await realpath(join(alias, "auth.json")) !== auth || !finalAuthStat.isFile() || finalAuthStat.uid !== process.getuid?.() || (finalAuthStat.mode & 0o077) !== 0) throw new Error("native review auth alias was materialized or replaced");
-    return { ...parsed, executor: { executable, version: "0.162.1", modelCatalogSha256: options.modelCatalog.recordSha256, model: options.model, provider: "openai", profile: "review" }, events: output.stdout };
+    return { ...parsed, executor: { executable, version: "0.162.1", modelCatalogSha256: options.modelCatalog.recordSha256, reasoningEffort: "high", model: options.model, provider: "openai", profile: "review" }, events: output.stdout };
   } finally {
     // rm unlinks the single symlink; it never follows it into the canonical home.
     await rm(control, { recursive: true, force: true });
