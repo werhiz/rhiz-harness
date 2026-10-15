@@ -22,6 +22,19 @@ const EnvelopeSchema = z.object({
 
 const sha = (value: string) => `sha256:${hash(value)}`;
 
+export function canonicalGovernedReviewHeading(body: string, head: string, allowReady = true): { verdict: "READY" | "NOT READY"; namedHead: string } | undefined {
+  if (!/^[a-f0-9]{40}$/.test(head)) return undefined;
+  const pattern = allowReady ? /^## (NOT READY|READY) at ([a-f0-9]{7,40})\s*$/m : /^## (NOT READY) at ([a-f0-9]{7,40})\s*$/m;
+  const match = pattern.exec(body);
+  if (!match) return undefined;
+  if (!head.startsWith(match[2]!) || !body.includes("<!-- rhiz-review-agent -->") || !body.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.`)) return undefined;
+  return { verdict: match[1] as "READY" | "NOT READY", namedHead: match[2]! };
+}
+
+export function assertGovernedExecutionRootIdentity(workerDigest: string | undefined, verifierDigest: string | undefined): void {
+  if (!workerDigest || workerDigest !== verifierDigest) throw new Error("worker and verifier did not observe the same governed execution-root digest");
+}
+
 export function governedConvergenceObjective(artifactPath: string, packetBlob: string): string {
   return `Artifact producer only: Copy the complete JSON manifest supplied in the Context into ${artifactPath}, retaining every field and its order. The manifest is the complete producer input; packetBlob and inputCheckpoint intentionally reference a separate immutable packet, not missing patch data. Use the native file-change tool to create only this artifact; its parent directories are already prepared. Do not run shell commands, inspect the referenced packet/source blobs, perform review, or satisfy the separate reviewer obligations. Packaging makes no authorship, semantic correctness, verification, acceptance, or source-application claim. Do not modify any source file. Independent review only: After the producer has completed its packaging and Verify has passed, the separate independent reviewer must read the WHOLE immutable packet via git cat-file blob ${packetBlob}, inspect the actual original and accepted-main blobs, and judge preservation of both source legs and repair-only scope against its active findings. The reviewer must refuse if the whole patch or its source evidence cannot be inspected. These obligations belong to the reviewer, not the artifact producer. Deterministic identity checks do not prove these semantics.`;
 }
@@ -257,8 +270,9 @@ export function validateGovernedConvergencePolicy(options: {
   if (!latest || (latest.url ?? latest.html_url) !== review.commentUrl) throw new Error("governed review is no longer the latest canonical review");
   const comment = JSON.parse(execFileSync("gh", ["api", "--hostname", new URL(packet.forge.prUrl).hostname, `repos/${new URL(packet.forge.prUrl).pathname.split("/").filter(Boolean).slice(0, 2).join("/")}/issues/comments/${review.commentId}`], { cwd: root, encoding: "utf8", timeout: 15_000, maxBuffer: MAX_ENVELOPE_BYTES }));
   const body = comment.body;
-  const verdict = new RegExp(`^## (NOT READY|READY) at ${sourceHead.slice(0, 40)}\\s*$`, "m").exec(body ?? "")?.[1];
-  if (String(comment.id) !== String(review.commentId) || comment.html_url !== review.commentUrl || hash(body ?? "") !== review.commentDigest || comment.user?.login !== review.reviewerLogin || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || !body?.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${sourceHead}\`.`) || !verdict || verdict !== review.verdict) throw new Error("governed review identity changed since packet creation");
+  const heading = typeof body === "string" ? canonicalGovernedReviewHeading(body, sourceHead) : undefined;
+  const verdict = heading?.verdict;
+  if (String(comment.id) !== String(review.commentId) || comment.html_url !== review.commentUrl || hash(body ?? "") !== review.commentDigest || comment.user?.login !== review.reviewerLogin || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || !heading || !verdict || verdict !== review.verdict) throw new Error("governed review identity changed since packet creation");
   const createdAt = Date.parse(comment.created_at);
   if (!Number.isFinite(createdAt) || createdAt > Date.now() || Date.now() - createdAt >= 4 * 60 * 60 * 1000 || comment.created_at !== review.createdAt) throw new Error("governed review is stale or changed");
   const source = verifyHook(root, sourceHead);

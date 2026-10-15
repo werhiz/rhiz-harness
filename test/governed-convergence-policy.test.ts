@@ -5,7 +5,7 @@ import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { governedConvergenceObjective, harnessGitRefSegment, validateGovernedConvergencePolicy } from "../adapters/git/index.js";
+import { assertGovernedExecutionRootIdentity, canonicalGovernedReviewHeading, governedConvergenceObjective, harnessGitRefSegment, validateGovernedConvergencePolicy } from "../adapters/git/index.js";
 import { GitWorktreeWorkspaceProvider } from "../adapters/git/worktrees.js";
 import { parseWorkContract } from "../src/schemas.js";
 
@@ -41,6 +41,12 @@ function fixedContract(workId: string, paths: string[], packetBlob: string) {
     verificationPolicy: { required: true, independentActor: true, reviewRequired: true, falsifiabilityExemptions: [] },
   });
 }
+
+test("governed worker and verifier execution identities must match", () => {
+  assert.doesNotThrow(() => assertGovernedExecutionRootIdentity("sha256:one", "sha256:one"));
+  assert.throws(() => assertGovernedExecutionRootIdentity("sha256:worker", "sha256:verifier"), /same governed execution-root digest/);
+  assert.throws(() => assertGovernedExecutionRootIdentity(undefined, "sha256:verifier"), /same governed execution-root digest/);
+});
 
 test("validated convergence policy overlays only runtime bytes and preserves source candidate identity", async () => {
   const root = mkdtempSync(join(tmpdir(), "rhiz-policy-fixture-"));
@@ -147,11 +153,17 @@ test("validated convergence policy overlays only runtime bytes and preserves sou
     const symlinkEnvelopePath = join(root, "symlink-envelope.json");
     symlinkSync(envelopePath, symlinkEnvelopePath);
     assert.throws(() => validateGovernedConvergencePolicy({ repositoryRoot: repository, baseRevision: sourceHead, contract: work, envelopeFilename: symlinkEnvelopePath }), /ELOOP|symbolic link|regular file/);
+    const canonicalBody = `## NOT READY at ${sourceHead.slice(0, 10)}\n<!-- rhiz-review-agent -->\nIndependent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${sourceHead}\`.`;
+    assert.deepEqual(canonicalGovernedReviewHeading(canonicalBody, sourceHead), { verdict: "NOT READY", namedHead: sourceHead.slice(0, 10) });
+    assert.equal(canonicalGovernedReviewHeading(canonicalBody.replace(sourceHead.slice(0, 10), "0".repeat(10)), sourceHead), undefined);
+    assert.equal(canonicalGovernedReviewHeading(canonicalBody.replace(`head \`${sourceHead}\``, `head \`${"0".repeat(40)}\``), sourceHead), undefined);
+    assert.throws(() => validateGovernedConvergencePolicy({ repositoryRoot: repository, baseRevision: sourceHead, contract: { ...work, id: "work:other" }, envelopeFilename: envelopePath }), /Work\/source identity mismatch/);
     const validated = validateGovernedConvergencePolicy({ repositoryRoot: repository, baseRevision: sourceHead, contract: work, envelopeFilename: envelopePath });
     assert.equal(validated.acceptedHead, acceptedHead);
     assert.equal(validated.source.blob, sourceBlob);
     provider = new GitWorktreeWorkspaceProvider({ repositoryRoot: repository, worktreeRoot: join(runRoot, "worktrees"), idFactory: () => "fixed-id", governedConvergencePolicy: validated });
     const workspace = await provider.acquire({ crewId: `crew:${workId}`, work, baseRevision: sourceHead, mode: "isolated-write" });
+    await assert.rejects(provider.acquire({ crewId: `crew:${workId}`, work: { ...work, id: "work:dependent", dependencies: [workId] }, baseRevision: sourceHead, mode: "isolated-write", sourceWorkspace: workspace, sourceWorkId: workId }), /cannot inherit another workspace/);
     const hookPath = join(workspace.executionRoot, validated.path);
     assert.equal(git(workspace.executionRoot, ["rev-parse", "HEAD"]), sourceHead);
     assert.equal(sha(readFileSyncBytes(hookPath)), policy.accepted.sha256);

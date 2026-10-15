@@ -9,6 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { CodexAppServerHost } from "../dist/adapters/codex/app-server.js";
 import { aggregateAttemptUsage, createRepositoryBenchmarkRun, repositoryRunContext } from "../dist/src/benchmark.js";
 import {
+  assertGovernedExecutionRootIdentity,
   candidatePathScopesFromResources,
   GitWorkIntegrationExecutor,
   GitWorktreeWorkspaceProvider,
@@ -645,7 +646,7 @@ try {
     assert.equal(verification.target.head, candidate.head);
     assert.equal(verification.projectionViolationCount, 0);
     if (governedPolicy) {
-      if (mission.workspaceAfter?.digest !== verification.target.digest) throw new Error("worker and verifier did not observe the same governed execution-root digest");
+      assertGovernedExecutionRootIdentity(mission.workspaceAfter?.digest, verification.target.digest);
       if (JSON.stringify(candidate.changedPaths) !== JSON.stringify([`tools/horizon-convergence-artifacts/${work.id.slice(-40)}/artifact.json`])) throw new Error("governed convergence candidate contains paths beyond its exact artifact");
     }
 

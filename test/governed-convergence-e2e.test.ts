@@ -94,7 +94,7 @@ async function convergenceFixture() {
   const lines = original.trimEnd().split("\n");
   const patch = `--- a/source.txt\n+++ b/source.txt\n@@ -1,${lines.length} +1 @@\n${lines.map(line => "-" + line).join("\n")}\n+resolved\n`;
   const commentUrl = `${prUrl}#issuecomment-${commentId}`;
-  const comment = { id: 101, html_url: commentUrl, issue_url: "https://api.github.com/repos/example/project/issues/42", author_association: "MEMBER", user: { login: "checker" }, created_at: new Date().toISOString(), body: `## NOT READY at ${head}\n\n<!-- rhiz-review-agent -->\nIndependent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.\n\nResolve source.txt preserving both legs.` };
+  const comment = { id: 101, html_url: commentUrl, issue_url: "https://api.github.com/repos/example/project/issues/42", author_association: "MEMBER", user: { login: "checker" }, created_at: new Date().toISOString(), body: `## NOT READY at ${head.slice(0, 10)}\n\n<!-- rhiz-review-agent -->\nIndependent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.\n\nResolve source.txt preserving both legs.` };
   const anchor = git(["diff", "--numstat", `${base}...${head}`]).split("\n").reduce((sum, row) => { const [a,d] = row.split("\t"); return sum + Number(a) + Number(d); }, 0);
   await writeFile(join(repo, ".rhiz-horizon-reviews.json"), JSON.stringify({ reviews: { feature: { change: 42, anchorDiffLines: 400, correctionReceipts: [{ head, commentUrl, commentDigest: createHash("sha256").update(comment.body).digest("hex"), reviewerLogin: "checker", anchorDiffLines: 999999 }] } } }));
   const calls = join(root, "calls.txt");

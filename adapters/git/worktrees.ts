@@ -209,6 +209,10 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
     if (this.#closed) throw new Error("Git worktree workspace provider is closed");
     const request = CrewWorkspaceAcquireRequestSchema.parse(rawRequest);
 
+    // GUARD integration/governed-convergence-cannot-inherit-workspace
+    if (request.sourceWorkspace !== undefined && this.#governedPolicy) {
+      throw new Error("governed convergence Work cannot inherit another workspace");
+    }
     if (request.sourceWorkspace !== undefined) {
       const source = request.sourceWorkspace;
       const record = this.#records.get(source.workspaceId);

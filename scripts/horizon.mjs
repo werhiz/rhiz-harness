@@ -36,7 +36,7 @@ import { TempDirectoryDerivativeFactory } from "../dist/src/disposable.js";
 import { digestExecutionRoot } from "../dist/src/workspace-digest.js";
 import { pushHarnessCheckpoint, harnessGitRefSegment } from "../dist/adapters/git/checkpoints.js";
 import { HARDENED_GIT_FLAGS, hardenedGitEnv } from "../dist/adapters/git/worktrees.js";
-import { governedConvergenceObjective } from "../dist/adapters/git/governed-convergence-policy.js";
+import { canonicalGovernedReviewHeading, governedConvergenceObjective } from "../dist/adapters/git/governed-convergence-policy.js";
 
 import {
   baselineFromSignals,
@@ -211,9 +211,9 @@ function reviewComment(repo, pr, commentUrl, head, allowReadyContext = false) {
   const issue = new URL(comment.issue_url);
   const expectedHost = target.hostname === "github.com" ? "api.github.com" : target.hostname;
   const body = comment.body;
-  const namedVerdict = typeof body === "string" ? (allowReadyContext ? /^## (NOT READY|READY) at ([a-f0-9]{7,40})\s*$/m : /^## (NOT READY) at ([a-f0-9]{7,40})\s*$/m).exec(body) : undefined;
-  const verdict = namedVerdict?.[1];
-  const namedHead = namedVerdict?.[2];
+  const namedVerdict = typeof body === "string" ? canonicalGovernedReviewHeading(body, head, allowReadyContext) : undefined;
+  const verdict = namedVerdict?.verdict;
+  const namedHead = namedVerdict?.namedHead;
   // GUARD integration/review-receipt-binds-forge-head
   if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || typeof comment.user?.login !== "string" || !namedHead || !head.startsWith(namedHead) || !body.includes("<!-- rhiz-review-agent -->") || !body.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.`)) throw new Error("receipt is not an attributable exact-head correction review");
   const receipt = { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
