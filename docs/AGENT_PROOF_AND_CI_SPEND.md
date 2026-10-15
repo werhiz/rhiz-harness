@@ -73,6 +73,24 @@ credential or model traffic. Raising the limit or guessing at worker concurrency
 would retain the observed aggregate bottleneck. Inspect the exact replacement
 run on 2026-10-12 before integration; require all three jobs to finish successfully.
 
+**Guard-job timeout follow-up (2026-10-15), owner: #4183 author.** On exact
+candidate `a6d313d5d4d678d6e01429bd124590a4f5d6ab9e`, hosted run
+[38680907664](https://github.com/werhiz/rhiz-harness/actions/runs/38680907664)
+completed the check job successfully. The separate guard job built the exact
+candidate and emitted passing results for all 91 declared guard proofs, but
+GitHub canceled the guard step at its 30-minute job bound, 17 ms after the
+final passing result. The dependent DSH job was skipped, so this run is not a
+complete hosted pass.
+
+This is evidence to extend only the guard job's timeout: its proof lane now
+runs separately, but checkout, setup, dependency installation and build still
+consume part of the same 30-minute bound. The guard timeout is 40 minutes;
+the check job remains at 30 minutes, the DSH job at 10, and every proof stage,
+dependency and failure condition is unchanged. The upper bound adds at most
+10 minutes on the free public Ubuntu runner for a run that needs the time. It
+adds no paid runner, job, trigger, credential or model traffic. Require a new
+exact-head hosted run to finish all three jobs before integration.
+
 ## The check agent
 
 Before integration, a checker other than the author inspects the exact candidate

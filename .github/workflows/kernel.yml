@@ -19,8 +19,7 @@ jobs:
   check:
     name: Build and replay contracts
     runs-on: ubuntu-latest
-    # The complete guard mutation lane has its own equal-sized budget below.
-    # Splitting execution retains every local stage without raising the ceiling.
+    # The complete guard mutation lane has its own bounded job below.
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -53,7 +52,7 @@ jobs:
   guards:
     name: Complete guard falsifiers
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
