@@ -54,6 +54,10 @@ const NOT_COVERED_LOCALLY = {
  * something, and it prints on every gate run from then on.
  */
 const NOT_PROVEN_IN_CI = {
+  "test/codex-native-review.test.ts": {
+    reason: "native review runner process/credential-alias fixtures require the Darwin-only adapter; scripted executables do not prove native containment",
+    provenOn: "an independent Darwin checkout running npm run check; installed-native containment and dummy-refresh automation remains a separate unresolved acceptance requirement documented in docs/CODEX_NATIVE_REVIEW.md",
+  },
   "test/containment.test.ts": {
     reason: "verifier OS containment is proven by real sandbox-exec escape attempts; sandbox-exec is darwin-only",
     provenOn: "a darwin workstation running `npm run check` (ADR 0017)",

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js";
-import { nativeCodexReviewInvocation, parseNativeCodexReview, runNativeCodexReview, NativeCodexReviewFailure } from "../adapters/codex/native-review.js";
+import { nativeCodexReviewInvocation, parseNativeCodexReview, runNativeCodexReview, NativeCodexReviewFailure, invokeNativeReviewProcess } from "../adapters/codex/native-review.js";
 import { requireProven, runDisposableProof, TempDirectoryDerivativeFactory } from "../src/disposable.js";
 
 const expected = { model: "gpt-6-astra", provider: "openai", filesystem: { ":minimal": "read", "/dev/tty*": "deny", "/dev/ptmx*": "deny", "/": "read", "/private/tmp": "deny", "/fixture/checkout": "write" }, codexHome: "/fixture/control/codex", cwd: "/fixture/control/trusted" };
@@ -38,6 +38,7 @@ async function candidate(): Promise<string> {
 }
 
 test("native review extracts only a completed final and startup model/profile evidence", () => {
+  assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], startedFile, completedFile, events[2], events[3]]) }, expected).text, events[2]!.item!.text);
   assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], { type: "item.completed", item: { id: "reasoning_only", type: "reasoning" } }, events[2], events[3]]) }, expected).text, events[2]!.item!.text);
   assert.deepEqual(parseNativeCodexReview(good, expected), { text: events[2]!.item!.text, usage: { input_tokens: 10, output_tokens: 4 } });
 });
@@ -52,6 +53,7 @@ test("native command completion preserves test failures as evidence without decl
 test("native review fail-closed cases mutate disposable evidence only", async (t) => {
   const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
   const cases = [
+    ...["in_progress", "cancelled", undefined].map((status) => ({ name: `incomplete file change ${status}`, value: { ...good, stdout: jsonl([events[0], events[1], startedFile, { ...completedFile, item: { ...completedFile.item, status } }, events[2], events[3]]) } })),
     ...[
       ["command erased by file", startedCommand, completedFile], ["file erased by command", startedFile, completedCommand],
       ["restarted command identity", startedCommand, completedCommand, startedCommand, completedCommand],
@@ -79,7 +81,8 @@ test("native review fail-closed cases mutate disposable evidence only", async (t
     { name: "write widened", value: { ...good, stderr: attestation({ ...expected.filesystem, "/private/tmp": "write" }) } },
     { name: "profile drift", value: { ...good, stderr: good.stderr.replace('id: "review"', 'id: "unrestricted"') } },
     { name: "missing final", value: { ...good, stdout: jsonl([events[0], events[1], events[3]]) } },
-    { name: "conflicting final", value: { ...good, stdout: jsonl([events[0], events[1], events[2], events[2], events[3]]) } },
+    { name: "distinct conflicting final", value: { ...good, stdout: jsonl([events[0], events[1], events[2], { type: "item.completed", item: { id: "other_final", type: "agent_message", text: "second final" } }, events[3]]) } },
+    { name: "commentary then final", value: { ...good, stdout: jsonl([events[0], events[1], { type: "item.completed", item: { id: "commentary", type: "agent_message", text: "review underway" } }, events[2], events[3]]) } },
     { name: "interrupted turn", value: { ...good, stdout: jsonl(events.slice(0, -1)) } },
     { name: "truncated stream", value: { ...good, stdout: good.stdout + '{"type":' } },
     { name: "missing usage", value: { ...good, stdout: jsonl([...events.slice(0, -1), { type: "turn.completed" }]) } },
@@ -111,6 +114,7 @@ test("production invocation uses explicit isolated configuration and separate ho
   try {
     const invocation = nativeCodexReviewInvocation({ model: expected.model, instructions: "trusted instructions", trusted: expected.cwd, alias: expected.codexHome, hostHome: "/fixture/control/home", scratch: "/fixture/scratch", shellHome: "/fixture/control/shell-home", catalogPath: "/fixture/control/native-model.json", filesystem: { "/fixture/checkout": "write" } });
     const flags = invocation.args.join("\n");
+    assert(flags.includes("Return exactly one assistant text message"));
     for (const flag of ["--ignore-user-config", "--ignore-rules", "--ephemeral", "--strict-config", "--json", "gpt-6-astra", 'permissions.review.network.enabled=false', 'model_reasoning_effort="high"', "allow_login_shell=false", 'shell_environment_policy.inherit="none"']) {
       assert(flags.includes(flag), flag);
     }
@@ -140,6 +144,23 @@ test("native runner refuses a fake wrong CLI without reading or removing canonic
       await assert.rejects(runNativeCodexReview({ executable: derivative.resolve("fake-codex"), model: "gpt-6-astra", instructions: "fixture", packet: "fixture", canonicalCodexHome: derivative.resolve("original"), modelCatalog: { path: derivative.resolve("original/models_cache.json"), recordSha256: createHash("sha256").update(JSON.stringify(record)).digest("hex") }, checkout: derivative.resolve("checkout"), scratch: derivative.resolve("scratch"), commonGitDirectory: derivative.resolve("common"), toolchainRoots: [derivative.resolve("toolchain")] }), /CLI version is unproven/);
       assert.equal(await readFile(derivative.resolve("original/auth.json"), "utf8"), "VISIBLY_FAKE_AUTH_FIXTURE");
       assert.deepEqual(await readdir(derivative.resolve("original")), ["auth.json", "models_cache.json"]);
+      return true;
+    },
+  });
+  assert.equal(requireProven(receipt), true);
+});
+
+test("native subprocess preserves UTF-8 split across stdout and stderr writes", async (t) => {
+  const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
+  const receipt = await runDisposableProof({
+    candidateRoot: root, probe: new GitCandidateIdentityProbe(), factory: new TempDirectoryDerivativeFactory(),
+    proof: async (derivative) => {
+      const text = '{"text":"café.ts"}\n';
+      await derivative.mutate("split.mjs", `const bytes=Buffer.from(${JSON.stringify(text)}), split=bytes.indexOf(0xc3)+1;
+for(const stream of [process.stdout,process.stderr])stream.write(bytes.subarray(0,split));
+setTimeout(()=>{for(const stream of [process.stdout,process.stderr])stream.write(bytes.subarray(split));},40);`, "split a multibyte codepoint between process writes");
+      const output = await invokeNativeReviewProcess(process.execPath, [derivative.resolve("split.mjs")], derivative.root, {}, "", 5000);
+      assert.deepEqual(output, { stdout: text, stderr: text });
       return true;
     },
   });

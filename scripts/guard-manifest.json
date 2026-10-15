@@ -681,6 +681,27 @@
       "testFile": "dist/test/codex-native-review.test.js"
     },
     {
+      "id": "codex/native-review-single-final-contract",
+      "why": "The phase-free native JSON protocol requires one final-only assistant message; ambiguous multi-message output must continue to refuse.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": " + \"\\nReturn exactly one assistant text message, only after all review work is finished. Do not emit intermediate commentary or a second final message.\"",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-file-change-terminal",
+      "why": "A paired file change must complete successfully before a final review result can retire it.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "        if (event.item.type === \"file_change\" && event.item.status !== \"completed\") throw new Error(\"native review file change incomplete\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-stream-utf8",
+      "why": "A process pipe may split a Unicode codepoint; evidence and startup paths must retain their original UTF-8 text.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "    child.stdout.setEncoding(\"utf8\"); child.stderr.setEncoding(\"utf8\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
       "id": "codex/native-review-item-lifecycle",
       "why": "A different completion type or replayed identity must never erase an unfinished command and certify a final response.",
       "file": "adapters/codex/native-review.ts",

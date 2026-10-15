@@ -68,6 +68,19 @@ must match their starts; only agent messages and reasoning may omit a start. Fai
 lifecycle metadata, without command/output/provider/account text. Reported model identity is native startup evidence, not a claim
 about an undisclosed backend implementation.
 
+File changes must end with `status: completed`; missing, cancelled, in-progress
+or failed completions refuse before the active item is retired. Process stdout
+and stderr use streaming UTF-8 decoders so a split codepoint cannot change a
+finding, event or startup path.
+
+Trusted developer instructions require exactly one assistant text message after
+all work finishes, without intermediate commentary. The parser still refuses
+multiple distinct messages. Native 0.162.1 JSON omits their phase, and its
+output-last-message file can contain commentary or silently select one of two
+finals; neither is a final-phase discriminator. Existing consumers must still
+validate their verdict grammar. This instruction never suppresses tool errors
+or relaxes completion, transport or model/profile checks.
+
 `nativeCodexReviewInvocation` is a module-level deterministic probe seam, absent
 from the package barrel. Tests may override its provider flags only against a
 local fake endpoint. The public production runner has no provider/test override.
@@ -75,6 +88,13 @@ No upstream source was copied: this is original integration code invoking an
 external native backend through its installed CLI/RPC interfaces.
 
 ## Proof and remaining acceptance
+
+The current correction automates file-status and actual split-pipe UTF-8
+regressions through disposable fixtures. CI parity explicitly lists the Darwin
+process/alias fixtures; those scripted executables do not prove native isolation.
+The installed-host containment and dummy-refresh sequence below still lacks
+checked-in gate automation. That acceptance gap remains open; this checkpoint
+does not claim that a passing portable suite proves the native boundary.
 
 The scoped implementation executor used deterministic shell, TypeScript and Node
 on Darwin. No model inference, credential mutation, install, push, PR or full gate

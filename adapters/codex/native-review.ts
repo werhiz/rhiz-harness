@@ -84,8 +84,9 @@ async function invoke(executable: string, args: string[], cwd: string, env: Node
       hardKill ??= setTimeout(() => { if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } }, 500);
     };
     const timer = setTimeout(() => { failure = new Error("native review timed out"); kill(); }, timeoutMs);
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); if (Buffer.byteLength(stdout) > MAX_OUTPUT) { failure = new Error("native review output exceeded bound"); kill(); } });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); if (Buffer.byteLength(stderr) > MAX_OUTPUT) { failure = new Error("native review diagnostics exceeded bound"); kill(); } });
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; if (Buffer.byteLength(stdout) > MAX_OUTPUT) { failure = new Error("native review output exceeded bound"); kill(); } });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; if (Buffer.byteLength(stderr) > MAX_OUTPUT) { failure = new Error("native review diagnostics exceeded bound"); kill(); } });
     child.stdin.on("error", () => { failure ??= new Error("native review input failed"); });
     child.on("error", () => { failure = new Error("native review process unavailable"); });
     child.on("close", (code, signal) => {
@@ -98,6 +99,9 @@ async function invoke(executable: string, args: string[], cwd: string, env: Node
     child.stdin.end(input);
   });
 }
+
+/** Transport-only deterministic probe seam; absent from the public package barrel. */
+export { invoke as invokeNativeReviewProcess };
 
 /** Metadata-only RPC. No login, refresh request, bearer-token request or credential file read. */
 async function accountMetadata(executable: string, codexHome: string, home: string, cwd: string, timeoutMs: number, canonical: boolean): Promise<string> {
@@ -214,6 +218,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
         if (activeItems.has(event.item.id)) throw new Error("native review duplicate active item");
         activeItems.set(event.item.id, event.item.type!);
       } else {
+        if (event.item.type === "file_change" && event.item.status !== "completed") throw new Error("native review file change incomplete");
         if (event.item.type === "command_execution") {
           const code = event.item.exit_code;
           if (activeItems.get(event.item.id) !== "command_execution" || typeof event.item.aggregated_output !== "string" || typeof code !== "number" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === "completed") || (code >= 1 && code <= 125 && event.item.status === "failed"))) throw new Error("native review command result inadmissible");
@@ -257,7 +262,7 @@ export function nativeCodexReviewInvocation(input: {
     "agents.enabled": false, "features.multi_agent_v2": false, "features.send_message_to_user_async": false,
     "tools.update_plan.enabled": false, "tools.experimental_request_user_input.enabled": false,
     allow_login_shell: false, "shell_environment_policy.inherit": "none", "shell_environment_policy.set": shellEnvironment,
-    developer_instructions: input.instructions, web_search: "disabled",
+    developer_instructions: input.instructions + "\nReturn exactly one assistant text message, only after all review work is finished. Do not emit intermediate commentary or a second final message.", web_search: "disabled",
   };
   const args = ["exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--strict-config", "--json", "--color", "never", "-C", trusted, "-m", input.model, ...overrides(config), ...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]), "-"];
   return { args, env: hostEnvironment(hostHome, alias) };
