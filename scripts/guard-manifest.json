@@ -679,6 +679,13 @@
       "file": "adapters/codex/native-review.ts",
       "remove": "        if (activeItems.get(event.item.id) !== \"command_execution\" || typeof event.item.aggregated_output !== \"string\" || typeof code !== \"number\" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === \"completed\") || (code >= 1 && code <= 125 && event.item.status === \"failed\"))) throw new Error(\"native review command result inadmissible\");\n",
       "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-item-lifecycle",
+      "why": "A different completion type or replayed identity must never erase an unfinished command and certify a final response.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (finishedItems.has(event.item.id)\n        || (event.type === \"item.completed\" && activeType !== event.item.type\n          && (activeType !== undefined || ![\"agent_message\", \"reasoning\"].includes(event.item.type!)))) {\n        throw new Error(\"native review item lifecycle mismatch\");\n      }\n",
+      "testFile": "dist/test/codex-native-review.test.js"
     }
   ]
 }

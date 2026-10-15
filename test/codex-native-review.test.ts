@@ -24,6 +24,8 @@ const jsonl = (rows: unknown[]) => rows.map((row) => JSON.stringify(row)).join("
 const good = { stdout: jsonl(events), stderr: attestation() };
 
 const command = (code: unknown, status: string = "failed") => ({ id: "item_0", type: "command_execution", command: "FAKE_COMMAND_SECRET", aggregated_output: "FAKE_OUTPUT_SECRET", exit_code: code, status });
+const completedCommand = { type: "item.completed", item: command(0, "completed") }, startedCommand = { type: "item.started", item: { ...command(null), status: "in_progress" } };
+const completedFile = { type: "item.completed", item: { id: "item_0", type: "file_change", status: "completed" } }, startedFile = { type: "item.started", item: { ...completedFile.item, status: "in_progress" } };
 const commandRows = (item: ReturnType<typeof command>) => [events[0], events[1], { type: "item.started", item: { ...item, status: "in_progress", exit_code: null } }, { type: "item.completed", item }, events[2], events[3]];
 
 async function candidate(): Promise<string> {
@@ -36,6 +38,7 @@ async function candidate(): Promise<string> {
 }
 
 test("native review extracts only a completed final and startup model/profile evidence", () => {
+  assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], { type: "item.completed", item: { id: "reasoning_only", type: "reasoning" } }, events[2], events[3]]) }, expected).text, events[2]!.item!.text);
   assert.deepEqual(parseNativeCodexReview(good, expected), { text: events[2]!.item!.text, usage: { input_tokens: 10, output_tokens: 4 } });
 });
 
@@ -49,6 +52,13 @@ test("native command completion preserves test failures as evidence without decl
 test("native review fail-closed cases mutate disposable evidence only", async (t) => {
   const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
   const cases = [
+    ...[
+      ["command erased by file", startedCommand, completedFile], ["file erased by command", startedFile, completedCommand],
+      ["restarted command identity", startedCommand, completedCommand, startedCommand, completedCommand],
+      ["repeated command completion", startedCommand, completedCommand, completedCommand],
+      ["repeated file completion", startedFile, completedFile, completedFile],
+      ["failed file change", startedFile, { ...completedFile, item: { ...completedFile.item, status: "failed" } }],
+    ].map(([name, ...items]) => ({ name: String(name), value: { ...good, stdout: jsonl([events[0], events[1], ...items, events[2], events[3]]) } })),
     ...[-1, undefined, null, "1", 126, 127, 128, 1.5].map((code) => ({ name: `inadmissible command exit ${code}`, value: { ...good, stdout: jsonl(commandRows(command(code))) } })),
     ...[command(0, "failed"), command(1, "completed"), command(1, "error"), { ...command(1), aggregated_output: undefined }].map((item) => ({ name: "malformed command completion", value: { ...good, stdout: jsonl(commandRows(item as ReturnType<typeof command>)) } })),
     { name: "unpaired command completion", value: { ...good, stdout: jsonl([events[0], events[1], { type: "item.completed", item: command(1) }, events[2], events[3]]) } },

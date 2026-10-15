@@ -149,6 +149,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
   let stage = "startup", eventIndex = -1, completed = false;
   let current: { type?: string; item?: { id?: string; type?: string; status?: string; exit_code?: number | null } } = {};
   const activeItems = new Map<string, string>();
+  const finishedItems = new Set<string>();
   try {
     const sessions = output.stderr.split("\n").filter((line) => /^\d{4}-\d\d-\d\dT\S+\s+INFO codex\.exec\{[^\n]*\}: codex_exec: Codex initialized with event: SessionConfiguredEvent \{/.test(line));
     if (sessions.length !== 1) throw new Error("native review startup attestation missing or ambiguous");
@@ -203,6 +204,12 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
       if (event.type !== "item.started" && event.type !== "item.completed") throw new Error("native review failed or unexpected event");
       if (!event.item || !["agent_message", "reasoning", "command_execution", "file_change"].includes(event.item.type ?? "")) throw new Error("native review unexpected tool item");
       if (!event.item.id) throw new Error("native review missing item identity");
+      const activeType = activeItems.get(event.item.id);
+      if (finishedItems.has(event.item.id)
+        || (event.type === "item.completed" && activeType !== event.item.type
+          && (activeType !== undefined || !["agent_message", "reasoning"].includes(event.item.type!)))) {
+        throw new Error("native review item lifecycle mismatch");
+      }
       if (event.type === "item.started") {
         if (activeItems.has(event.item.id)) throw new Error("native review duplicate active item");
         activeItems.set(event.item.id, event.item.type!);
@@ -212,6 +219,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
           if (activeItems.get(event.item.id) !== "command_execution" || typeof event.item.aggregated_output !== "string" || typeof code !== "number" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === "completed") || (code >= 1 && code <= 125 && event.item.status === "failed"))) throw new Error("native review command result inadmissible");
         }
         activeItems.delete(event.item.id);
+        finishedItems.add(event.item.id);
       }
       if (event.item.status === "error" || (event.item.status === "failed" && !(event.type === "item.completed" && event.item.type === "command_execution"))) throw new Error("native review tool failed");
       if (event.type === "item.completed" && event.item.type === "agent_message") {

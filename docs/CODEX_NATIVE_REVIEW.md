@@ -63,7 +63,8 @@ refuse native commentary emitted as a separate agent message; it never promotes
 partial output. Paired completed commands may report exit 0/completed or 1..125/failed
 with preserved string output. These are command evidence, never passing tests or
 READY. Launch errors, 126/127, signal-style exits, malformed status/exit pairs
-and unpaired completions refuse. Failure diagnostics contain only bounded
+and unpaired completions refuse. Item identities are single-use and completion types
+must match their starts; only agent messages and reasoning may omit a start. Failure diagnostics contain only bounded
 lifecycle metadata, without command/output/provider/account text. Reported model identity is native startup evidence, not a claim
 about an undisclosed backend implementation.
 
