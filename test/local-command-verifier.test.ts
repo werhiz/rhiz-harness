@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { LocalCommandVerifierProvider, type LocalCommandExecutionCapture } from "../adapters/local/command-verifier.js";
 import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js";
@@ -180,8 +181,9 @@ test("trusted outcome retention binds immutable actual command, target, bytes an
     const receipt = derivative.resolve("receipt.json");
     let observed: LocalCommandExecutionCapture | undefined;
     const retained = { id: "receipt:command", kind: "receipt" as const, uri: receipt, digest: "" };
+    const times = ["2026-10-15T22:00:00.000Z", "2026-10-15T22:00:01.000Z", "2026-10-15T22:00:02.000Z"];
     const provider = new LocalCommandVerifierProvider({
-      now: () => "2026-10-15T22:00:00.000Z",
+      now: () => times.shift()!,
       retainOutcome: async (capture) => {
         observed = capture;
         assert.throws(() => Object.assign(capture.config, { command: "FORGED" }), TypeError);
@@ -205,7 +207,9 @@ test("trusted outcome retention binds immutable actual command, target, bytes an
       assert.equal(observed.checkId, "check:command"); assert.equal(result.checkId, "check:command");
       assert.equal(observed.workspace.executionRoot, derivative.resolve("workspace"));
       assert.equal(observed.target.head, "abc123"); assert.equal(observed.config.command, process.execPath);
-      assert.equal(observed.startedAt, "2026-10-15T22:00:00.000Z"); assert.equal(observed.finishedAt, observed.startedAt);
+      assert.equal(observed.startedAt, "2026-10-15T22:00:00.000Z");
+      assert.equal(observed.finishedAt, "2026-10-15T22:00:01.000Z");
+      assert.equal(result.finishedAt, "2026-10-15T22:00:02.000Z");
       assert.deepEqual(Buffer.from(observed.outcome.stdoutBase64, "base64"), Buffer.from([0,255,10]));
       assert.equal(Buffer.from(observed.outcome.stderrBase64, "base64").toString(), "diagnostic");
       assert.equal(observed.outcomeDigest, result.evidence[0]!.digest);
@@ -265,6 +269,33 @@ test("trusted outcome retention has a deadline and ignores late sink settlement"
       } finally { if (watchdog) clearTimeout(watchdog); await provider.close(); }
     }
     for (const value of [0, 120001, Number.NaN]) assert.throws(() => new LocalCommandVerifierProvider({ outcomeRetentionTimeoutMs: value }), RangeError);
+    return true;
+  });
+});
+
+test("synchronous retention overrun refuses evidence even when the deadline timer cannot run", async () => {
+  await captureFixture(async (derivative) => {
+    const receipt = derivative.resolve("late-receipt.json");
+    let elapsed = 0;
+    let aborted = false;
+    const provider = new LocalCommandVerifierProvider({
+      outcomeRetentionTimeoutMs: 10,
+      retainOutcome: async (capture, signal) => {
+        signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+        const started = performance.now();
+        while (performance.now() - started < 80) { /* finite event-loop stall */ }
+        elapsed = performance.now() - started;
+        writeFileSync(receipt, JSON.stringify(capture), { flag: "wx", mode: 0o600 });
+        return { id: "receipt:stalled", kind: "receipt", uri: receipt, digest: captureDigest(capture) };
+      },
+    });
+    try {
+      const result = await provider.verify(request(derivative.root, { config: { command: process.execPath, args: ["-e", "process.exit(0)"] } }));
+      assert(elapsed >= 80); assert(aborted);
+      assert.equal(result.status, "error"); assert.deepEqual(result.evidence, []);
+      assert.match(result.summary, /command outcome retention timed out/);
+      assert.equal(JSON.parse(readFileSync(receipt, "utf8")).schema, "rhiz/local-command-execution/v1");
+    } finally { await provider.close(); }
     return true;
   });
 });

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { z } from "zod";
 import type { SandboxLauncher, SandboxPolicy } from "../../src/sandbox.js";
 import { requireSandbox } from "../../src/sandbox.js";
@@ -85,7 +86,8 @@ export interface LocalCommandVerifierOptions {
    * secret review before remote retention, and return a receipt with a nonempty
    * retrieval URI whose
    * digest is SHA256 of those exact JSON bytes. A failed retention refuses the check.
-   * Deadline abort is cooperative; late storage effects are not accepted proof.
+   * Deadline abort is cooperative; synchronous callbacks cannot be preempted,
+   * and rejecting late storage effects does not roll them back.
    */
   retainOutcome?: (capture: LocalCommandExecutionCapture, signal: AbortSignal) => Promise<EvidenceRef>;
   /** Host retention deadline, default 5s, at most 120s. Never a check option. */
@@ -408,7 +410,7 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
       const status = expected && !outcome.timedOut && !outcome.processLeak ? "pass" as const : "fail" as const;
       const exit = outcome.exitCode === null ? `signal ${outcome.signal ?? "unknown"}` : `exit ${outcome.exitCode}`;
       const truncation = outcome.stdoutTruncated || outcome.stderrTruncated ? "; output bounded" : "";
-      const finishedAt = this.#now();
+      let finishedAt = this.#now();
       const evidenceRefs = [evidence];
       const retainOutcome = this.#retainOutcome;
       if (retainOutcome && binding) {
@@ -420,6 +422,7 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
         });
         const controller = new AbortController();
         const timeout = new Error("command outcome retention timed out");
+        const retentionDeadline = performance.now() + this.#outcomeRetentionTimeoutMs;
         let timer: NodeJS.Timeout | undefined;
         try {
           const deadline = new Promise<never>((_, reject) => {
@@ -428,7 +431,9 @@ export class LocalCommandVerifierProvider implements VerifierProvider {
           const retained = EvidenceRefSchema.parse(await Promise.race([Promise.resolve().then(() => retainOutcome(capture, controller.signal)), deadline]));
           const digest = `sha256:${createHash("sha256").update(JSON.stringify(capture)).digest("hex")}`;
           if (retained.kind !== "receipt" || !retained.uri?.trim() || retained.digest !== digest) throw new Error("capture identity mismatch");
+          if (performance.now() >= retentionDeadline) { controller.abort(); throw timeout; }
           evidenceRefs.push(retained);
+          finishedAt = this.#now();
         } catch (error) { throw error === timeout ? timeout : new Error("command outcome retention failed"); }
         finally { if (timer) clearTimeout(timer); }
       }

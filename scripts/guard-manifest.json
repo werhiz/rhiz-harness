@@ -16,6 +16,13 @@
       "testFile": "dist/test/local-command-verifier.test.js"
     },
     {
+      "id": "verify/command-capture-rejects-synchronous-overrun",
+      "why": "A blocked event loop can resolve an overdue retention callback before its timer; monotonic acceptance must refuse that evidence without claiming to preempt or roll back the sink.",
+      "file": "adapters/local/command-verifier.ts",
+      "remove": "          if (performance.now() >= retentionDeadline) { controller.abort(); throw timeout; }\n",
+      "testFile": "dist/test/local-command-verifier.test.js"
+    },
+    {
       "id": "board/execution-actor-cannot-accept",
       "why": "An execution actor accepting its own Work is the self-certification the Constitution separates completion from acceptance to prevent.",
       "file": "src/board.ts",
