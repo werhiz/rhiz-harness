@@ -1431,3 +1431,38 @@ test("CrewSupervisor emits attempt.failed when the attempt deadline is exceeded 
     await run.close();
   }
 });
+
+test("governed detached Work cannot start a worker or policy hook before work.created is durable", async () => {
+  const ledger = new InMemoryEventLedger();
+  const workspaces = new FakeWorkspaceProvider();
+  const order: string[] = [];
+  const append = ledger.append.bind(ledger);
+  ledger.append = async (value) => {
+    const result = await append(value);
+    if (value.type === "work.created") order.push("work.created-durable");
+    return result;
+  };
+  const acquire = workspaces.acquire.bind(workspaces);
+  workspaces.acquire = async (request) => { order.push("workspace-acquire"); return acquire(request); };
+  const snapshot = workspaces.snapshot.bind(workspaces);
+  workspaces.snapshot = async (workspace) => { order.push("workspace-snapshot"); return snapshot(workspace); };
+  const provider = new SelectionProvider("worker:policy-order", "workspace");
+  provider.start = async (input) => {
+    order.push("worker-start");
+    const events = await ledger.replay(streamIdForWork("work:policy-order"));
+    assert.ok(events.some((event) => event.type === "work.created"), "Ledger must durably contain work.created before worker start");
+    order.push("policy-hook");
+    return new FakeHandle(provider.id, input, { status: "finished", summary: "ordered execution", artifacts: [], evidence: [] });
+  };
+  const work = crewWork({ id: "work:policy-order", type: "SHIP", preferredProviders: [provider.id] });
+  const run = await new CrewSupervisor({
+    plan: parseCrewPlan({ id: "crew:policy-order", objective: "Pin durable Work ordering", baseRevision: "base", maxParallel: 1,
+      missions: [{ work, workspace: { strategy: "fresh", mode: "isolated-write" }, requiredCapabilities: [] }] }),
+    ledger, workspaceProvider: workspaces, workerCatalog: sandboxCapableCatalog(provider), actor: human,
+  }).run();
+  try {
+    assert.ok(order.indexOf("workspace-acquire") < order.indexOf("work.created-durable"));
+    assert.ok(order.indexOf("work.created-durable") < order.indexOf("worker-start"));
+    assert.ok(order.indexOf("worker-start") < order.indexOf("policy-hook"));
+  } finally { await run.close(); }
+});
