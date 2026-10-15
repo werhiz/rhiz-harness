@@ -536,12 +536,21 @@ function validateConvergencePacket(packet, expectedDigest) {
 const GOVERNED_HOOK_PATH = ".claude/hooks/horizon-check.sh";
 function governedHookIdentity(repo, commit) {
   const rows = git(repo, ["ls-tree", "-z", commit, "--", GOVERNED_HOOK_PATH]).split("\0").filter(Boolean);
-  if (rows.length !== 1 || !/^100755 blob [a-f0-9]{40}\t\.claude\/hooks\/horizon-check\.sh$/.test(rows[0])) throw new Error("governed convergence requires one tracked 100755 Horizon hook at source and accepted main");
+  if (rows.length === 0) return null;
+  if (rows.length !== 1 || !/^100755 blob [a-f0-9]{40}\t\.claude\/hooks\/horizon-check\.sh$/.test(rows[0])) throw new Error("Horizon hook must be absent or one tracked regular executable at the exact governed path");
   const blob = rows[0].split("\t")[0].split(" ")[2];
   const bytes = execFileSync("git", ["cat-file", "blob", blob], { cwd: repo, maxBuffer: MAX_CONVERGENCE_BYTES });
   new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   if (bytes.includes(0)) throw new Error("governed Horizon hook must be UTF-8 shell text");
   return { mode: "100755", blob, sha256: sha(bytes) };
+}
+
+function convergenceExecutionPolicy(repo, sourceHead, acceptedHead, workId) {
+  const source = governedHookIdentity(repo, sourceHead);
+  const accepted = governedHookIdentity(repo, acceptedHead);
+  if (source === null && accepted === null) return { mode: "no-overlay", workId, purpose: "horizon-governed-detached-workspace", path: GOVERNED_HOOK_PATH };
+  if (source === null || accepted === null) throw new Error("governed overlay requires matching valid hooks at both source and accepted main");
+  return { mode: "overlay", workId, purpose: "horizon-governed-detached-workspace", path: GOVERNED_HOOK_PATH, source, accepted };
 }
 
 async function canonicalConvergenceWork(repo, workId) {
@@ -615,10 +624,14 @@ async function projectConvergenceTree(repo, privateRoot, input, originals, integ
 
 function convergenceReviewBlobs(repo, packet, checkpoint) {
   const entries = [{ label: "packet", blob: checkpoint.blob, digest: checkpoint.digest, tree: checkpoint.head, path: "artifact.json" }];
-  for (const [label, commit, identity] of [["source-policy", packet.source.head, packet.executionPolicy.source], ["accepted-policy", packet.forge.integration, packet.executionPolicy.accepted]]) {
-    const actual = governedHookIdentity(repo, commit);
-    if (actual.blob !== identity.blob || actual.sha256 !== identity.sha256 || actual.mode !== identity.mode) throw new Error("governed policy changed while review material was assembled");
-    entries.push({ label, blob: identity.blob, digest: identity.sha256, tree: commit, path: packet.executionPolicy.path, mode: identity.mode });
+  if (packet.executionPolicy.mode === "overlay") {
+    for (const [label, commit, identity] of [["source-policy", packet.source.head, packet.executionPolicy.source], ["accepted-policy", packet.forge.integration, packet.executionPolicy.accepted]]) {
+      const actual = governedHookIdentity(repo, commit);
+      if (!actual || actual.blob !== identity.blob || actual.sha256 !== identity.sha256 || actual.mode !== identity.mode) throw new Error("governed policy changed while review material was assembled");
+      entries.push({ label, blob: identity.blob, digest: identity.sha256, tree: commit, path: packet.executionPolicy.path, mode: identity.mode });
+    }
+  } else if (governedHookIdentity(repo, packet.source.head) !== null || governedHookIdentity(repo, packet.forge.integration) !== null) {
+    throw new Error("hook-free convergence changed hook state while review material was assembled");
   }
   for (const name of packet.request.paths) {
     for (const [label, tree] of [["original", packet.source.head], ["accepted-main", packet.forge.integration], ["projected", packet.projected.tree]]) {
@@ -767,8 +780,7 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
   const anchor = qualifiedConvergenceAnchor(repo, branch, forge, input.purpose);
   if (projected.diffLines >= Math.ceil(anchor * 1.25)) throw new Error("projected convergence exceeds the existing inclusive growth bound");
   const workId = `work:horizon-convergence-${sha(stable([forge.prUrl, forge.head, forge.comment.commentId, input.purpose])).slice(0, 40)}`;
-  const executionPolicy = { workId, purpose: "horizon-governed-detached-workspace", path: GOVERNED_HOOK_PATH,
-    source: governedHookIdentity(repo, before.head), accepted: governedHookIdentity(repo, forge.integration) };
+  const executionPolicy = convergenceExecutionPolicy(repo, before.head, forge.integration, workId);
   const packet = { schema: ARTIFACT_SCHEMA, request: input, source: before, forge, originals, projected, mergeStages, executionPolicy };
   const packetDigest = sha(stable(packet));
   const packetBlob = execFileSync("git", [...HARDENED_GIT_FLAGS, "hash-object", "-w", "--stdin"], { cwd: repo, env: hardenedGitEnv(), encoding: "utf8", input: stable(packet) }).trim();
@@ -823,13 +835,13 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     const target = produced?.board.integration?.headProof;
     if (!target || target.head !== started.receipt.candidate.head) throw new Error("actual producer receipt differs from canonical integration proof");
     const executionPolicyReceipt = started.receipt.governedConvergencePolicy;
-    if (!executionPolicyReceipt || executionPolicyReceipt.sourceHead !== before.head || executionPolicyReceipt.sourcePolicyBlob !== executionPolicy.source.blob || executionPolicyReceipt.acceptedPolicyHead !== forge.integration || executionPolicyReceipt.runtimePolicyBlob !== executionPolicy.accepted.blob || !executionPolicyReceipt.baselineExecutionRootDigest || !executionPolicyReceipt.workerExecutionRootDigest || executionPolicyReceipt.workerExecutionRootDigest !== executionPolicyReceipt.verifierExecutionRootDigest) throw new Error("controlled Work receipt does not prove the exact source/runtime policy and worker/verifier execution digest");
+    if (!executionPolicyReceipt || executionPolicyReceipt.mode !== executionPolicy.mode || executionPolicyReceipt.sourceHead !== before.head || executionPolicyReceipt.acceptedPolicyHead !== forge.integration || !executionPolicyReceipt.baselineExecutionRootDigest || !executionPolicyReceipt.workerExecutionRootDigest || executionPolicyReceipt.workerExecutionRootDigest !== executionPolicyReceipt.verifierExecutionRootDigest || (executionPolicy.mode === "overlay" && (executionPolicyReceipt.sourcePolicyBlob !== executionPolicy.source.blob || executionPolicyReceipt.runtimePolicyBlob !== executionPolicy.accepted.blob)) || (executionPolicy.mode === "no-overlay" && (executionPolicyReceipt.sourcePolicyBlob !== null || executionPolicyReceipt.runtimePolicyBlob !== null))) throw new Error("controlled Work receipt does not prove its Git-derived policy mode and worker/verifier execution digest");
     const executionPolicyArtifact = retainConvergenceArtifact(repo, workId, "execution-policy-receipt", executionPolicyReceipt, [retainedInput.head, target.head]);
     await recordConvergenceArtifact(produced, workId, "execution-policy-receipt", executionPolicyArtifact);
     reviewBlobs.push({ label: "execution-policy-receipt", blob: executionPolicyArtifact.blob, digest: executionPolicyArtifact.digest, tree: executionPolicyArtifact.head, path: "artifact.json" });
     const actual = JSON.parse(git(repo, ["show", `${target.head}:${artifactPath}`]));
     validateConvergencePacket(actual, manifestDigest);
-    const reviewMaterial = retainConvergenceArtifact(repo, workId, "review-material", { schema: "rhiz/operator-review-material/v1", workId, contractRevision: 1, candidateHead: target.head, blobs: reviewBlobs }, [retainedInput.head, target.head]);
+    const reviewMaterial = retainConvergenceArtifact(repo, workId, "review-material", { schema: "rhiz/operator-review-material/v1", workId, contractRevision: 1, candidateHead: target.head, blobs: reviewBlobs }, [retainedInput.head, target.head, executionPolicyArtifact.head]);
     await recordConvergenceArtifact(produced, workId, "review-material", reviewMaterial);
     const reviewStartedAtMs = Date.now();
     const reviewed = invoke(["review", workId, "--reviewer", "claude", "--review-material", `git:${reviewMaterial.head}:artifact.json`]);

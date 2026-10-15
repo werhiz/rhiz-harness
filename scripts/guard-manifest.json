@@ -606,9 +606,9 @@
     {
       "id": "integration/convergence-producer-does-not-review",
       "why": "The actual native producer refused packaging when a shared objective assigned it the independent reviewer\u2019s packet inspection; producer and reviewer responsibilities must stay distinct.",
-      "file": "scripts/horizon.mjs",
+      "file": "adapters/git/governed-convergence-policy.ts",
       "remove": "Artifact producer only: ",
-      "testFile": "dist/test/horizon-host-review.test.js"
+      "testFile": "dist/test/governed-convergence-policy.test.js"
     },
     {
       "id": "integration/convergence-current-main-ref",
@@ -642,14 +642,14 @@
       "id": "integration/governed-source-hook-retains-index-and-tree",
       "why": "The accepted runtime overlay must never replace the source hook in the candidate or its staged index.",
       "file": "adapters/git/worktrees.ts",
-      "remove": "      if (headHook.length !== 1 || headHook[0] !== `100755 blob ${policy.source.blob}\\t${policy.path}` || gitText(record.executionRoot, [\"ls-files\", \"--stage\", \"--\", policy.path]) !== `100755 ${policy.source.blob} 0\\t${policy.path}`) {\n        throw new Error(\"governed source hook HEAD or index identity changed\");\n      }\n",
+      "remove": "        if (headHook.length !== 1 || headHook[0] !== `100755 blob ${policy.source.blob}\\t${policy.path}` || gitText(record.executionRoot, [\"ls-files\", \"--stage\", \"--\", policy.path]) !== `100755 ${policy.source.blob} 0\\t${policy.path}`) {\n          throw new Error(\"governed source hook HEAD or index identity changed\");\n        }\n",
       "testFile": "dist/test/governed-convergence-policy.test.js"
     },
     {
       "id": "integration/governed-runtime-overlay-is-exact",
       "why": "Runtime policy overlay bytes and executable mode must remain the exact accepted-main hook and candidate history may contain only its one artifact.",
       "file": "adapters/git/worktrees.ts",
-      "remove": "      if (!hook.isFile() || hook.isSymbolicLink() || (hook.mode & 0o777) !== 0o755 || createHash(\"sha256\").update(bytes).digest(\"hex\") !== policy.accepted.sha256) {\n        throw new Error(\"governed runtime policy bytes or mode changed inside the Work\");\n      }\n",
+      "remove": "        if (!hook.isFile() || hook.isSymbolicLink() || (hook.mode & 0o777) !== 0o755 || createHash(\"sha256\").update(bytes).digest(\"hex\") !== policy.accepted.sha256) {\n          throw new Error(\"governed runtime policy bytes or mode changed inside the Work\");\n        }\n",
       "testFile": "dist/test/governed-convergence-policy.test.js"
     },
     {

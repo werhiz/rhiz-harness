@@ -151,3 +151,11 @@ identity. This exception is runtime-only and grants no general hook, source,
 branch, merge, acceptance, or effect authority. Removal falsifiers cover exact
 review admission, inheritance refusal, source hook/index retention, accepted
 bytes and mode, and artifact-only candidate lineage.
+
+When both pinned source and accepted-main Git trees prove that the exact hook
+path is absent, the same generic convergence may use a derived no-overlay
+policy. No caller flag selects this mode. If either tree contains the path,
+both sides must instead provide valid regular executable hook blobs and the
+full overlay binding applies; one-sided, malformed, non-executable, or linked
+paths refuse. The common exact Work, Verify, independent whole-packet Review,
+actor, and bounded effect gates remain required in either mode.

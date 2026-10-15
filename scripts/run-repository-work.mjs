@@ -622,8 +622,10 @@ try {
     });
     if (governedPolicy) {
       const policyTreeEntry = git(repositoryRoot, ["ls-tree", "-z", candidate.head, "--", governedPolicy.path]).split("\0").filter(Boolean);
-      if (policyTreeEntry.length !== 1 || policyTreeEntry[0] !== `100755 blob ${governedPolicy.source.blob}\t${governedPolicy.path}`) throw new Error("candidate does not preserve the original source hook identity");
-      if (candidate.changedPaths.includes(governedPolicy.path)) throw new Error("runtime policy overlay entered authored candidate scope");
+      if (governedPolicy.mode === "overlay") {
+        if (!governedPolicy.source || policyTreeEntry.length !== 1 || policyTreeEntry[0] !== `100755 blob ${governedPolicy.source.blob}\t${governedPolicy.path}`) throw new Error("candidate does not preserve the original source hook identity");
+        if (candidate.changedPaths.includes(governedPolicy.path)) throw new Error("runtime policy overlay entered authored candidate scope");
+      } else if (policyTreeEntry.length !== 0) throw new Error("hook-free convergence candidate introduced a Horizon hook");
     }
 
     const committedSnapshot = await workspaceProvider.snapshot(workspace);
@@ -880,12 +882,13 @@ try {
         : { command: preparation.command, args: preparation.args },
     workerProviderId: mission.workerProviderId ?? null,
     ...(governedPolicy ? { governedConvergencePolicy: {
+      mode: governedPolicy.mode,
       sourceHead: governedPolicy.sourceHead,
-      sourcePolicyBlob: governedPolicy.source.blob,
-      sourcePolicySha256: governedPolicy.source.sha256,
+      sourcePolicyBlob: governedPolicy.source?.blob ?? null,
+      sourcePolicySha256: governedPolicy.source?.sha256 ?? null,
       acceptedPolicyHead: governedPolicy.acceptedHead,
-      runtimePolicyBlob: governedPolicy.accepted.blob,
-      runtimePolicySha256: governedPolicy.accepted.sha256,
+      runtimePolicyBlob: governedPolicy.accepted?.blob ?? null,
+      runtimePolicySha256: governedPolicy.accepted?.sha256 ?? null,
       manifestDigest: governedPolicy.manifestDigest,
       packetDigest: governedPolicy.packetDigest,
       baselineExecutionRootDigest: mission.workspaceBefore?.digest ?? null,

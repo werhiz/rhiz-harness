@@ -170,7 +170,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });
 `;
 
-async function convergenceFixture(featureCommits = 9) {
+async function convergenceFixture(featureCommits = 9, hookShape: "none" | "source-only" | "main-only" | "source-non-executable" | "source-symlink" = "none") {
   const root = await mkdtemp(join(tmpdir(), "horizon-convergence-host-"));
   const repo = join(root, "repo");
   const bin = join(root, "bin");
@@ -186,8 +186,20 @@ async function convergenceFixture(featureCommits = 9) {
   await writeFile(join(repo, "foreign.txt"), "foreign\n");
   git(["add", "."]); git(["commit", "-qm", "base"]);
   execFileSync("git", ["init", "--bare", "-q", remote]);
-  git(["remote", "add", "origin", remote]); git(["push", "-qu", "origin", "main"]);
+  const forgeOrigin = "https://github.com/example/project.git";
+  git(["remote", "add", "origin", forgeOrigin]); git(["config", `url.file://${remote}.insteadOf`, forgeOrigin]);
+  git(["push", "-qu", "origin", "main"]); git(["fetch", "-q", "origin"]);
   git(["checkout", "-qb", "feature"]);
+  if (hookShape === "source-only" || hookShape === "source-non-executable") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, ".claude", "hooks", "horizon-check.sh"), "#!/bin/sh\nexit 0\n", { mode: hookShape === "source-only" ? 0o755 : 0o644 });
+    git(["add", ".claude/hooks/horizon-check.sh"]); git(["commit", "-qm", "source hook shape"]);
+  } else if (hookShape === "source-symlink") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, "hook-target.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await symlink("../../../hook-target.sh", join(repo, ".claude", "hooks", "horizon-check.sh"));
+    git(["add", "hook-target.sh", ".claude/hooks/horizon-check.sh"]); git(["commit", "-qm", "source hook symlink"]);
+  }
   const when = new Date(Date.now() - 50 * HOUR).toISOString();
   for (let i = 0; i < featureCommits; i++) {
     await writeFile(join(repo, i === 0 ? "source.txt" : `feature-${i}.txt`), i === 0 ? "ours\n" : "feature\n".repeat(65));
@@ -197,6 +209,11 @@ async function convergenceFixture(featureCommits = 9) {
   const head = git(["rev-parse", "HEAD"]);
   git(["push", "-qu", "origin", "feature"]);
   git(["checkout", "-q", "main"]);
+  if (hookShape === "main-only") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, ".claude", "hooks", "horizon-check.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    git(["add", ".claude/hooks/horizon-check.sh"]);
+  }
   await writeFile(join(repo, "source.txt"), "theirs\n");
   await writeFile(join(repo, "helper.txt"), "main helper\n");
   git(["add", "."]); git(["commit", "-qm", "main change"]);
@@ -259,6 +276,19 @@ test("fixed convergence executes new Work/Verify/Review before one bounded real 
     assert.equal(measured.signals.commitsBehind, 0);
     assert.equal(measured.state, "tripped", "complete convergence does not forgive subsequent general writes");
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("convergence derives hook-free policy from both Git trees and refuses one-sided or malformed hooks", async () => {
+  for (const shape of ["source-only", "main-only", "source-non-executable", "source-symlink"] as const) {
+    const f = await convergenceFixture(8, shape);
+    try {
+      const result = f.run();
+      assert.notEqual(result.status, 0, shape);
+      assert.match(result.stderr + result.stdout, /governed overlay requires matching valid hooks|must be a regular executable file|hook must be absent or one tracked regular executable/);
+      assert.equal(await readFile(f.calls, "utf8"), "", `${shape} refuses before worker/reviewer`);
+      assert.ok(f.git(["ls-files", "--unmerged"]), `${shape} preserves original conflict state`);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }
 });
 
 // Falsifies: integration/review-context-anchor-is-effect-only

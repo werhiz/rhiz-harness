@@ -81,6 +81,10 @@ function verifySourceSnapshot(root: string, expected: Record<string, unknown>): 
 function verifyConvergencePacket(root: string, packet: Record<string, unknown>, sourceHead: string, acceptedHead: string): void {
   const packetKeys = ["schema", "request", "source", "forge", "originals", "projected", "mergeStages", "executionPolicy"].sort();
   if (stable(Object.keys(packet).sort()) !== stable(packetKeys) || packet.schema !== "rhiz/convergence-artifact/v1") throw new Error("retained convergence packet has unsupported shape");
+  const policy = packet.executionPolicy as Record<string, unknown>;
+  if (!policy || (policy.mode !== "overlay" && policy.mode !== "no-overlay")) throw new Error("retained convergence policy mode is unsupported");
+  const expectedPolicyKeys = policy.mode === "overlay" ? ["mode", "workId", "purpose", "path", "source", "accepted"].sort() : ["mode", "workId", "purpose", "path"].sort();
+  if (stable(Object.keys(policy).sort()) !== stable(expectedPolicyKeys) || policy.workId === undefined || policy.path !== FIXED_HOOK || policy.purpose !== "horizon-governed-detached-workspace") throw new Error("retained convergence policy descriptor is unsupported");
   const request = packet.request as Record<string, unknown>;
   if (!request || stable(Object.keys(request).sort()) !== stable(["schema", "purpose", "paths", "patch", "reviewCommentUrl"].sort()) || request.schema !== "rhiz/convergence-request/v1" || !["resolve-integration", "repair-reviewed-target"].includes(String(request.purpose)) || typeof request.patch !== "string" || !request.patch.trim() || request.patch.includes("\0") || request.patch.includes("GIT binary patch") || /^(?:deleted file mode|new file mode|rename from|rename to|old mode|new mode) /m.test(request.patch) || !Array.isArray(request.paths) || request.paths.length < 1 || request.paths.length > 64 || new Set(request.paths).size !== request.paths.length || request.paths.some((path) => typeof path !== "string" || !/^[A-Za-z0-9._/-]+$/.test(path) || path.split("/").some((part) => !part || part === "." || part === "..") || path.split("/").some((part) => [".git", ".codex", ".context", "node_modules"].includes(part) || part.startsWith(".env") || part.startsWith(".rhiz-horizon"))) || stable(request.paths) !== stable([...request.paths].sort())) throw new Error("retained convergence request is unsupported or unsafe");
   if (typeof request.reviewCommentUrl !== "string") throw new Error("retained convergence review URL is invalid");
@@ -134,21 +138,23 @@ function sameRepositoryOrigin(root: string, prUrl: string): boolean {
 }
 
 const brand: unique symbol = Symbol("ValidatedGovernedConvergencePolicy");
-export type ValidatedGovernedConvergencePolicy = Readonly<{
+type GovernedPolicyCommon = Readonly<{
   [brand]: true;
   workId: string;
   sourceHead: string;
   acceptedHead: string;
   path: typeof FIXED_HOOK;
-  source: Readonly<{ mode: "100755"; blob: string; sha256: string }>;
-  accepted: Readonly<{ mode: "100755"; blob: string; sha256: string }>;
   packetDigest: string;
   manifestDigest: string;
   inputCheckpoint: Readonly<{ ref: string; head: string; blob: string; digest: string }>;
   manifestBytes: Buffer;
-  acceptedBytes: Buffer;
   envelopeBytes: Buffer;
 }>;
+type HookIdentity = Readonly<{ mode: "100755"; blob: string; sha256: string }>;
+export type ValidatedGovernedConvergencePolicy = GovernedPolicyCommon & (
+  | Readonly<{ mode: "overlay"; source: HookIdentity; accepted: HookIdentity; acceptedBytes: Buffer }>
+  | Readonly<{ mode: "no-overlay"; source: null; accepted: null; acceptedBytes: null }>
+);
 
 function readEnvelope(filename: string): { bytes: Buffer; value: z.infer<typeof EnvelopeSchema> } {
   const fd = openSync(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -163,16 +169,18 @@ function readEnvelope(filename: string): { bytes: Buffer; value: z.infer<typeof 
   } finally { closeSync(fd); }
 }
 
-function treeBlob(root: string, commit: string, path: string): { mode: string; blob: string } {
+function treeBlob(root: string, commit: string, path: string): { mode: "100755"; blob: string } | null {
   const rows = gitBytes(root, ["ls-tree", "-z", commit, "--", path]).toString("utf8").split("\0").filter(Boolean);
-  if (rows.length !== 1) throw new Error(`governed hook is absent or ambiguous at ${commit}`);
+  if (rows.length === 0) return null;
+  if (rows.length !== 1) throw new Error(`governed hook is ambiguous at ${commit}`);
   const match = /^(100755) blob ([a-f0-9]{40})\t\.claude\/hooks\/horizon-check\.sh$/.exec(rows[0]!);
-  if (!match) throw new Error(`governed hook must be a tracked regular 100755 file at ${commit}`);
-  return { mode: match[1]!, blob: match[2]! };
+  if (!match) throw new Error(`governed hook must be absent or a tracked regular 100755 file at ${commit}`);
+  return { mode: "100755", blob: match[2]! };
 }
 
 function verifyHook(root: string, commit: string): { mode: "100755"; blob: string; sha256: string; bytes: Buffer } {
   const entry = treeBlob(root, commit, FIXED_HOOK);
+  if (!entry) throw new Error(`governed hook is absent at ${commit}`);
   const bytes = gitBytes(root, ["cat-file", "blob", entry.blob]);
   new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   if (bytes.includes(0)) throw new Error("governed hook must be UTF-8 shell text without NUL");
@@ -264,7 +272,23 @@ export function validateGovernedConvergencePolicy(options: {
   const branch = git(root, ["branch", "--show-current"]);
   const upstream = git(root, ["rev-parse", `${branch}@{upstream}`]);
   const remoteMain = JSON.parse(execFileSync("gh", ["api", "--hostname", new URL(packet.forge.prUrl).hostname, `repos/${new URL(packet.forge.prUrl).pathname.split("/").filter(Boolean).slice(0, 2).join("/")}/git/ref/heads/main`], { cwd: root, encoding: "utf8", timeout: 15_000, maxBuffer: MAX_ENVELOPE_BYTES }));
-  if (!sameRepositoryOrigin(root, packet.forge.prUrl) || pr.state !== "OPEN" || pr.number !== packet.forge.prNumber || pr.url !== packet.forge.prUrl || pr.baseRefName !== "main" || pr.baseRefOid !== packet.forge.reviewBase || pr.headRefOid !== sourceHead || upstream !== sourceHead || branch !== packet.source.currentBranch || git(root, ["rev-parse", branch]) !== sourceHead || remoteMain.ref !== "refs/heads/main" || remoteMain.object?.type !== "commit" || remoteMain.object?.sha !== acceptedHead || git(root, ["rev-parse", "refs/remotes/origin/main"]) !== acceptedHead) throw new Error("governed PR head or accepted main moved since packet creation");
+  const staleAuthority = [
+    !sameRepositoryOrigin(root, packet.forge.prUrl) && "repository",
+    pr.state !== "OPEN" && "pull-request-state",
+    pr.number !== packet.forge.prNumber && "pull-request-number",
+    pr.url !== packet.forge.prUrl && "pull-request-url",
+    pr.baseRefName !== "main" && "base-name",
+    pr.baseRefOid !== packet.forge.reviewBase && "review-base",
+    pr.headRefOid !== sourceHead && "forge-head",
+    upstream !== sourceHead && "upstream-head",
+    branch !== packet.source.currentBranch && "branch",
+    git(root, ["rev-parse", branch]) !== sourceHead && "local-head",
+    remoteMain.ref !== "refs/heads/main" && "main-ref",
+    remoteMain.object?.type !== "commit" && "main-object-type",
+    remoteMain.object?.sha !== acceptedHead && "forge-main-head",
+    git(root, ["rev-parse", "refs/remotes/origin/main"]) !== acceptedHead && "local-main-head",
+  ].filter(Boolean);
+  if (staleAuthority.length) throw new Error(`governed PR head or accepted main moved since packet creation (${staleAuthority.join(",")})`);
   const review = packet.forge.comment;
   const latest = [...(pr.comments ?? [])].reverse().find((comment: { body?: unknown }) => typeof comment.body === "string" && comment.body.includes("<!-- rhiz-review-agent -->"));
   if (!latest || (latest.url ?? latest.html_url) !== review.commentUrl) throw new Error("governed review is no longer the latest canonical review");
@@ -275,10 +299,29 @@ export function validateGovernedConvergencePolicy(options: {
   if (String(comment.id) !== String(review.commentId) || comment.html_url !== review.commentUrl || hash(body ?? "") !== review.commentDigest || comment.user?.login !== review.reviewerLogin || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || !heading || !verdict || verdict !== review.verdict) throw new Error("governed review identity changed since packet creation");
   const createdAt = Date.parse(comment.created_at);
   if (!Number.isFinite(createdAt) || createdAt > Date.now() || Date.now() - createdAt >= 4 * 60 * 60 * 1000 || comment.created_at !== review.createdAt) throw new Error("governed review is stale or changed");
-  const source = verifyHook(root, sourceHead);
-  const accepted = verifyHook(root, acceptedHead);
-  const recorded = packet.executionPolicy;
-  if (!recorded || stable(Object.keys(recorded).sort()) !== stable(["workId", "purpose", "path", "source", "accepted"].sort()) || stable(Object.keys(recorded.source ?? {}).sort()) !== stable(["mode", "blob", "sha256"].sort()) || stable(Object.keys(recorded.accepted ?? {}).sort()) !== stable(["mode", "blob", "sha256"].sort()) || recorded.workId !== value.workId || recorded.purpose !== "horizon-governed-detached-workspace" || recorded.source?.mode !== source.mode || recorded.source?.blob !== source.blob || recorded.source?.sha256 !== source.sha256 || recorded.accepted?.mode !== accepted.mode || recorded.accepted?.blob !== accepted.blob || recorded.accepted?.sha256 !== accepted.sha256 || recorded.path !== FIXED_HOOK) throw new Error("governed hook identities differ from retained packet");
+  const sourceEntry = treeBlob(root, sourceHead, FIXED_HOOK);
+  const acceptedEntry = treeBlob(root, acceptedHead, FIXED_HOOK);
+  const recorded = packet.executionPolicy as Record<string, unknown>;
+  if (recorded.workId !== value.workId || recorded.purpose !== "horizon-governed-detached-workspace" || recorded.path !== FIXED_HOOK) throw new Error("governed policy descriptor does not bind this exact Work");
+  let policyMode: "overlay" | "no-overlay";
+  let source: HookIdentity | null = null;
+  let accepted: HookIdentity | null = null;
+  let acceptedBytes: Buffer | null = null;
+  if (sourceEntry === null && acceptedEntry === null) {
+    if (recorded.mode !== "no-overlay") throw new Error("hook-free source and accepted main require the derived no-overlay policy descriptor");
+    policyMode = "no-overlay";
+  } else {
+    if (sourceEntry === null || acceptedEntry === null || recorded.mode !== "overlay") throw new Error("governed overlay requires matching valid hooks at both source and accepted main");
+    const sourceHook = verifyHook(root, sourceHead);
+    const acceptedHook = verifyHook(root, acceptedHead);
+    const recordedSource = recorded.source as Record<string, unknown>;
+    const recordedAccepted = recorded.accepted as Record<string, unknown>;
+    if (stable(Object.keys(recorded).sort()) !== stable(["mode", "workId", "purpose", "path", "source", "accepted"].sort()) || stable(Object.keys(recordedSource ?? {}).sort()) !== stable(["mode", "blob", "sha256"].sort()) || stable(Object.keys(recordedAccepted ?? {}).sort()) !== stable(["mode", "blob", "sha256"].sort()) || recordedSource?.mode !== sourceHook.mode || recordedSource?.blob !== sourceHook.blob || recordedSource?.sha256 !== sourceHook.sha256 || recordedAccepted?.mode !== acceptedHook.mode || recordedAccepted?.blob !== acceptedHook.blob || recordedAccepted?.sha256 !== acceptedHook.sha256) throw new Error("governed hook identities differ from retained packet");
+    policyMode = "overlay";
+    source = sourceHook;
+    accepted = acceptedHook;
+    acceptedBytes = acceptedHook.bytes;
+  }
   if (contract.writeScope.some((item) => item.uri === `repo://source/${FIXED_HOOK}`)) throw new Error("governed policy path intersects Work write scope");
 
   const expectedManifest = {
@@ -296,21 +339,21 @@ export function validateGovernedConvergencePolicy(options: {
   };
   if (stable(expectedManifest) !== stable(manifest)) throw new Error("governed manifest differs from reconstructed packet and accepted policy");
   const manifestBytes = Buffer.from(stable(manifest));
-  return Object.freeze({
+  const common = {
     [brand]: true as const,
     workId: value.workId,
     sourceHead,
     acceptedHead,
     path: FIXED_HOOK,
-    source: { mode: source.mode, blob: source.blob, sha256: source.sha256 },
-    accepted: { mode: accepted.mode, blob: accepted.blob, sha256: accepted.sha256 },
     packetDigest: manifest.packetDigest as string,
     manifestDigest: value.manifestDigest,
     inputCheckpoint: { ref: inputRef, head: localInputHead, blob: checkpointBlob, digest: value.inputCheckpointDigest },
     manifestBytes,
-    acceptedBytes: accepted.bytes,
     envelopeBytes: Buffer.from(stable(value)),
-  });
+  };
+  if (policyMode === "no-overlay") return Object.freeze({ ...common, mode: policyMode, source: null, accepted: null, acceptedBytes: null });
+  if (!source || !accepted || !acceptedBytes) throw new Error("governed overlay identities were not reconstructed");
+  return Object.freeze({ ...common, mode: policyMode, source, accepted, acceptedBytes });
 }
 
 export function isValidatedGovernedConvergencePolicy(value: unknown): value is ValidatedGovernedConvergencePolicy {

@@ -48,6 +48,14 @@ test("governed worker and verifier execution identities must match", () => {
   assert.throws(() => assertGovernedExecutionRootIdentity(undefined, "sha256:verifier"), /same governed execution-root digest/);
 });
 
+test("governed convergence objective separates artifact production from independent review", () => {
+  const objective = governedConvergenceObjective("tools/horizon-convergence-artifacts/work/artifact.json", "a".repeat(40));
+  assert.match(objective, /^Artifact producer only: Copy the complete JSON manifest/);
+  assert.match(objective, /Do not run shell commands, inspect the referenced packet\/source blobs, perform review/);
+  assert.match(objective, /Independent review only: After the producer has completed its packaging and Verify has passed/);
+  assert.match(objective, /judge preservation of both source legs and repair-only scope/);
+});
+
 test("validated convergence policy overlays only runtime bytes and preserves source candidate identity", async () => {
   const root = mkdtempSync(join(tmpdir(), "rhiz-policy-fixture-"));
   const repository = join(root, "repo");
@@ -97,6 +105,7 @@ test("validated convergence policy overlays only runtime bytes and preserves sou
   const paths = ["CHANGELOG.md"];
   const workId = `work:horizon-convergence-${sha(stable([prUrl, sourceHead, review.commentId, "resolve-integration"])).slice(0, 40)}`;
   const policy = {
+    mode: "overlay",
     workId,
     purpose: "horizon-governed-detached-workspace",
     path: ".claude/hooks/horizon-check.sh",
@@ -160,7 +169,8 @@ test("validated convergence policy overlays only runtime bytes and preserves sou
     assert.throws(() => validateGovernedConvergencePolicy({ repositoryRoot: repository, baseRevision: sourceHead, contract: { ...work, id: "work:other" }, envelopeFilename: envelopePath }), /Work\/source identity mismatch/);
     const validated = validateGovernedConvergencePolicy({ repositoryRoot: repository, baseRevision: sourceHead, contract: work, envelopeFilename: envelopePath });
     assert.equal(validated.acceptedHead, acceptedHead);
-    assert.equal(validated.source.blob, sourceBlob);
+    assert.equal(validated.mode, "overlay");
+    if (validated.mode === "overlay") assert.equal(validated.source.blob, sourceBlob);
     provider = new GitWorktreeWorkspaceProvider({ repositoryRoot: repository, worktreeRoot: join(runRoot, "worktrees"), idFactory: () => "fixed-id", governedConvergencePolicy: validated });
     const workspace = await provider.acquire({ crewId: `crew:${workId}`, work, baseRevision: sourceHead, mode: "isolated-write" });
     await assert.rejects(provider.acquire({ crewId: `crew:${workId}`, work: { ...work, id: "work:dependent", dependencies: [workId] }, baseRevision: sourceHead, mode: "isolated-write", sourceWorkspace: workspace, sourceWorkId: workId }), /cannot inherit another workspace/);
