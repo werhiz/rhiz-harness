@@ -113,10 +113,15 @@ function changedPaths(cwd: string): string[] {
 
 function policyPathExists(root: string, policyPath: string): boolean {
   let current = root;
-  for (const segment of policyPath.split("/")) {
+  const segments = policyPath.split("/");
+  for (const [index, segment] of segments.entries()) {
     current = join(current, segment);
-    try { lstatSync(current); return true; }
+    let stat: ReturnType<typeof lstatSync>;
+    try { stat = lstatSync(current); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+    if (stat.isSymbolicLink()) throw new Error("governed policy path traverses a symbolic link");
+    if (index === segments.length - 1) return true;
+    if (!stat.isDirectory()) throw new Error("governed policy path has a non-directory ancestor");
   }
   return false;
 }

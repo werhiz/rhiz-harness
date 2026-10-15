@@ -170,7 +170,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });
 `;
 
-async function convergenceFixture(featureCommits = 9, hookShape: "none" | "source-only" | "main-only" | "source-non-executable" | "source-symlink" = "none") {
+async function convergenceFixture(featureCommits = 9, hookShape: "none" | "source-only" | "main-only" | "source-non-executable" | "source-symlink" | "claude-readme" | "hooks-readme" | "claude-file-parent" | "claude-symlink-parent" = "none") {
   const root = await mkdtemp(join(tmpdir(), "horizon-convergence-host-"));
   const repo = join(root, "repo");
   const bin = join(root, "bin");
@@ -182,6 +182,19 @@ async function convergenceFixture(featureCommits = 9, hookShape: "none" | "sourc
   git(["config", "user.name", "Horizon"]);
   git(["config", "user.email", "horizon@example.invalid"]);
   await writeFile(join(repo, ".gitignore"), ".context/\n");
+  if (hookShape === "claude-readme") {
+    await mkdir(join(repo, ".claude"), { recursive: true });
+    await writeFile(join(repo, ".claude", "README.md"), "ordinary project instructions\n");
+  } else if (hookShape === "hooks-readme") {
+    await mkdir(join(repo, ".claude", "hooks"), { recursive: true });
+    await writeFile(join(repo, ".claude", "hooks", "README.md"), "ordinary hook documentation\n");
+  } else if (hookShape === "claude-file-parent") {
+    await writeFile(join(repo, ".claude"), "not a directory\n");
+  } else if (hookShape === "claude-symlink-parent") {
+    await mkdir(join(repo, "hook-parent-target"), { recursive: true });
+    await writeFile(join(repo, "hook-parent-target", "README.md"), "symlink target\n");
+    await symlink("hook-parent-target", join(repo, ".claude"));
+  }
   await writeFile(join(repo, "source.txt"), "base\n");
   await writeFile(join(repo, "foreign.txt"), "foreign\n");
   git(["add", "."]); git(["commit", "-qm", "base"]);
@@ -279,14 +292,26 @@ test("fixed convergence executes new Work/Verify/Review before one bounded real 
 });
 
 test("convergence derives hook-free policy from both Git trees and refuses one-sided or malformed hooks", async () => {
-  for (const shape of ["source-only", "main-only", "source-non-executable", "source-symlink"] as const) {
+  for (const shape of ["source-only", "main-only", "source-non-executable", "source-symlink", "claude-file-parent", "claude-symlink-parent"] as const) {
     const f = await convergenceFixture(8, shape);
     try {
       const result = f.run();
       assert.notEqual(result.status, 0, shape);
-      assert.match(result.stderr + result.stdout, /governed overlay requires matching valid hooks|must be a regular executable file|hook must be absent or one tracked regular executable/);
+      assert.match(result.stderr + result.stdout, /governed overlay requires matching valid hooks|must be a regular executable file|hook must be absent or one tracked regular executable|non-directory ancestor|traverses a symbolic link/);
       assert.equal(await readFile(f.calls, "utf8"), "", `${shape} refuses before worker/reviewer`);
       assert.ok(f.git(["ls-files", "--unmerged"]), `${shape} preserves original conflict state`);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("hook-free convergence accepts ordinary .claude and .claude/hooks directories", async () => {
+  for (const shape of ["claude-readme", "hooks-readme"] as const) {
+    const f = await convergenceFixture(9, shape);
+    try {
+      const result = f.run();
+      assert.equal(result.status, 0, `${shape}: ${result.stderr}${result.stdout}`);
+      assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
+      assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n");
     } finally { await rm(f.root, { recursive: true, force: true }); }
   }
 });
