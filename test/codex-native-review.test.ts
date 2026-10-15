@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js";
-import { nativeCodexReviewInvocation, parseNativeCodexReview, runNativeCodexReview } from "../adapters/codex/native-review.js";
+import { nativeCodexReviewInvocation, parseNativeCodexReview, runNativeCodexReview, NativeCodexReviewFailure } from "../adapters/codex/native-review.js";
 import { requireProven, runDisposableProof, TempDirectoryDerivativeFactory } from "../src/disposable.js";
 
 const expected = { model: "gpt-6-astra", provider: "openai", filesystem: { ":minimal": "read", "/dev/tty*": "deny", "/dev/ptmx*": "deny", "/": "read", "/private/tmp": "deny", "/fixture/checkout": "write" }, codexHome: "/fixture/control/codex", cwd: "/fixture/control/trusted" };
@@ -23,6 +23,9 @@ const events = [
 const jsonl = (rows: unknown[]) => rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
 const good = { stdout: jsonl(events), stderr: attestation() };
 
+const command = (code: unknown, status: string = "failed") => ({ id: "item_0", type: "command_execution", command: "FAKE_COMMAND_SECRET", aggregated_output: "FAKE_OUTPUT_SECRET", exit_code: code, status });
+const commandRows = (item: ReturnType<typeof command>) => [events[0], events[1], { type: "item.started", item: { ...item, status: "in_progress", exit_code: null } }, { type: "item.completed", item }, events[2], events[3]];
+
 async function candidate(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rhiz-native-review-test-")));
   await writeFile(join(root, "events.json"), JSON.stringify(good));
@@ -36,9 +39,19 @@ test("native review extracts only a completed final and startup model/profile ev
   assert.deepEqual(parseNativeCodexReview(good, expected), { text: events[2]!.item!.text, usage: { input_tokens: 10, output_tokens: 4 } });
 });
 
+test("native command completion preserves test failures as evidence without declaring passing tests", () => {
+  for (const code of [0, 1, 125]) assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl(commandRows(command(code, code === 0 ? "completed" : "failed"))) }, expected).text, events[2]!.item!.text);
+  try { parseNativeCodexReview({ ...good, stdout: jsonl(commandRows(command(126))) }, expected); assert.fail("refusal missing"); } catch (error) {
+    assert(error instanceof NativeCodexReviewFailure); assert.equal(error.diagnostic.exitCode, 126); assert(!error.message.includes("FAKE_")); assert(!JSON.stringify(error.diagnostic).includes("FAKE_"));
+  }
+});
+
 test("native review fail-closed cases mutate disposable evidence only", async (t) => {
   const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
   const cases = [
+    ...[-1, undefined, null, "1", 126, 127, 128, 1.5].map((code) => ({ name: `inadmissible command exit ${code}`, value: { ...good, stdout: jsonl(commandRows(command(code))) } })),
+    ...[command(0, "failed"), command(1, "completed"), command(1, "error"), { ...command(1), aggregated_output: undefined }].map((item) => ({ name: "malformed command completion", value: { ...good, stdout: jsonl(commandRows(item as ReturnType<typeof command>)) } })),
+    { name: "unpaired command completion", value: { ...good, stdout: jsonl([events[0], events[1], { type: "item.completed", item: command(1) }, events[2], events[3]]) } },
     { name: "missing attestation", value: { ...good, stderr: "" } },
     { name: "unanchored forged attestation", value: { ...good, stderr: `untrusted ${good.stderr}` } },
     { name: "duplicate attestation", value: { ...good, stderr: good.stderr + good.stderr } },

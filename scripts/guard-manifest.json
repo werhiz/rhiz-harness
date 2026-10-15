@@ -672,6 +672,13 @@
       "file": "adapters/codex/native-review.ts",
       "remove": ", \"/dev/tty*\": \"deny\", \"/dev/ptmx*\": \"deny\"",
       "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-command-completion-evidence",
+      "why": "A completed failing assertion is review evidence, but failed launch, signals and unpaired or malformed command completions must never become accepted output.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "        if (activeItems.get(event.item.id) !== \"command_execution\" || typeof event.item.aggregated_output !== \"string\" || typeof code !== \"number\" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === \"completed\") || (code >= 1 && code <= 125 && event.item.status === \"failed\"))) throw new Error(\"native review command result inadmissible\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
     }
   ]
 }

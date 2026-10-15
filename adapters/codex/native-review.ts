@@ -33,6 +33,12 @@ export interface NativeCodexReviewResult {
 
 type Config = Record<string, unknown>;
 type NativeOutput = { stdout: string; stderr: string };
+export class NativeCodexReviewFailure extends Error {
+  constructor(readonly diagnostic: Readonly<Record<string, string | number | null>>) {
+    super(`native review validation refused: ${JSON.stringify(diagnostic)}`);
+    this.name = "NativeCodexReviewFailure";
+  }
+}
 const MAX_OUTPUT = 16 * 1024 * 1024;
 const DISABLED_FEATURES = [
   "apps", "plugins", "hooks", "memories", "multi_agent", "skill_search",
@@ -140,71 +146,88 @@ async function accountMetadata(executable: string, codexHome: string, home: stri
 
 /** Strict final-event extraction is shared by deterministic native wire fixtures. */
 export function parseNativeCodexReview(output: NativeOutput, expected: { model: string; provider: string; filesystem: Readonly<Record<string, string>>; codexHome: string; cwd: string }): Pick<NativeCodexReviewResult, "text" | "usage"> {
-  const sessions = output.stderr.split("\n").filter((line) => /^\d{4}-\d\d-\d\dT\S+\s+INFO codex\.exec\{[^\n]*\}: codex_exec: Codex initialized with event: SessionConfiguredEvent \{/.test(line));
-  if (sessions.length !== 1) throw new Error("native review startup attestation missing or ambiguous");
-  const session = sessions[0]!;
-  for (const fragment of [`model: ${JSON.stringify(expected.model)},`, `model_provider_id: ${JSON.stringify(expected.provider)},`, "approval_policy: Never,", "reasoning_effort: Some(High),", 'active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None })', `cwd: AbsolutePathBuf(${JSON.stringify(expected.cwd)})`]) {
-    if (!session.includes(fragment)) throw new Error("native review model/provider/profile drift");
-  }
-  if (!session.includes("permission_profile: Managed { file_system: Restricted {") || !session.includes("network: Restricted }")) throw new Error("native review permission profile missing");
-  const observed = new Map<string, string>();
-  const entry = /FileSystemSandboxEntry \{ path: Path \{ path: PathUri\(Url \{[^}]*path: ("(?:[^"\\]|\\.)*")[^}]*\}\) \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
-  for (const match of session.matchAll(entry)) {
-    const scope = JSON.parse(match[1]!) as string;
-    if (/[?*\[\]{}]/.test(scope)) throw new Error("native review literal path contains glob syntax");
-    if (observed.has(scope)) throw new Error("native review duplicate permission scope");
-    observed.set(scope, match[2]!.toLowerCase());
-  }
-  const minimal = /FileSystemSandboxEntry \{ path: Special \{ value: Minimal \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
-  for (const match of session.matchAll(minimal)) {
-    if (observed.has(":minimal")) throw new Error("native review duplicate minimal permission");
-    observed.set(":minimal", match[1]!.toLowerCase());
-  }
-  const terminalGlob = /FileSystemSandboxEntry \{ path: GlobPattern \{ pattern: "(\/dev\/(?:tty|ptmx)\*)" \}, access: Deny, missing_path_behavior: None \}/g;
-  for (const match of session.matchAll(terminalGlob)) {
-    if (observed.has(match[1]!)) throw new Error("native review duplicate terminal deny glob");
-    observed.set(match[1]!, "deny");
-  }
-  for (const [scope, access] of Object.entries(expected.filesystem)) {
-    if (observed.get(scope) !== access) throw new Error("native review filesystem profile drift");
-    observed.delete(scope);
-  }
-  // Native 0.162.1 adds its private executable shim as read-only. No other additions.
-  for (const [scope, access] of observed) {
-    if (access !== "read" || !scope.startsWith(`${expected.codexHome}/tmp/arg0/codex-arg0`) || scope.slice(`${expected.codexHome}/tmp/arg0/`.length).includes("/")) throw new Error("native review unexpected filesystem scope");
-  }
-  if ((session.match(/FileSystemSandboxEntry \{/g) ?? []).length !== observed.size + Object.keys(expected.filesystem).length) throw new Error("native review unrecognized filesystem entry");
-  const rows = output.stdout.trimEnd().split("\n");
-  let thread = false, started = false, completed = false, final: string | undefined, usage: Record<string, number> | undefined;
-  const activeItems = new Set<string>();
-  for (const row of rows) {
-    let event: { type?: string; item?: { id?: string; type?: string; status?: string; text?: string }; usage?: Record<string, number> };
-    try { event = JSON.parse(row); } catch { throw new Error("native review malformed or truncated event"); }
-    if (completed) throw new Error("native review events after completed turn");
-    if (event.type === "thread.started") { if (thread || started) throw new Error("native review multiple threads"); thread = true; continue; }
-    if (event.type === "turn.started") { if (!thread || started) throw new Error("native review multiple turns or missing thread"); started = true; continue; }
-    if (!started) throw new Error("native review event before turn");
-    if (event.type === "turn.completed") {
-      if (activeItems.size || !final || !event.usage || !Number.isSafeInteger(event.usage.input_tokens) || !Number.isSafeInteger(event.usage.output_tokens) || Object.values(event.usage).some((value) => !Number.isSafeInteger(value) || value < 0)) throw new Error("native review final/usage missing");
-      completed = true; usage = event.usage; continue;
+  let stage = "startup", eventIndex = -1, completed = false;
+  let current: { type?: string; item?: { id?: string; type?: string; status?: string; exit_code?: number | null } } = {};
+  const activeItems = new Map<string, string>();
+  try {
+    const sessions = output.stderr.split("\n").filter((line) => /^\d{4}-\d\d-\d\dT\S+\s+INFO codex\.exec\{[^\n]*\}: codex_exec: Codex initialized with event: SessionConfiguredEvent \{/.test(line));
+    if (sessions.length !== 1) throw new Error("native review startup attestation missing or ambiguous");
+    const session = sessions[0]!;
+    for (const fragment of [`model: ${JSON.stringify(expected.model)},`, `model_provider_id: ${JSON.stringify(expected.provider)},`, "approval_policy: Never,", "reasoning_effort: Some(High),", 'active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None })', `cwd: AbsolutePathBuf(${JSON.stringify(expected.cwd)})`]) {
+      if (!session.includes(fragment)) throw new Error("native review model/provider/profile drift");
     }
-    if (event.type !== "item.started" && event.type !== "item.completed") throw new Error("native review failed or unexpected event");
-    if (!event.item || !["agent_message", "reasoning", "command_execution", "file_change"].includes(event.item.type ?? "")) throw new Error("native review unexpected tool item");
-    if (!event.item.id) throw new Error("native review missing item identity");
-    if (event.type === "item.started") {
-      if (activeItems.has(event.item.id)) throw new Error("native review duplicate active item");
-      activeItems.add(event.item.id);
-    } else {
-      activeItems.delete(event.item.id);
+    if (!session.includes("permission_profile: Managed { file_system: Restricted {") || !session.includes("network: Restricted }")) throw new Error("native review permission profile missing");
+    const observed = new Map<string, string>();
+    const entry = /FileSystemSandboxEntry \{ path: Path \{ path: PathUri\(Url \{[^}]*path: ("(?:[^"\\]|\\.)*")[^}]*\}\) \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
+    for (const match of session.matchAll(entry)) {
+      const scope = JSON.parse(match[1]!) as string;
+      if (/[?*\[\]{}]/.test(scope)) throw new Error("native review literal path contains glob syntax");
+      if (observed.has(scope)) throw new Error("native review duplicate permission scope");
+      observed.set(scope, match[2]!.toLowerCase());
     }
-    if (event.item.status === "failed" || event.item.status === "error") throw new Error("native review tool failed");
-    if (event.type === "item.completed" && event.item.type === "agent_message") {
-      if (final !== undefined || typeof event.item.text !== "string" || !event.item.text.trim()) throw new Error("native review conflicting or empty final");
-      final = event.item.text;
+    const minimal = /FileSystemSandboxEntry \{ path: Special \{ value: Minimal \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
+    for (const match of session.matchAll(minimal)) {
+      if (observed.has(":minimal")) throw new Error("native review duplicate minimal permission");
+      observed.set(":minimal", match[1]!.toLowerCase());
     }
+    const terminalGlob = /FileSystemSandboxEntry \{ path: GlobPattern \{ pattern: "(\/dev\/(?:tty|ptmx)\*)" \}, access: Deny, missing_path_behavior: None \}/g;
+    for (const match of session.matchAll(terminalGlob)) {
+      if (observed.has(match[1]!)) throw new Error("native review duplicate terminal deny glob");
+      observed.set(match[1]!, "deny");
+    }
+    for (const [scope, access] of Object.entries(expected.filesystem)) {
+      if (observed.get(scope) !== access) throw new Error("native review filesystem profile drift");
+      observed.delete(scope);
+    }
+    // Native 0.162.1 adds its private executable shim as read-only. No other additions.
+    for (const [scope, access] of observed) {
+      if (access !== "read" || !scope.startsWith(`${expected.codexHome}/tmp/arg0/codex-arg0`) || scope.slice(`${expected.codexHome}/tmp/arg0/`.length).includes("/")) throw new Error("native review unexpected filesystem scope");
+    }
+    if ((session.match(/FileSystemSandboxEntry \{/g) ?? []).length !== observed.size + Object.keys(expected.filesystem).length) throw new Error("native review unrecognized filesystem entry");
+    const rows = output.stdout.trimEnd().split("\n");
+    let thread = false, started = false, final: string | undefined, usage: Record<string, number> | undefined;
+    stage = "events";
+    for (const [index, row] of rows.entries()) {
+      eventIndex = index;
+      let event: { type?: string; item?: { id?: string; type?: string; status?: string; text?: string; exit_code?: number | null; aggregated_output?: string }; usage?: Record<string, number> };
+      try { event = JSON.parse(row); } catch { throw new Error("native review malformed or truncated event"); }
+      current = event;
+      if (completed) throw new Error("native review events after completed turn");
+      if (event.type === "thread.started") { if (thread || started) throw new Error("native review multiple threads"); thread = true; continue; }
+      if (event.type === "turn.started") { if (!thread || started) throw new Error("native review multiple turns or missing thread"); started = true; continue; }
+      if (!started) throw new Error("native review event before turn");
+      if (event.type === "turn.completed") {
+        if (activeItems.size || !final || !event.usage || !Number.isSafeInteger(event.usage.input_tokens) || !Number.isSafeInteger(event.usage.output_tokens) || Object.values(event.usage).some((value) => !Number.isSafeInteger(value) || value < 0)) throw new Error("native review final/usage missing");
+        completed = true; usage = event.usage; continue;
+      }
+      if (event.type !== "item.started" && event.type !== "item.completed") throw new Error("native review failed or unexpected event");
+      if (!event.item || !["agent_message", "reasoning", "command_execution", "file_change"].includes(event.item.type ?? "")) throw new Error("native review unexpected tool item");
+      if (!event.item.id) throw new Error("native review missing item identity");
+      if (event.type === "item.started") {
+        if (activeItems.has(event.item.id)) throw new Error("native review duplicate active item");
+        activeItems.set(event.item.id, event.item.type!);
+      } else {
+        if (event.item.type === "command_execution") {
+          const code = event.item.exit_code;
+          if (activeItems.get(event.item.id) !== "command_execution" || typeof event.item.aggregated_output !== "string" || typeof code !== "number" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === "completed") || (code >= 1 && code <= 125 && event.item.status === "failed"))) throw new Error("native review command result inadmissible");
+        }
+        activeItems.delete(event.item.id);
+      }
+      if (event.item.status === "error" || (event.item.status === "failed" && !(event.type === "item.completed" && event.item.type === "command_execution"))) throw new Error("native review tool failed");
+      if (event.type === "item.completed" && event.item.type === "agent_message") {
+        if (final !== undefined || typeof event.item.text !== "string" || !event.item.text.trim()) throw new Error("native review conflicting or empty final");
+        final = event.item.text;
+      }
+    }
+    if (!completed || final === undefined || usage === undefined) throw new Error("native review incomplete turn");
+    return { text: final, usage };
+  } catch (error) {
+    const known = (value: string | undefined, allowed: string[]) => allowed.includes(value ?? "") ? value! : "unknown";
+    throw new NativeCodexReviewFailure({ stage, reason: error instanceof Error && /^native review [a-z /-]+$/.test(error.message) ? error.message : "native review validation refused", eventIndex,
+      eventType: known(current?.type, ["thread.started", "turn.started", "turn.completed", "item.started", "item.completed", "error", "turn.failed"]), itemId: /^item_[0-9]{1,12}$/.test(current?.item?.id ?? "") ? current.item!.id! : "unknown",
+      itemType: known(current?.item?.type, ["command_execution", "file_change", "agent_message", "reasoning"]), status: known(current?.item?.status, ["in_progress", "completed", "failed", "error"]), exitCode: Number.isSafeInteger(current?.item?.exit_code) ? current.item!.exit_code! : null,
+      turnCompleted: completed ? 1 : 0, activeCount: activeItems.size, stdoutBytes: Buffer.byteLength(output.stdout), stderrBytes: Buffer.byteLength(output.stderr) });
   }
-  if (!completed || final === undefined || usage === undefined) throw new Error("native review incomplete turn");
-  return { text: final, usage };
 }
 
 function nativeReviewFilesystem(scopes: Readonly<Record<string, string>>): Record<string, string> {
