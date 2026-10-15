@@ -56,7 +56,11 @@ const NOT_COVERED_LOCALLY = {
 const NOT_PROVEN_IN_CI = {
   "test/codex-native-review.test.ts": {
     reason: "native review runner process/credential-alias fixtures require the Darwin-only adapter; scripted executables do not prove native containment",
-    provenOn: "an independent Darwin checkout running npm run check; installed-native containment and dummy-refresh automation remains a separate unresolved acceptance requirement documented in docs/CODEX_NATIVE_REVIEW.md",
+    provenOn: "an independent Darwin checkout running npm run check; installed-native containment remains unresolved in docs/CODEX_NATIVE_REVIEW.md",
+  },
+  "test/codex-native-auth.test.ts": {
+    reason: "uses installed Darwin codex-cli 0.162.1 with disposable dummy credentials and a loopback refresh server, without model inference",
+    provenOn: "a Darwin workstation with the pinned native CLI running npm run check; refresh refusal, save, file replacement and concurrent alias custody are asserted",
   },
   "test/containment.test.ts": {
     reason: "verifier OS containment is proven by real sandbox-exec escape attempts; sandbox-exec is darwin-only",

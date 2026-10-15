@@ -4,6 +4,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, wr
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 
 /** Installed-native boundary, not a verdict parser or a review authority. */
 export interface NativeCodexReviewOptions {
@@ -163,9 +164,11 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
     }
     if (!session.includes("permission_profile: Managed { file_system: Restricted {") || !session.includes("network: Restricted }")) throw new Error("native review permission profile missing");
     const observed = new Map<string, string>();
-    const entry = /FileSystemSandboxEntry \{ path: Path \{ path: PathUri\(Url \{[^}]*path: ("(?:[^"\\]|\\.)*")[^}]*\}\) \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
+    const entry = /FileSystemSandboxEntry \{ path: Path \{ path: PathUri\(Url \{ scheme: "file", cannot_be_a_base: false, username: "", password: None, host: None, port: None, path: ("(?:[^"\\]|\\.)*"), query: None, fragment: None \}\) \}, access: (Read|Write|Deny), missing_path_behavior: None \}/g;
     for (const match of session.matchAll(entry)) {
-      const scope = JSON.parse(match[1]!) as string;
+      const url = new URL(`file://${JSON.parse(match[1]!)}`);
+      if (url.host || url.search || url.hash) throw new Error("native review nonlocal or ambiguous filesystem URL");
+      const scope = fileURLToPath(url);
       if (/[?*\[\]{}]/.test(scope)) throw new Error("native review literal path contains glob syntax");
       if (observed.has(scope)) throw new Error("native review duplicate permission scope");
       observed.set(scope, match[2]!.toLowerCase());

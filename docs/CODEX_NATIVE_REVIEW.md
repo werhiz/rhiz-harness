@@ -92,12 +92,17 @@ external native backend through its installed CLI/RPC interfaces.
 The current correction automates file-status and actual split-pipe UTF-8
 regressions through disposable fixtures. CI parity explicitly lists the Darwin
 process/alias fixtures; those scripted executables do not prove native isolation.
-The installed-host containment and dummy-refresh sequence below still lacks
-checked-in gate automation. That acceptance gap remains open; this checkpoint
+The installed native dummy-auth suite now runs through the ordinary Darwin gate:
+cached identity, refresh/save, rejected refresh without canonical corruption,
+canonical file replacement, and concurrent original/alias refresh custody. It
+uses only disposable dummy bytes and a loopback server, with no model inference.
+Native file-URL paths decode once before exact scope/access and duplicate checks.
+Installed-host tool/startup/network/socket/PTY containment and paid canary evidence
+orchestration still lack checked-in automation. P1 remains open; this checkpoint
 does not claim that a passing portable suite proves the native boundary.
 
 The scoped implementation executor used deterministic shell, TypeScript and Node
-on Darwin. No model inference, credential mutation, install, push, PR or full gate
+on Darwin. No model inference, operator credential mutation, install, push, PR or full gate
 was used for this candidate. Existing Codex adapter tests plus the new native suite
 pass locally; destructive/negative fixtures run through `src/disposable.ts` and
 re-pin their source after removal. Scripted executables test metadata/process/cleanup

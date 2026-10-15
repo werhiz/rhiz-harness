@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js";
 import { nativeCodexReviewInvocation, parseNativeCodexReview, runNativeCodexReview, NativeCodexReviewFailure, invokeNativeReviewProcess } from "../adapters/codex/native-review.js";
 import { requireProven, runDisposableProof, TempDirectoryDerivativeFactory } from "../src/disposable.js";
+import { nativeReviewCandidate } from "./fixtures/native-review.js";
 
 const expected = { model: "gpt-6-astra", provider: "openai", filesystem: { ":minimal": "read", "/dev/tty*": "deny", "/dev/ptmx*": "deny", "/": "read", "/private/tmp": "deny", "/fixture/checkout": "write" }, codexHome: "/fixture/control/codex", cwd: "/fixture/control/trusted" };
 function attestation(filesystem: Record<string, string> = expected.filesystem): string {
-  const entries = Object.entries(filesystem).map(([scope, access]) => scope === ":minimal" ? `FileSystemSandboxEntry { path: Special { value: Minimal }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }` : (scope === "/dev/tty*" || scope === "/dev/ptmx*") ? `FileSystemSandboxEntry { path: GlobPattern { pattern: ${JSON.stringify(scope)} }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }` : `FileSystemSandboxEntry { path: Path { path: PathUri(Url { scheme: "file", cannot_be_a_base: false, username: "", password: None, host: None, port: None, path: ${JSON.stringify(scope)}, query: None, fragment: None }) }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }`);
+  const entries = Object.entries(filesystem).map(([scope, access]) => scope === ":minimal" ? `FileSystemSandboxEntry { path: Special { value: Minimal }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }` : (scope === "/dev/tty*" || scope === "/dev/ptmx*") ? `FileSystemSandboxEntry { path: GlobPattern { pattern: ${JSON.stringify(scope)} }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }` : `FileSystemSandboxEntry { path: Path { path: PathUri(Url { scheme: "file", cannot_be_a_base: false, username: "", password: None, host: None, port: None, path: ${JSON.stringify(pathToFileURL(scope).pathname)}, query: None, fragment: None }) }, access: ${access[0]!.toUpperCase() + access.slice(1)}, missing_path_behavior: None }`);
   return `2026-10-15T11:09:08.667394Z  INFO codex.exec{otel.kind="internal" thread.id="fixture"}: codex_exec: Codex initialized with event: SessionConfiguredEvent { model: "gpt-6-astra", model_provider_id: "openai", approval_policy: Never, reasoning_effort: Some(High), permission_profile: Managed { file_system: Restricted { entries: [${entries.join(", ")}], glob_scan_max_depth: None }, network: Restricted }, active_permission_profile: Some(ActivePermissionProfile { id: "review", extends: None }), cwd: AbsolutePathBuf("/fixture/control/trusted") }\n`;
 }
 const events = [
@@ -29,18 +29,43 @@ const completedFile = { type: "item.completed", item: { id: "item_0", type: "fil
 const commandRows = (item: ReturnType<typeof command>) => [events[0], events[1], { type: "item.started", item: { ...item, status: "in_progress", exit_code: null } }, { type: "item.completed", item }, events[2], events[3]];
 
 async function candidate(): Promise<string> {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "rhiz-native-review-test-")));
-  await writeFile(join(root, "events.json"), JSON.stringify(good));
-  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
-  execFileSync("git", ["add", "."], { cwd: root });
-  execFileSync("git", ["-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture", "commit", "-qm", "fixture"], { cwd: root });
-  return root;
+  return await nativeReviewCandidate({ "events.json": JSON.stringify(good) });
 }
 
 test("native review extracts only a completed final and startup model/profile evidence", () => {
   assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], startedFile, completedFile, events[2], events[3]]) }, expected).text, events[2]!.item!.text);
   assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], { type: "item.completed", item: { id: "reasoning_only", type: "reasoning" } }, events[2], events[3]]) }, expected).text, events[2]!.item!.text);
   assert.deepEqual(parseNativeCodexReview(good, expected), { text: events[2]!.item!.text, usage: { input_tokens: 10, output_tokens: 4 } });
+});
+
+test("native URL permission paths decode once and retain exact scope, access and entry accounting", async (t) => {
+  const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
+  const path = "/fixture/café space/100%literal", encoded = pathToFileURL(path).pathname;
+  const filesystem = { ...expected.filesystem, [path]: "read" }, scoped = { ...expected, filesystem };
+  const valid = { ...good, stderr: attestation(filesystem) };
+  assert.equal(parseNativeCodexReview(valid, scoped).text, events[2]!.item!.text);
+  const duplicate = attestation({ ...filesystem, "/fixture/duplicate": "read" }).replace("/fixture/duplicate", encoded.replace("/fixture/c", "/fixture/%63"));
+  const cases = [
+    valid.stderr.replace(encoded, encoded + "-wrong"), attestation({ ...filesystem, [path]: "write" }),
+    valid.stderr.replace(encoded, encoded.replace("%25", "%2525")), duplicate,
+    ...["/fixture/%GG", "/fixture/%C3%28", "/fixture/a%2Fb", encoded + "?query"].map((value) => valid.stderr.replace(encoded, value)),
+    valid.stderr.replace('host: None', 'host: Some(Domain("remote"))'),
+    valid.stderr.replace('scheme: "file"', 'scheme: "https"'),
+    valid.stderr.replace(encoded, "//remote/fixture"),
+    ...['Special { value: Unknown }', 'GlobPattern { pattern: "/arbitrary*" }', 'GlobPattern { pattern: "/dev/tty*" }'].map((path) => valid.stderr.replace("entries: [", `entries: [FileSystemSandboxEntry { path: ${path}, access: Write, missing_path_behavior: None }, `)),
+  ];
+  const receipt = await runDisposableProof({
+    candidateRoot: root, probe: new GitCandidateIdentityProbe(), factory: new TempDirectoryDerivativeFactory(),
+    proof: async (derivative) => {
+      for (const stderr of cases) {
+        await derivative.mutate("events.json", JSON.stringify({ ...good, stderr }), "alter actual native URL path representation");
+        const altered = JSON.parse(await readFile(derivative.resolve("events.json"), "utf8"));
+        assert.throws(() => parseNativeCodexReview(altered, scoped));
+      }
+      return cases.length;
+    },
+  });
+  assert.equal(requireProven(receipt), cases.length);
 });
 
 test("native command completion preserves test failures as evidence without declaring passing tests", () => {
