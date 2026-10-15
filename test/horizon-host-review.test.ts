@@ -248,7 +248,7 @@ async function convergenceFixture(featureCommits = 9, hookShape: "none" | "sourc
   const actualGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
   await writeFile(join(bin, "git"), `#!${process.execPath}\nconst cp=require('node:child_process');const args=process.argv.slice(2);if(process.env.CONVERGENCE_MODE==='crash-before-apply'&&args[0]==='apply'&&args.length===2){process.kill(process.ppid,'SIGKILL');process.exit(0)}const r=cp.spawnSync(${JSON.stringify(actualGit)},args,{stdio:'inherit'});if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-add'&&JSON.stringify(args)===JSON.stringify(['add','--','source.txt']))process.kill(process.ppid,'SIGKILL');if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-effect-push'&&args.includes('push')&&args.some(a=>a.endsWith('/effect')))process.kill(process.ppid,'SIGKILL');process.exit(r.status??1);\n`, { mode: 0o755 });
   const historicalBase = git(["merge-base", head, base]);
-  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst fs=require('node:fs');const m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:m==='wrong-main-ref'?'0'.repeat(40):'${base}'}};let apiComment=c;if(m==='altered-review'&&endpoint.endsWith('/101')){const countPath=${JSON.stringify(join(root, "altered-comment-count"))};let count=0;try{count=Number(fs.readFileSync(countPath,'utf8'))}catch{}fs.writeFileSync(countPath,String(count+1));if(count>=1)apiComment={...c,body:c.body+' altered'}}console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:apiComment):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
+  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst fs=require('node:fs');const m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:require('node:child_process').execFileSync(${JSON.stringify(actualGit)},['--git-dir',${JSON.stringify(remote)},'rev-parse','refs/heads/main'],{encoding:'utf8'}).trim()}};let apiComment=c;if(m==='altered-review'&&endpoint.endsWith('/101')){const countPath=${JSON.stringify(join(root, "altered-comment-count"))};let count=0;try{count=Number(fs.readFileSync(countPath,'utf8'))}catch{}fs.writeFileSync(countPath,String(count+1));if(count>=1)apiComment={...c,body:c.body+' altered'}}console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:apiComment):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
   await writeFile(join(root, "codex-fixture.mjs"), CONVERGENCE_CODEX_FIXTURE);
   await writeFile(join(bin, "codex"), `#!/bin/sh\nexec '${process.execPath}' '${join(root, "codex-fixture.mjs")}'\n`, { mode: 0o755 });
   await writeFile(join(bin, "claude"), `#!${process.execPath}\nconst fs=require('node:fs');let prompt='';process.stdin.on('data',bytes=>prompt+=bytes);process.stdin.on('end',()=>{fs.appendFileSync(process.env.CONVERGENCE_CALLS,'review\\n');if(process.env.CONVERGENCE_MODE==='concurrent-state')fs.writeFileSync(process.env.CONVERGENCE_SOURCE+'/new-untracked.txt','concurrent');const supplied=['packet','original:source.txt','accepted-main:source.txt','projected:source.txt'].every(label=>prompt.includes(JSON.stringify(label)));const status=process.env.CONVERGENCE_MODE==='review-refuses'||(process.env.CONVERGENCE_MODE==='requires-material'&&!supplied)?'fail':'pass';console.log(JSON.stringify({is_error:false,result:JSON.stringify({status,summary:'Scripted structural reviewer fixture',findings:[]})}));});\n`, { mode: 0o755 });
@@ -629,11 +629,28 @@ test("convergence binds actual repository main even when PR comparison base is h
   for (const mode of ["historical-base", "wrong-main-ref"]) {
     const f = await convergenceFixture();
     try {
+      const snapshot = async () => ({
+        head: f.git(["rev-parse", "HEAD"]), integration: f.git(["rev-parse", "origin/main"]),
+        index: f.git(["ls-files", "--stage"]), status: f.git(["status", "--porcelain=v1", "--untracked-files=all"]),
+        source: await readFile(join(f.repo, "source.txt"), "utf8"),
+        reviews: await readFile(join(f.repo, ".rhiz-horizon-reviews.json"), "utf8"),
+      });
+      const before = await snapshot();
+      if (mode === "wrong-main-ref") {
+        // Advance the actual remote branch, leaving the captured local integration
+        // and PR comparison base intact. Forge transport reads that real ref.
+        const newerMain = f.git(["--git-dir", f.remote, "commit-tree", `${f.base}^{tree}`, "-p", f.base, "-m", "accepted main advances"]);
+        f.git(["--git-dir", f.remote, "update-ref", "refs/heads/main", newerMain, f.base]);
+        assert.notEqual(newerMain, f.base);
+        assert.equal(f.git(["--git-dir", f.remote, "rev-parse", "refs/heads/main"]), newerMain);
+        assert.equal(f.git(["rev-parse", "origin/main"]), f.base, "local integration remains stale");
+      }
       const result = f.run(mode);
       if (mode === "wrong-main-ref") {
         assert.notEqual(result.status, 0);
-        assert.equal(await readFile(f.calls, "utf8"), "");
-        assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
+        assert.match(result.stderr, /exact durable OPEN head and fresh accepted repository main/);
+        assert.equal(await readFile(f.calls, "utf8"), "", "stale accepted main refuses before worker/reviewer");
+        assert.deepEqual(await snapshot(), before, "refusal preserves source, index, head and review authority");
       } else {
         assert.equal(result.status, 0, result.stderr);
         assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n");
