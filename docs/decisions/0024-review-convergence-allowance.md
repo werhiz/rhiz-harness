@@ -88,7 +88,7 @@ the existing candidate diff and is required by effect admission, intent and
 recovery. Packaging and deterministic Verify establish identity only; actual
 independent review must judge preservation and repair semantics on supplied bytes.
 
-## Founder-approved READY anchor for integration effects (2026-10-14)
+## Founder-approved review-context anchor for integration effects (2026-10-14 and 2026-10-15)
 
 Authority record: in response to the question, “Approve the narrow Harness
 amendment allowing a fresh exact-head READY review to establish the size anchor
@@ -100,24 +100,37 @@ The direct response item is
 `/tmp/rhiz-landing-decisions-20261014.md`.
 
 Within that scope, for `resolve-integration` only, the latest attributable
-canonical READY verdict for the exact durable OPEN source head may establish
-the effect-only growth anchor as that head's full committed diff against the
-forge review base. This does not create or change a correction receipt and
-grants no ordinary write permission. The complete projected integration tree
-must remain strictly below the existing inclusive 125% growth bound and still
-pass fresh controlled Work, Verify, and independent whole-packet Review before
-the one exact resolution effect.
+canonical READY or NOT READY verdict for the exact durable OPEN source head may
+establish the effect-only growth anchor as that head's full committed diff
+against the forge review base. A NOT READY verdict qualifies only as active
+findings context for one governed reconciliation whose projected packet
+preserves the reviewed source and addresses those findings; it is not a
+correction receipt or acceptance claim. This does not create or change a
+correction receipt and grants no ordinary write permission. The complete
+projected integration tree must remain strictly below the existing inclusive
+125% growth bound and still pass fresh controlled Work, Verify, and independent
+whole-packet Review before the one exact resolution effect.
 
 Persisted NOT READY correction receipts remain unchanged and continue to be
-preferred when an attributable receipt exists. An unrecorded NOT READY comment
-does not establish an anchor. READY does not authorize `repair-reviewed-target`,
-`converge --review-receipt`, or ordinary writes. Fresh exact-head and upstream
+preferred when an attributable receipt exists. Unrecorded NOT READY context and
+READY do not authorize `repair-reviewed-target`, `converge --review-receipt`, or
+ordinary writes. Fresh exact-head and upstream
 durability, OPEN state, current accepted-main binding, four-hour review context,
 less-than-ten-ahead boundary, complete conflict scope, unchanged source state,
 and revalidation before effect remain required. No clock, 125% threshold,
 main binding, review work, or verification requirement changes.
 
 Reconsider or disable this fallback if a falsifier shows that another purpose,
-NOT READY or stale/foreign review, ordinary check, terminal correction, or
-receipt write can use it; re-enable only after the owning controls prove the
-same bounded behavior on an exact candidate.
+stale/foreign/non-latest review, ordinary check, terminal correction, or receipt
+write can use it; re-enable only after the owning controls prove the same
+bounded behavior on an exact candidate.
+
+**Bounded NOT READY integration context amendment (2026-10-15).** In response to
+the proposal “Approve bounded NOT READY integration repair (recommended),” the
+founder approved the amendment on 2026-10-15. The direct approval is recorded in
+`/tmp/rhiz-landing-decisions-20261014.md`. It permits only the `resolve-integration`
+effect-anchor fallback to use a fresh exact-head canonical NOT READY review as
+active findings context. It does not widen ordinary writes, correction receipts,
+terminal repair, history limits, the growth bound, or any Work/Verify/independent
+Review requirement. The required owner tests include real-Git NOT READY positive
+and negative controls and the guard falsifier.
