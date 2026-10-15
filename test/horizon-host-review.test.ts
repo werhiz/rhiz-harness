@@ -170,7 +170,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });
 `;
 
-async function convergenceFixture() {
+async function convergenceFixture(featureCommits = 9) {
   const root = await mkdtemp(join(tmpdir(), "horizon-convergence-host-"));
   const repo = join(root, "repo");
   const bin = join(root, "bin");
@@ -189,7 +189,7 @@ async function convergenceFixture() {
   git(["remote", "add", "origin", remote]); git(["push", "-qu", "origin", "main"]);
   git(["checkout", "-qb", "feature"]);
   const when = new Date(Date.now() - 50 * HOUR).toISOString();
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < featureCommits; i++) {
     await writeFile(join(repo, i === 0 ? "source.txt" : `feature-${i}.txt`), i === 0 ? "ours\n" : "feature\n".repeat(65));
     git(["add", "."]);
     execFileSync("git", ["commit", "-qm", `feature ${i}`], { cwd: repo, env: { ...env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when } });
@@ -218,7 +218,7 @@ async function convergenceFixture() {
   const actualGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
   await writeFile(join(bin, "git"), `#!${process.execPath}\nconst cp=require('node:child_process');const args=process.argv.slice(2);if(process.env.CONVERGENCE_MODE==='crash-before-apply'&&args[0]==='apply'&&args.length===2){process.kill(process.ppid,'SIGKILL');process.exit(0)}const r=cp.spawnSync(${JSON.stringify(actualGit)},args,{stdio:'inherit'});if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-add'&&JSON.stringify(args)===JSON.stringify(['add','--','source.txt']))process.kill(process.ppid,'SIGKILL');if(r.status===0&&process.env.CONVERGENCE_MODE==='crash-after-effect-push'&&args.includes('push')&&args.some(a=>a.endsWith('/effect')))process.kill(process.ppid,'SIGKILL');process.exit(r.status??1);\n`, { mode: 0o755 });
   const historicalBase = git(["merge-base", head, base]);
-  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='altered-review')c.body+=' altered';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:m==='wrong-main-ref'?'0'.repeat(40):'${base}'}};console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:c):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
+  await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst fs=require('node:fs');const m=process.env.CONVERGENCE_MODE;const old=${JSON.stringify(comment)};const c=structuredClone(old);if(m==='ready-review'){c.id=102;c.html_url=c.html_url.replace('101','102');c.body=c.body.replace('## NOT READY at','## READY at')}if(m==='stale-review')c.created_at='2000-01-01T00:00:00Z';if(m==='forge-failure')process.exit(1);const endpoint=process.argv.at(-1);const main={ref:'refs/heads/main',object:{type:'commit',sha:m==='wrong-main-ref'?'0'.repeat(40):'${base}'}};let apiComment=c;if(m==='altered-review'&&endpoint.endsWith('/101')){const countPath=${JSON.stringify(join(root, "altered-comment-count"))};let count=0;try{count=Number(fs.readFileSync(countPath,'utf8'))}catch{}fs.writeFileSync(countPath,String(count+1));if(count>=1)apiComment={...c,body:c.body+' altered'}}console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:m==='ready-review'&&endpoint.endsWith('/101')?old:apiComment):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${head}',baseRefOid:m==='wrong-base'?'0'.repeat(40):m==='historical-base'?'${historicalBase}':'${base}',baseRefName:'main',comments:[{url:old.html_url,body:old.body},{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
   await writeFile(join(root, "codex-fixture.mjs"), CONVERGENCE_CODEX_FIXTURE);
   await writeFile(join(bin, "codex"), `#!/bin/sh\nexec '${process.execPath}' '${join(root, "codex-fixture.mjs")}'\n`, { mode: 0o755 });
   await writeFile(join(bin, "claude"), `#!${process.execPath}\nconst fs=require('node:fs');let prompt='';process.stdin.on('data',bytes=>prompt+=bytes);process.stdin.on('end',()=>{fs.appendFileSync(process.env.CONVERGENCE_CALLS,'review\\n');if(process.env.CONVERGENCE_MODE==='concurrent-state')fs.writeFileSync(process.env.CONVERGENCE_SOURCE+'/new-untracked.txt','concurrent');const supplied=['packet','original:source.txt','accepted-main:source.txt','projected:source.txt'].every(label=>prompt.includes(JSON.stringify(label)));const status=process.env.CONVERGENCE_MODE==='review-refuses'||(process.env.CONVERGENCE_MODE==='requires-material'&&!supplied)?'fail':'pass';console.log(JSON.stringify({is_error:false,result:JSON.stringify({status,summary:'Scripted structural reviewer fixture',findings:[]})}));});\n`, { mode: 0o755 });
@@ -261,7 +261,7 @@ test("fixed convergence executes new Work/Verify/Review before one bounded real 
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
-// Falsifies: integration/ready-anchor-is-effect-only
+// Falsifies: integration/review-context-anchor-is-effect-only
 test("a fresh exact-head READY anchors only resolve-integration when no correction receipt exists", async () => {
   const f = await convergenceFixture();
   try {
@@ -302,19 +302,79 @@ test("a fresh exact-head READY anchors only resolve-integration when no correcti
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
-test("an unrecorded NOT READY context cannot anchor an integration effect", async () => {
+test("an unrecorded NOT READY review does not authorize ordinary writes", async () => {
   const f = await convergenceFixture();
   try {
     const reviewPath = join(f.repo, ".rhiz-horizon-reviews.json");
     const reviews = JSON.parse(await readFile(reviewPath, "utf8"));
     delete reviews.reviews.feature.correctionReceipts;
     await writeFile(reviewPath, JSON.stringify(reviews));
+    const result = f.check();
+    assert.equal(JSON.parse(result.stdout).state, "tripped");
+    assert.equal(await readFile(f.calls, "utf8"), "", "ordinary check does not invoke Work or provider");
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
+    assert.ok(f.git(["ls-files", "--unmerged"]));
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("a fresh exact-head NOT READY anchors only resolve-integration without creating a correction receipt", async () => {
+  const f = await convergenceFixture();
+  try {
+    const reviewPath = join(f.repo, ".rhiz-horizon-reviews.json");
+    const reviews = JSON.parse(await readFile(reviewPath, "utf8"));
+    delete reviews.reviews.feature.correctionReceipts;
+    await writeFile(reviewPath, JSON.stringify(reviews));
+
+    const ordinary = f.check();
+    assert.equal(JSON.parse(ordinary.stdout).state, "tripped", "NOT READY review context does not grant ordinary write permission");
+    assert.equal(await readFile(f.calls, "utf8"), "");
+
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n", "NOT READY context does not skip fresh Work, Verify, or independent Review");
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), "resolved\n");
+    assert.equal(f.git(["rev-parse", "HEAD"]), f.head);
+
+    const recorded = JSON.parse(await readFile(reviewPath, "utf8"));
+    assert.equal(recorded.reviews.feature.correctionReceipts, undefined, "effect-only review context is not persisted as a correction receipt");
+    const reading = await readRepositoryWorkLedgers(join(f.repo, ".git"));
+    assert.equal(reading.unreadable.length, 0);
+    const events = reading.ledgers.flatMap((ledger) => ledger.events);
+    const effects = events.filter((event) => event.evidence.some((entry) => entry.id === "convergence:effect"));
+    assert.equal(effects.length, 1, "exactly one bounded convergence effect was recorded");
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("an unrecorded NOT READY cannot authorize terminal repair", async () => {
+  const f = await convergenceFixture(8);
+  try {
+    const prepared = f.run();
+    assert.equal(prepared.status, 0, prepared.stderr + prepared.stdout);
+    await writeFile(f.calls, "");
+    const reviewPath = join(f.repo, ".rhiz-horizon-reviews.json");
+    await rm(reviewPath, { force: true });
+    f.git(["commit", "-qm", "complete reviewed integration"]);
+    f.git(["push", "-qu", "origin", "feature"]);
+    const terminalHead = f.git(["rev-parse", "HEAD"]);
+    const terminalCommentUrl = "https://github.com/example/project/pull/42#issuecomment-202";
+    const terminalOriginal = await readFile(join(f.repo, "source.txt"), "utf8");
+    assert.equal(terminalOriginal, "resolved\n");
+    assert.equal(f.git(["status", "--porcelain"]), "");
+    assert.equal(f.git(["rev-list", "--count", "origin/main..HEAD"]), "9");
+    const terminalComment = { id: 202, html_url: terminalCommentUrl, issue_url: "https://api.github.com/repos/example/project/issues/42", author_association: "MEMBER", user: { login: "checker" }, created_at: new Date().toISOString(), body: `## NOT READY at ${terminalHead}\n\n<!-- rhiz-review-agent -->\nIndependent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${terminalHead}\`.\n\nResolve the finding on this exact head.` };
+    const historicalBase = f.git(["merge-base", terminalHead, f.base]);
+    await writeFile(join(f.root, "bin", "gh"), `#!${process.execPath}\nconst endpoint=process.argv.at(-1);const c=${JSON.stringify(terminalComment)};const main={ref:'refs/heads/main',object:{type:'commit',sha:'${f.base}'}};console.log(JSON.stringify(process.argv[2]==='api'?(endpoint.endsWith('/git/ref/heads/main')?main:c):{number:42,url:'https://github.com/example/project/pull/42',state:'OPEN',headRefOid:'${terminalHead}',baseRefOid:'${historicalBase}',baseRefName:'main',comments:[{url:c.html_url,body:c.body}]}));\n`, { mode: 0o755 });
+    const patch = "--- a/source.txt\n+++ b/source.txt\n@@ -1 +1 @@\n-resolved\n+terminal resolved\n";
+    await writeFile(f.inputFile, JSON.stringify({ ...f.request, purpose: "repair-reviewed-target", patch, reviewCommentUrl: terminalCommentUrl }));
+
+    await assert.rejects(readFile(reviewPath, "utf8"), { code: "ENOENT" });
     const result = f.run();
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /attributable existing correction round/);
-    assert.equal(await readFile(f.calls, "utf8"), "", "refusal occurs before Work or provider invocation");
-    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
-    assert.ok(f.git(["ls-files", "--unmerged"]));
+    assert.equal(await readFile(f.calls, "utf8"), "", "terminal repair refuses before Work or provider invocation");
+    assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), terminalOriginal);
+    await assert.rejects(readFile(reviewPath, "utf8"), { code: "ENOENT" }, "refusal does not create a review receipt");
+    assert.equal(f.git(["ls-files", "--unmerged"]), "");
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 

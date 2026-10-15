@@ -636,8 +636,8 @@ function qualifiedConvergenceAnchor(repo, branch, forge, purpose) {
       return committedDiffLines(repo, forge.reviewBase, receipt.head);
     } catch { continue; }
   }
-  // GUARD integration/ready-anchor-is-effect-only
-  if (purpose === "resolve-integration" && forge.comment.verdict === "READY") {
+  // GUARD integration/review-context-anchor-is-effect-only
+  if (purpose === "resolve-integration" && ["NOT READY", "READY"].includes(forge.comment.verdict)) {
     return committedDiffLines(repo, forge.reviewBase, forge.head);
   }
   throw new Error("convergence growth requires an attributable existing correction round; cached numbers confer no authority");
