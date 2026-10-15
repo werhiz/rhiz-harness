@@ -41,6 +41,7 @@ export class NativeCodexReviewFailure extends Error {
   }
 }
 const MAX_OUTPUT = 16 * 1024 * 1024;
+const CLEANUP_GRACE_MS = 500;
 const DISABLED_FEATURES = [
   "apps", "plugins", "hooks", "memories", "multi_agent", "skill_search",
   "skill_mcp_dependency_install", "browser_use", "browser_use_external", "computer_use",
@@ -79,23 +80,75 @@ async function invoke(executable: string, args: string[], cwd: string, env: Node
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "", failure: Error | undefined;
-    let hardKill: NodeJS.Timeout | undefined;
-    const kill = () => {
-      if (child.pid) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* already exited */ } }
-      hardKill ??= setTimeout(() => { if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } }, 500);
+    let settled = false, exited = false, closed = false, absent = false, escalated = false;
+    let stdoutBytes = 0, stderrBytes = 0;
+    let cleanupTimer: NodeJS.Timeout | undefined;
+    const group = child.pid;
+    const signalGroup = (signal: NodeJS.Signals | 0) => {
+      if (!group || absent) return;
+      try {
+        process.kill(-group, signal);
+        if (signal === 0) failure ??= new Error("native review process cleanup uncertain");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") absent = true;
+        else failure ??= new Error("native review process cleanup uncertain");
+      }
     };
-    const timer = setTimeout(() => { failure = new Error("native review timed out"); kill(); }, timeoutMs);
+    const escalate = () => {
+      if (escalated) return;
+      escalated = true; signalGroup("SIGKILL");
+    };
+    const release = () => {
+      child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy(); child.unref();
+    };
+    const finish = () => {
+      if (settled) return;
+      escalate(); signalGroup(0);
+      if (!closed || !exited) failure ??= new Error("native review transport did not drain");
+      settled = true; clearTimeout(timer); if (cleanupTimer) clearTimeout(cleanupTimer);
+      child.stdout.removeAllListeners("data"); child.stderr.removeAllListeners("data");
+      child.removeAllListeners("exit"); child.removeAllListeners("close");
+      child.removeAllListeners("error"); child.on("error", () => {});
+      child.stdin.removeAllListeners("error"); child.stdin.on("error", () => {});
+      release();
+      failure ? reject(failure) : resolve({ stdout, stderr });
+    };
+    const boundCleanup = () => {
+      cleanupTimer ??= setTimeout(finish, CLEANUP_GRACE_MS);
+    };
+    const stop = (error: Error) => {
+      if (settled || failure) return;
+      failure = error;
+      release(); signalGroup("SIGTERM"); boundCleanup();
+    };
+    const timer = setTimeout(() => stop(new Error("native review timed out")), timeoutMs);
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; if (Buffer.byteLength(stdout) > MAX_OUTPUT) { failure = new Error("native review output exceeded bound"); kill(); } });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; if (Buffer.byteLength(stderr) > MAX_OUTPUT) { failure = new Error("native review diagnostics exceeded bound"); kill(); } });
-    child.stdin.on("error", () => { failure ??= new Error("native review input failed"); });
-    child.on("error", () => { failure = new Error("native review process unavailable"); });
+    child.stdout.on("data", (chunk: string) => {
+      if (settled || failure) return;
+      stdoutBytes += Buffer.byteLength(chunk);
+      if (stdoutBytes > MAX_OUTPUT) { stop(new Error("native review output exceeded bound")); return; }
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      if (settled || failure) return;
+      stderrBytes += Buffer.byteLength(chunk);
+      if (stderrBytes > MAX_OUTPUT) { stop(new Error("native review diagnostics exceeded bound")); return; }
+      stderr += chunk;
+    });
+    child.stdin.on("error", () => stop(new Error("native review input failed")));
+    child.on("error", () => stop(new Error("native review process unavailable")));
+    child.on("exit", (code, signal) => {
+      if (settled) return;
+      exited = true;
+      if (code !== 0 || signal !== null) failure ??= new Error("native review process did not complete successfully");
+      // A numeric PGID is not a kernel lease. Never signal again after ESRCH.
+      escalate(); boundCleanup();
+    });
     child.on("close", (code, signal) => {
-      clearTimeout(timer); if (hardKill) clearTimeout(hardKill);
-      // The leader can exit before a background test child; retire its process group.
-      if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* group is gone */ } }
-      if (failure || code !== 0 || signal !== null) reject(failure ?? new Error("native review process did not complete successfully"));
-      else resolve({ stdout, stderr });
+      if (settled) return;
+      closed = true;
+      if (code !== 0 || signal !== null) failure ??= new Error("native review process did not complete successfully");
+      finish();
     });
     child.stdin.end(input);
   });
@@ -115,6 +168,7 @@ async function accountMetadata(executable: string, codexHome: string, home: stri
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
     const finish = (error?: Error, value?: string) => {
       if (settled) return; settled = true; clearTimeout(timer); lines.close(); child.kill("SIGKILL");
+      child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); child.unref();
       for (const item of pending.values()) item.reject(new Error("native account metadata closed")); pending.clear();
       error ? reject(error) : resolve(value!);
     };
@@ -123,6 +177,7 @@ async function accountMetadata(executable: string, codexHome: string, home: stri
     child.on("error", () => finish(new Error("native account metadata unavailable")));
     child.on("close", () => { if (!settled) finish(new Error("native account metadata interrupted")); });
     lines.on("line", (line) => {
+      if (settled) return;
       bytes += Buffer.byteLength(line); if (bytes > MAX_OUTPUT) { finish(new Error("native account metadata exceeded bound")); return; }
       let message: { id?: number; result?: unknown; error?: unknown };
       try { message = JSON.parse(line); } catch { finish(new Error("native account metadata malformed")); return; }

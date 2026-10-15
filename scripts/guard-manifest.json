@@ -681,6 +681,20 @@
       "testFile": "dist/test/operator-cli.test.js"
     },
     {
+      "id": "codex/native-review-cleanup-deadline",
+      "why": "Inherited pipes cannot defer failure or final-drain settlement until an escaped descendant voluntarily exits.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      cleanupTimer ??= setTimeout(finish, CLEANUP_GRACE_MS);\n",
+      "testFile": "dist/test/codex-native-transport.test.js"
+    },
+    {
+      "id": "codex/native-review-settlement-handle-release",
+      "why": "A rejected promise is not bounded host completion while inherited pipes still retain the event loop.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      release();\n",
+      "testFile": "dist/test/codex-native-transport.test.js"
+    },
+    {
       "id": "codex/native-review-model-provider-profile-attestation",
       "why": "Caller model intent cannot stand in for native observed model/provider/profile identity.",
       "file": "adapters/codex/native-review.ts",

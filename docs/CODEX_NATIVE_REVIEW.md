@@ -84,6 +84,23 @@ or failed completions refuse before the active item is retired. Process stdout
 and stderr use streaming UTF-8 decoders so a split codepoint cannot change a
 finding, event or startup path.
 
+The process timeout includes at most 500ms of cleanup grace. Leader exit starts
+the same bounded final-drain window independently of inherited-pipe EOF. Timeout,
+input/process errors and output overflow retain the first refusal; output is
+bounded before appending and stops on failure. Settlement releases pipe handles
+and timers, including account-metadata pipes. Group escalation happens immediately
+on observed leader exit, at most once; observed ESRCH permanently ends signaling
+that numeric group. Signal/check uncertainty refuses successful output.
+
+This does not establish descendant custody. A worker can create another session
+or group, retain inherited filesystem authority and close its stdio. Numeric PGIDs
+are not kernel ownership leases. Finite disposable controls separately prove
+bounded rejection, parent event-loop release and same-group escalation, while a
+detached child with ignored stdio remains visibly alive after successful transport.
+Its fixture-owned channel performs cleanup, never an untrusted reported PID.
+Complete descendant teardown remains P1, alongside the physical boundary and
+acceptance orchestration gaps below. Success does not prove writable scopes quiet.
+
 Trusted developer instructions require exactly one assistant text message after
 all work finishes, without intermediate commentary. The parser still refuses
 multiple distinct messages. Native 0.162.1 JSON omits their phase, and its
