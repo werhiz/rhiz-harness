@@ -201,6 +201,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
       try { event = JSON.parse(row); } catch { throw new Error("native review malformed or truncated event"); }
       current = event;
       if (completed) throw new Error("native review events after completed turn");
+      if (final !== undefined && event.type !== "turn.completed") throw new Error("native review event after final");
       if (event.type === "thread.started") { if (thread || started) throw new Error("native review multiple threads"); thread = true; continue; }
       if (event.type === "turn.started") { if (!thread || started) throw new Error("native review multiple turns or missing thread"); started = true; continue; }
       if (!started) throw new Error("native review event before turn");
@@ -237,6 +238,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
       }
       if (event.item.status === "error" || (event.item.status === "failed" && !(event.type === "item.completed" && event.item.type === "command_execution"))) throw new Error("native review tool failed");
       if (event.type === "item.completed" && event.item.type === "agent_message") {
+        if (activeItems.size) throw new Error("native review final before tool completion");
         if (final !== undefined || typeof event.item.text !== "string" || !event.item.text.trim()) throw new Error("native review conflicting or empty final");
         final = event.item.text;
       }

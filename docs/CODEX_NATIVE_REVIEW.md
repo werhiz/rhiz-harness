@@ -74,6 +74,10 @@ kinds at both lifecycle positions. An explicit empty array records zero changes,
 never positive file mutation evidence. These checks validate evidence shape;
 the sandbox and detached checkout retain path authority. The wire fields follow
 the [pinned native schema](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/exec/src/exec_events.rs).
+Final admission refuses immediately if other items remain active, after retiring
+the final message's own lifecycle. Only the completed turn may follow a final;
+later tools, reasoning or other item activity refuse. The two guards reinforce
+each other; the immediate-refusal proof checks the precise admission boundary.
 
 File changes must end with `status: completed`; missing, cancelled, in-progress
 or failed completions refuse before the active item is retired. Process stdout
@@ -107,11 +111,13 @@ Native file-URL paths decode once before exact scope/access and duplicate checks
 Installed-host tool/startup/network/socket/PTY containment and paid canary evidence
 orchestration still lack checked-in automation. P1 remains open; this checkpoint
 does not claim that a passing portable suite proves the native boundary.
-Clean local native provisioning also remains open: the dummy-auth test still
-assumes the operator's global ARM64 installation beside the running Node prefix.
+Normal `npm ci` provisions exact test-only `@openai/codex@0.162.1` and its platform
+package. Fixtures resolve local nested or hoisted packages, validate metadata and
+native version, and use no global/PATH fallback or test-time downloader. ARM64/x64
+layout tests use scripted binaries; actual native execution proves only this host.
 
 The scoped implementation executor used deterministic shell, TypeScript and Node
-on Darwin. No model inference, operator credential mutation, install, push, PR or full gate
+on Darwin. No model inference, operator credential mutation, push, PR or full gate
 was used for this candidate. Existing Codex adapter tests plus the new native suite
 pass locally; destructive/negative fixtures run through `src/disposable.ts` and
 re-pin their source after removal. Scripted executables test metadata/process/cleanup

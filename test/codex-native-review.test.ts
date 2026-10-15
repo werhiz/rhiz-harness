@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js";
 import { nativeCodexReviewInvocation, parseNativeCodexReview, runNativeCodexReview, NativeCodexReviewFailure, invokeNativeReviewProcess } from "../adapters/codex/native-review.js";
 import { requireProven, runDisposableProof, TempDirectoryDerivativeFactory } from "../src/disposable.js";
-import { nativeReviewCandidate } from "./fixtures/native-review.js";
+import { nativeReviewCandidate, nativeReviewExecutable } from "./fixtures/native-review.js";
 
 const expected = { model: "gpt-6-astra", provider: "openai", filesystem: { ":minimal": "read", "/dev/tty*": "deny", "/dev/ptmx*": "deny", "/": "read", "/private/tmp": "deny", "/fixture/checkout": "write" }, codexHome: "/fixture/control/codex", cwd: "/fixture/control/trusted" };
 function attestation(filesystem: Record<string, string> = expected.filesystem): string {
@@ -92,6 +92,66 @@ test("native payloads retain silent commands and explicit add, update, delete or
   for (const changes of [[], ...["add", "update", "delete"].map((kind) => [{ path: "relative café space.ts", kind }])]) {
     assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl(fileRows(changes)) }, expected).text, events[2]!.item!.text);
   }
+});
+
+test("native final admission requires retired work and seals all subsequent item activity", () => {
+  const pairedFinal = { type: "item.started", item: { id: "final", type: "agent_message" } };
+  const filePair = [startedFile, completedFile].map((row) => ({ ...row, item: { ...row.item, id: "item_1" } }));
+  for (const work of [[], [startedCommand, completedCommand], filePair, [startedCommand, completedCommand, ...filePair]]) {
+    assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], ...work, pairedFinal, events[2], events[3]]) }, expected).text, events[2]!.item!.text);
+  }
+  for (const [start, finish] of [[startedCommand, completedCommand], [startedFile, completedFile]]) {
+    assert.throws(() => parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], start, events[2], finish, events[3]]) }, expected), (error) => {
+      assert(error instanceof NativeCodexReviewFailure);
+      assert.equal(error.diagnostic.reason, "native review final before tool completion");
+      assert.equal(error.diagnostic.stage, "events"); assert.equal(error.diagnostic.eventIndex, 3); assert.equal(error.diagnostic.activeCount, 1);
+      assert(!error.message.includes("FAKE_") && !JSON.stringify(error.diagnostic).includes("FAKE_"));
+      return true;
+    });
+  }
+  for (const item of [startedCommand, completedCommand, startedFile, completedFile, pairedFinal, { type: "item.completed", item: { id: "later_reasoning", type: "reasoning" } }]) {
+    assert.throws(() => parseNativeCodexReview({ ...good, stdout: jsonl([events[0], events[1], events[2], item, events[3]]) }, expected));
+  }
+});
+
+test("native provisioning resolves local nested architecture packages and refuses incompatible layouts", { skip: process.platform === "win32" }, async (t) => {
+  const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
+  const receipt = await runDisposableProof({
+    candidateRoot: root, probe: new GitCandidateIdentityProbe(), factory: new TempDirectoryDerivativeFactory(),
+    proof: async (derivative) => {
+      for (const [arch, triple] of Object.entries({ arm64: "aarch64-apple-darwin", x64: "x86_64-apple-darwin" })) {
+        const base = `${arch}/node_modules/@openai/codex`, platform = `${base}/node_modules/@openai/codex-darwin-${arch}`;
+        const binary = `${platform}/vendor/${triple}/bin/codex`, packageRoot = derivative.resolve(arch);
+        await mkdir(dirname(derivative.resolve(binary)), { recursive: true });
+        const wrapper = { name: "@openai/codex", version: "0.162.1", optionalDependencies: { [`@openai/codex-darwin-${arch}`]: `npm:@openai/codex@0.162.1-darwin-${arch}` } };
+        const details = { name: "@openai/codex", version: `0.162.1-darwin-${arch}`, os: ["darwin"], cpu: [arch] };
+        const seed = async () => {
+          await derivative.mutate(`${base}/package.json`, JSON.stringify(wrapper), "seed local wrapper metadata");
+          await derivative.mutate(`${platform}/package.json`, JSON.stringify(details), "seed local platform metadata");
+        };
+        await seed();
+        await assert.rejects(nativeReviewExecutable(derivative.root, packageRoot, "darwin", arch), /ENOENT/);
+        await derivative.mutate(binary, "#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n", "seed local executable fixture");
+        await chmod(derivative.resolve(binary), 0o755);
+        assert.equal(await nativeReviewExecutable(derivative.root, packageRoot, "darwin", arch), await realpath(derivative.resolve(binary)));
+        for (const [path, value] of [
+          [`${base}/package.json`, { ...wrapper, version: "wrong" }],
+          [`${platform}/package.json`, { ...details, version: "wrong" }],
+          [`${platform}/package.json`, { ...details, os: ["linux"] }],
+          [`${platform}/package.json`, { ...details, cpu: [arch === "arm64" ? "x64" : "arm64"] }],
+        ] as const) {
+          await derivative.mutate(path, JSON.stringify(value), "plant incompatible package metadata");
+          await assert.rejects(nativeReviewExecutable(derivative.root, packageRoot, "darwin", arch), /native fixture/);
+          await seed();
+        }
+        await derivative.mutate(binary, "#!/bin/sh\nprintf 'wrong version\\n'\n", "plant wrong executable version");
+        await assert.rejects(nativeReviewExecutable(derivative.root, packageRoot, "darwin", arch), /executable version/);
+        await assert.rejects(nativeReviewExecutable(derivative.root, packageRoot, "darwin", "ia32"), /unsupported/);
+      }
+      return true;
+    },
+  });
+  assert.equal(requireProven(receipt), true);
 });
 
 test("native review fail-closed cases mutate disposable evidence only", async (t) => {

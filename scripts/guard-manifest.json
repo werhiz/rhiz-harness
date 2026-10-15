@@ -716,6 +716,20 @@
       "testFile": "dist/test/codex-native-review.test.js"
     },
     {
+      "id": "codex/native-review-premature-final-admission",
+      "why": "Refuse a final immediately at its admission boundary when other work remains active; later turn-seal refusal is additional defense, not this guard claim.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "        if (activeItems.size) throw new Error(\"native review final before tool completion\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-final-seals-turn",
+      "why": "After a final no new item may run or complete, including completion-only reasoning that previously remained admissible.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (final !== undefined && event.type !== \"turn.completed\") throw new Error(\"native review event after final\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
       "id": "codex/native-review-command-payload",
       "why": "Both command lifecycle positions must retain meaningful command text before any completed result can count as evidence.",
       "file": "adapters/codex/native-review.ts",

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 import { GitCandidateIdentityProbe } from "../adapters/git/candidate-identity.js";
 import { requireProven, runDisposableProof, TempDirectoryDerivativeFactory } from "../src/disposable.js";
-import { nativeReviewCandidate } from "./fixtures/native-review.js";
+import { nativeReviewCandidate, nativeReviewExecutable } from "./fixtures/native-review.js";
 
 function dummyAuth(expired: boolean, refresh: string) {
   const jwt = (expire: boolean) => "e30." + Buffer.from(JSON.stringify({
@@ -63,12 +63,11 @@ test("installed native auth alias preserves dummy refresh, replacement and concu
   const receipt = await runDisposableProof({
     candidateRoot: root, probe: new GitCandidateIdentityProbe(), factory: new TempDirectoryDerivativeFactory(),
     proof: async (derivative) => {
-      const executable = await realpath(resolve(dirname(process.execPath), "../lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"));
+      const executable = await nativeReviewExecutable(derivative.root);
       const original = derivative.resolve("original"), aliases = [derivative.resolve("alias-a"), derivative.resolve("alias-b")];
       for (const directory of [original, ...aliases]) await mkdir(directory, { mode: 0o700 });
       const file = join(original, "auth.json");
       for (const alias of aliases) await symlink(file, join(alias, "auth.json"));
-      assert.equal(execFileSync(executable, ["--version"], { env: { HOME: derivative.root, CODEX_HOME: original }, encoding: "utf8" }).trim(), "codex-cli 0.162.1");
       let reject = false, generation = 0, invalidRequest = false;
       let calls: string[] = [];
       const used = new Set<string>(), issued = new Map<string, ReturnType<typeof dummyAuth>["tokens"]>();
