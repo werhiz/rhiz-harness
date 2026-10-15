@@ -679,6 +679,118 @@
       "file": "scripts/rhiz-harness.mjs",
       "remove": ", ...(material ? [material.evidence] : [])",
       "testFile": "dist/test/operator-cli.test.js"
+    },
+    {
+      "id": "codex/native-review-cleanup-deadline",
+      "why": "Inherited pipes cannot defer failure or final-drain settlement until an escaped descendant voluntarily exits.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      cleanupTimer ??= setTimeout(finish, CLEANUP_GRACE_MS);\n",
+      "testFile": "dist/test/codex-native-transport.test.js"
+    },
+    {
+      "id": "codex/native-review-settlement-handle-release",
+      "why": "A rejected promise is not bounded host completion while inherited pipes still retain the event loop.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      release();\n",
+      "testFile": "dist/test/codex-native-transport.test.js"
+    },
+    {
+      "id": "codex/native-review-model-provider-profile-attestation",
+      "why": "Caller model intent cannot stand in for native observed model/provider/profile identity.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "    if (!session.includes(fragment)) throw new Error(\"native review model/provider/profile drift\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-filesystem-profile-attestation",
+      "why": "A successfully completed review cannot certify a startup profile whose read/write scopes drifted.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "    if (observed.get(scope) !== access) throw new Error(\"native review filesystem profile drift\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-denies-model-network",
+      "why": "The signed-in native host may use the provider but all model command/test children require an enforced network deny.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": " \"permissions.review.network.enabled\": false,",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-shell-startup-environment",
+      "why": "Non-login zsh still loads scratch HOME/.zshenv; startup state must come from an empty immutable control scope.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": " ZDOTDIR: shellHome, BASH_ENV: \"/dev/null\", ENV: \"/dev/null\"",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-terminal-deny-globs",
+      "why": "Minimal grants terminal access; explicit overriding deny globs must preserve isolation from other sessions.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": ", \"/dev/tty*\": \"deny\", \"/dev/ptmx*\": \"deny\"",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-premature-final-admission",
+      "why": "Refuse a final immediately at its admission boundary when other work remains active; later turn-seal refusal is additional defense, not this guard claim.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "        if (activeItems.size) throw new Error(\"native review final before tool completion\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-final-seals-turn",
+      "why": "After a final no new item may run or complete, including completion-only reasoning that previously remained admissible.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (final !== undefined && event.type !== \"turn.completed\") throw new Error(\"native review event after final\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-command-payload",
+      "why": "Both command lifecycle positions must retain meaningful command text before any completed result can count as evidence.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (event.item.type === \"command_execution\" && (typeof event.item.command !== \"string\" || !event.item.command.trim())) throw new Error(\"native review command payload missing\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-file-payload",
+      "why": "Both file lifecycle positions must retain typed path/kind arrays; missing or malformed changes cannot masquerade as file mutation evidence.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (event.item.type === \"file_change\" && (!Array.isArray(event.item.changes) || event.item.changes.some((change) =>\n        change === null || typeof change !== \"object\" || typeof change.path !== \"string\" || !change.path.trim()\n        || change.path.includes(\"\\0\") || ![\"add\", \"delete\", \"update\"].includes(change.kind)))) {\n        throw new Error(\"native review file change payload invalid\");\n      }\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-command-completion-evidence",
+      "why": "A paired completed shell failure is evidence, but native host launch failures, signals and unpaired or malformed command completions must never become accepted output.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "        if (activeItems.get(event.item.id) !== \"command_execution\" || typeof event.item.aggregated_output !== \"string\" || typeof code !== \"number\" || !Number.isSafeInteger(code) || !((code === 0 && event.item.status === \"completed\") || (code >= 1 && code <= 127 && event.item.status === \"failed\"))) throw new Error(\"native review command result inadmissible\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-single-final-contract",
+      "why": "The phase-free native JSON protocol requires one final-only assistant message; ambiguous multi-message output must continue to refuse.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": " + \"\\nReturn exactly one assistant text message, only after all review work is finished. Do not emit intermediate commentary or a second final message.\"",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-file-change-terminal",
+      "why": "A paired file change must complete successfully before a final review result can retire it.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "        if (event.item.type === \"file_change\" && event.item.status !== \"completed\") throw new Error(\"native review file change incomplete\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-stream-utf8",
+      "why": "A process pipe may split a Unicode codepoint; evidence and startup paths must retain their original UTF-8 text.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "    child.stdout.setEncoding(\"utf8\"); child.stderr.setEncoding(\"utf8\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-item-lifecycle",
+      "why": "A different completion type or replayed identity must never erase an unfinished command and certify a final response.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (finishedItems.has(event.item.id)\n        || (event.type === \"item.completed\" && activeType !== event.item.type\n          && (activeType !== undefined || ![\"agent_message\", \"reasoning\"].includes(event.item.type!)))) {\n        throw new Error(\"native review item lifecycle mismatch\");\n      }\n",
+      "testFile": "dist/test/codex-native-review.test.js"
     }
   ]
 }
