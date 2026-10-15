@@ -25,8 +25,9 @@ const good = { stdout: jsonl(events), stderr: attestation() };
 
 const command = (code: unknown, status: string = "failed") => ({ id: "item_0", type: "command_execution", command: "FAKE_COMMAND_SECRET", aggregated_output: "FAKE_OUTPUT_SECRET", exit_code: code, status });
 const completedCommand = { type: "item.completed", item: command(0, "completed") }, startedCommand = { type: "item.started", item: { ...command(null), status: "in_progress" } };
-const completedFile = { type: "item.completed", item: { id: "item_0", type: "file_change", status: "completed" } }, startedFile = { type: "item.started", item: { ...completedFile.item, status: "in_progress" } };
+const completedFile = { type: "item.completed", item: { id: "item_0", type: "file_change", status: "completed", changes: [{ path: "relative café space.ts", kind: "add" }] } }, startedFile = { type: "item.started", item: { ...completedFile.item, status: "in_progress" } };
 const commandRows = (item: ReturnType<typeof command>) => [events[0], events[1], { type: "item.started", item: { ...item, status: "in_progress", exit_code: null } }, { type: "item.completed", item }, events[2], events[3]];
+const fileRows = (changes: unknown) => [events[0], events[1], { ...startedFile, item: { ...startedFile.item, changes } }, { ...completedFile, item: { ...completedFile.item, changes } }, events[2], events[3]];
 
 async function candidate(): Promise<string> {
   return await nativeReviewCandidate({ "events.json": JSON.stringify(good) });
@@ -85,9 +86,24 @@ test("native completed shell failures retain later patch evidence and require te
   }
 });
 
+test("native payloads retain silent commands and explicit add, update, delete or zero changes", () => {
+  const silent = { ...command(0, "completed"), command: "printf '%s\\n' 'quoted command'\n", aggregated_output: "" };
+  assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl(commandRows(silent)) }, expected).text, events[2]!.item!.text);
+  for (const changes of [[], ...["add", "update", "delete"].map((kind) => [{ path: "relative café space.ts", kind }])]) {
+    assert.equal(parseNativeCodexReview({ ...good, stdout: jsonl(fileRows(changes)) }, expected).text, events[2]!.item!.text);
+  }
+});
+
 test("native review fail-closed cases mutate disposable evidence only", async (t) => {
   const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
+  const badChanges = [undefined, null, {}, [null], [1], ["not an object"],
+    ...[undefined, null, 1, "", "   ", "FAKE_PATH_SECRET\0"].map((path) => [{ path, kind: "add" }]),
+    ...[undefined, null, 1, "rename"].map((kind) => [{ path: "fixture.ts", kind }])];
   const cases = [
+    ...[undefined, null, 1, {}, [], "", "   "].flatMap((value) => [2, 3].map((position) => ({ name: `invalid command payload at ${position}`, value: { ...good,
+      stdout: jsonl(commandRows(command(0, "completed")).map((row, index) => index === position ? { ...row, item: { ...row!.item, command: value } } : row)) } }))),
+    ...badChanges.flatMap((value) => [2, 3].map((position) => ({ name: `invalid file payload at ${position}`, value: { ...good,
+      stdout: jsonl(fileRows([]).map((row, index) => index === position ? { ...row, item: { ...row!.item, changes: value } } : row)) } }))),
     ...["in_progress", "cancelled", undefined].map((status) => ({ name: `incomplete file change ${status}`, value: { ...good, stdout: jsonl([events[0], events[1], startedFile, { ...completedFile, item: { ...completedFile.item, status } }, events[2], events[3]]) } })),
     ...[
       ["command erased by file", startedCommand, completedFile], ["file erased by command", startedFile, completedCommand],
@@ -134,7 +150,11 @@ test("native review fail-closed cases mutate disposable evidence only", async (t
       for (const item of cases) {
         await derivative.mutate("events.json", JSON.stringify(item.value), item.name);
         const altered = JSON.parse(await readFile(derivative.resolve("events.json"), "utf8"));
-        assert.throws(() => parseNativeCodexReview(altered, expected), Error, item.name);
+        assert.throws(() => parseNativeCodexReview(altered, expected), (error) => {
+          assert(error instanceof NativeCodexReviewFailure);
+          assert(!error.message.includes("FAKE_") && !JSON.stringify(error.diagnostic).includes("FAKE_"));
+          return true;
+        }, item.name);
       }
       return cases.length;
     },

@@ -197,7 +197,7 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
     stage = "events";
     for (const [index, row] of rows.entries()) {
       eventIndex = index;
-      let event: { type?: string; item?: { id?: string; type?: string; status?: string; text?: string; exit_code?: number | null; aggregated_output?: string }; usage?: Record<string, number> };
+      let event: { type?: string; item?: { id?: string; type?: string; status?: string; text?: string; command?: unknown; changes?: unknown; exit_code?: number | null; aggregated_output?: string }; usage?: Record<string, number> };
       try { event = JSON.parse(row); } catch { throw new Error("native review malformed or truncated event"); }
       current = event;
       if (completed) throw new Error("native review events after completed turn");
@@ -210,6 +210,12 @@ export function parseNativeCodexReview(output: NativeOutput, expected: { model: 
       }
       if (event.type !== "item.started" && event.type !== "item.completed") throw new Error("native review failed or unexpected event");
       if (!event.item || !["agent_message", "reasoning", "command_execution", "file_change"].includes(event.item.type ?? "")) throw new Error("native review unexpected tool item");
+      if (event.item.type === "command_execution" && (typeof event.item.command !== "string" || !event.item.command.trim())) throw new Error("native review command payload missing");
+      if (event.item.type === "file_change" && (!Array.isArray(event.item.changes) || event.item.changes.some((change) =>
+        change === null || typeof change !== "object" || typeof change.path !== "string" || !change.path.trim()
+        || change.path.includes("\0") || !["add", "delete", "update"].includes(change.kind)))) {
+        throw new Error("native review file change payload invalid");
+      }
       if (!event.item.id) throw new Error("native review missing item identity");
       const activeType = activeItems.get(event.item.id);
       if (finishedItems.has(event.item.id)

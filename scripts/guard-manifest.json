@@ -716,6 +716,20 @@
       "testFile": "dist/test/codex-native-review.test.js"
     },
     {
+      "id": "codex/native-review-command-payload",
+      "why": "Both command lifecycle positions must retain meaningful command text before any completed result can count as evidence.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (event.item.type === \"command_execution\" && (typeof event.item.command !== \"string\" || !event.item.command.trim())) throw new Error(\"native review command payload missing\");\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "codex/native-review-file-payload",
+      "why": "Both file lifecycle positions must retain typed path/kind arrays; missing or malformed changes cannot masquerade as file mutation evidence.",
+      "file": "adapters/codex/native-review.ts",
+      "remove": "      if (event.item.type === \"file_change\" && (!Array.isArray(event.item.changes) || event.item.changes.some((change) =>\n        change === null || typeof change !== \"object\" || typeof change.path !== \"string\" || !change.path.trim()\n        || change.path.includes(\"\\0\") || ![\"add\", \"delete\", \"update\"].includes(change.kind)))) {\n        throw new Error(\"native review file change payload invalid\");\n      }\n",
+      "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
       "id": "codex/native-review-command-completion-evidence",
       "why": "A paired completed shell failure is evidence, but native host launch failures, signals and unpaired or malformed command completions must never become accepted output.",
       "file": "adapters/codex/native-review.ts",
