@@ -632,6 +632,7 @@ test("convergence binds actual repository main even when PR comparison base is h
       const snapshot = async () => ({
         head: f.git(["rev-parse", "HEAD"]), integration: f.git(["rev-parse", "origin/main"]),
         index: f.git(["ls-files", "--stage"]), status: f.git(["status", "--porcelain=v1", "--untracked-files=all"]),
+        remoteArtifacts: f.git(["--git-dir", f.remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/rhiz/"]),
         source: await readFile(join(f.repo, "source.txt"), "utf8"),
         reviews: await readFile(join(f.repo, ".rhiz-horizon-reviews.json"), "utf8"),
       });
@@ -648,9 +649,9 @@ test("convergence binds actual repository main even when PR comparison base is h
       const result = f.run(mode);
       if (mode === "wrong-main-ref") {
         assert.notEqual(result.status, 0);
+        assert.deepEqual(await snapshot(), before, "stale main refuses before any source or durable artifact effect");
         assert.match(result.stderr, /exact durable OPEN head and fresh accepted repository main/);
         assert.equal(await readFile(f.calls, "utf8"), "", "stale accepted main refuses before worker/reviewer");
-        assert.deepEqual(await snapshot(), before, "refusal preserves source, index, head and review authority");
       } else {
         assert.equal(result.status, 0, result.stderr);
         assert.equal(await readFile(f.calls, "utf8"), "worker\nreview\n");
