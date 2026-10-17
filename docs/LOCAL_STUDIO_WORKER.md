@@ -26,4 +26,15 @@ MLX-LM is a replaceable experimental tool, not the execution runtime. Install a 
 
 ## Current proof boundary
 
+The Qwen 2.5 CLI bridge also accepts `backend: "llama-cli"`, model
+`qwen2.5-7b-instruct-q4_k_m`, absolute `executable` and `modelPath`, and exact
+SHA-256 `executableDigest` and `digest`. The zero-budget, no-fallback and path
+allowlist fields remain required. It uses offline CPU inference under the existing
+OS sandbox, strips inherited credentials, and feeds structured data into the same
+Guard-mediated effect. Set `TMPDIR` to a physical path such as `/private/tmp` on
+macOS; a symlinked workspace is correctly refused. This bridge is an activation
+experiment, not integration approval. The real fixture task passed independent
+Verify including a disposable negative control on 2026-10-17; it did not modify a
+product or establish general coding quality. Full check and hosted proof remain open.
+
 The Studio session cannot download Ollama, bind loopback sockets, initialize Codex state, inspect swap, or register launchd. Existing Qwen 2.5 CPU CLI inference works, but does not establish either requested Qwen 3 benchmark or a live Ollama Harness task. Persistent execution remains paused. The slow guard suite remains INCOMPLETE and is not rerun by this change. Full gate, independent exact-candidate review, real OS containment, model benchmark, safe stop and restart recovery are required before activation or integration.

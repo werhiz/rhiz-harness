@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { CodexAppServerHost } from "../dist/adapters/codex/app-server.js";
+import { CliWorkerConfigSchema, CliLocalInference } from "../dist/adapters/local/cli-inference.js";
 import { LocalWorkerConfigSchema, OllamaLocalInference, LocalModelWorkerProvider, LocalModelHost } from "../dist/adapters/local/model-worker.js";
 import { createDefaultSandboxLauncher } from "../dist/adapters/local/sandbox.js";
 import { aggregateAttemptUsage, createRepositoryBenchmarkRun, repositoryRunContext } from "../dist/src/benchmark.js";
@@ -325,7 +326,7 @@ earlyWorkspaceProvider = workspaceProvider;
 // Studio-local configuration registers no paid provider, including subscription
 // workers. An unavailable local route fails through existing Crew/Ledger paths.
 const localConfig = args["local-config"]
-  ? LocalWorkerConfigSchema.parse(JSON.parse(await readFile(resolve(args["local-config"]), "utf8")))
+  ? LocalWorkerConfigSchema.or(CliWorkerConfigSchema).parse(JSON.parse(await readFile(resolve(args["local-config"]), "utf8")))
   : null;
 const executionBindingPath = join(ledgerRoot, "execution-provider.json");
 const executionBinding = JSON.stringify({ schema: "rhiz/execution-provider/v1", provider: localConfig ? "local-model" : "codex", config: localConfig });
@@ -340,7 +341,7 @@ if (args.resume === "true") {
   await writeFile(executionBindingPath, executionBinding, { mode: 0o600, flag: "wx" });
 }
 const host = localConfig
-  ? new LocalModelHost(new LocalModelWorkerProvider(new OllamaLocalInference(localConfig), createDefaultSandboxLauncher(), localConfig.permittedPaths))
+  ? new LocalModelHost(new LocalModelWorkerProvider(localConfig.backend === "llama-cli" ? new CliLocalInference(localConfig) : new OllamaLocalInference(localConfig), createDefaultSandboxLauncher(), localConfig.permittedPaths))
   : new CodexAppServerHost({
   stdio: { command: process.env.RHIZ_CODEX_COMMAND || "codex" },
 });

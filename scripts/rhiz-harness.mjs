@@ -228,7 +228,8 @@ async function start(repo, values) {
   if (values["local-config"]) {
     const bytes = await readFile(resolve(values["local-config"]));
     const { LocalWorkerConfigSchema } = await import("../dist/adapters/local/model-worker.js");
-    LocalWorkerConfigSchema.parse(JSON.parse(bytes));
+    const { CliWorkerConfigSchema } = await import("../dist/adapters/local/cli-inference.js");
+    LocalWorkerConfigSchema.or(CliWorkerConfigSchema).parse(JSON.parse(bytes));
     await writeFile(join(dir, "local.json"), bytes, { mode: 0o600, flag: "wx" });
     localConfigDigest = createHash("sha256").update(bytes).digest("hex");
   }
