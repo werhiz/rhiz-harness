@@ -24,6 +24,7 @@ const git=(repo,...args)=>run('/usr/bin/git',args,repo).trim();
 const json=(cmd,args,cwd)=>JSON.parse(run(cmd,args,cwd));
 export function sufficientMemory(text,minimum){const free=Number(text.match(/free percentage:\s*(\d+)%/i)?.[1]);return Number.isFinite(free)&&free>=minimum;}
 export function scopeClaimsFile(scopes,file){return scopes.some(s=>s.kind==='repository'||(s.kind==='file'?file===s.path:file===s.path||file.startsWith(s.path+'/')));}
+export function agentCensus(text){const records=[];let current=null;for(const line of text.split('\n')){if(line.startsWith('p')){current={pid:line.slice(1)};records.push(current);}else if(current&&line.startsWith('c'))current.command=line.slice(1);else if(current&&line.startsWith('n'))current.cwd=line.slice(1);}if(!records.length)throw Error('Process census unavailable');return records.filter(r=>/^(?:codex|claude|opencode)$/.test(r.command??'')).map(r=>{if(!r.cwd||!/^\d+$/.test(r.pid))throw Error('Active agent scope unavailable');return r;});}
 export function runtimeDigest(root){const entries=[];const visit=dir=>{for(const e of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())visit(f);else if(e.isFile())entries.push([f,hash(fs.readFileSync(path.join(root,f)))]);else throw Error('Runtime symlink refused');}};visit('dist');visit('scripts');return hash(JSON.stringify(entries.sort((a,b)=>Buffer.compare(Buffer.from(a[0]),Buffer.from(b[0])))));}
 export function ownershipScopes(board,w){
  if(!board.integration)return candidatePathScopesFromResources(board.contract.writeScope);
@@ -104,8 +105,8 @@ export async function dispatchLocalFactory(profilePath){
    if(['accepted','rejected','cancelled'].includes(board.state))continue;
    activeScopes.push(...ownershipScopes(board,w));
   }
-  const processes=run('/bin/ps',['-axo','pid=,comm='],p.repo).split('\n').map(line=>line.trim().match(/^(\d+)\s+(.+)$/)).filter(m=>m&&/(?:^|\/)(?:codex|claude|opencode)$/.test(m[2]));
-  for(const m of processes){const cwd=run('/usr/sbin/lsof',['-a','-p',m[1],'-d','cwd','-Fn'],p.repo).split('\n').find(l=>l.startsWith('n'))?.slice(1);if(!cwd)throw Error('Active agent scope unavailable');if(cwd===p.repo||cwd===p.coordinationRepo)throw Error('Active agent in target root has ambiguous scope; park');}
+  const processes=agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo));
+  for(const agent of processes)if(agent.cwd===p.repo||agent.cwd===p.coordinationRepo)throw Error('Active agent in target root has ambiguous scope; park');
   report.agentsChecked=processes.length;
   return {ownership,issues,attempted,activeScopes};};
   proposals.sort((a,b)=>(b.value-b.risk-b.verificationCost)-(a.value-a.risk-a.verificationCost)||Buffer.compare(Buffer.from(a.file),Buffer.from(b.file)));
