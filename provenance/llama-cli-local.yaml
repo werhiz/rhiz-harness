@@ -1,0 +1,10 @@
+source_repository: ggml-org/llama.cpp
+upstream_commit: 0ccbfdef3
+license: MIT
+strategy: backend
+upstream_paths: []
+rhiz_paths:
+  - adapters/local/cli-inference.ts
+purpose: Original offline CLI integration; no upstream code copied
+reviewed_at: 2026-10-17
+compatibility: local CPU fixture verified; no cloud fallback or weight training
