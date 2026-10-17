@@ -4,6 +4,34 @@ import type { EventLedger } from "./ledger.js";
 import type { HarnessEvent, WorkContract } from "./schemas.js";
 import { z } from "zod";
 
+// Advisory triage over observed facts. This never grants Work authority,
+// changes Router evidence, accepts a lesson, or replaces Guard / Verify.
+export const EngineeringDecisionSchema = z.object({
+  kind: z.enum(["duplicate", "authority", "regression", "priority", "capability", "reasoning", "evidence", "recovery", "reuse", "inference"]),
+  facts: z.record(z.string(), z.union([z.boolean(), z.number().finite().nonnegative()])),
+});
+export function recommendEngineeringDecision(input: unknown): string {
+  const { kind, facts: f } = EngineeringDecisionSchema.parse(input);
+  const yes = (key: string) => f[key] === true;
+  const number = (key: string) => typeof f[key] === "number" ? f[key] as number : 0;
+  if (kind==="recovery" && number("retryCount")>=2) return "stop";
+  if (!["reuse","inference"].includes(kind) && f.authorized !== true) return "park";
+  if (yes("duplicate")) return "skip";
+  if (f.authorized === false || number("paidCostUsd") > number("budgetUsd")) return "park";
+  if (f.verificationAvailable !== true && !["inference", "reuse"].includes(kind)) return "park";
+  switch (kind) {
+    case "duplicate": case "authority": return f.verificationAvailable===true ? "execute" : "park";
+    case "regression": return yes("regressionConfirmed") ? "execute" : "park";
+    case "priority": return number("priorityValue") > number("risk") + number("verificationCost") ? "execute" : "skip";
+    case "capability": return yes("localCapable") ? "execute" : "park";
+    case "reasoning": return yes("complexReasoning") ? "park" : "execute";
+    case "evidence": return yes("evidenceSufficient") ? "execute" : "revise";
+    case "recovery": return number("retryCount") >= 2 ? "stop" : yes("transientFailure") ? "retry" : yes("instructionCorrectable") ? "revise" : "park";
+    case "reuse": return yes("verifiedLesson") && yes("compatibleScope") && yes("evidenceSufficient") ? "reuse" : "park";
+    case "inference": return yes("authorized") && yes("localOnly") && !yes("deterministicAnswerAvailable") && number("inferenceExpectedValue") > number("inferenceCost") ? "infer" : "skip";
+  }
+}
+
 const nonEmpty = z.string().trim().min(1);
 const id = nonEmpty.max(200);
 const text = nonEmpty;
