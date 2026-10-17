@@ -36,7 +36,7 @@ function usage() {
   return [
     "Usage: rhiz-harness <command> [work] [options]",
     "",
-    "  start  --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>]",
+    "  start  --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>] [--local-config <local.json>]",
     "         run SHIP Work in an isolated worktree until it is verified or its budget is spent",
     "  status [work]                 what every Work is doing and what it needs next",
     "  resume [work]                 continue non-terminal Work in its existing Ledger",
@@ -224,32 +224,43 @@ async function start(repo, values) {
   await copyFile(resolve(values.contract), join(dir, "contract.json"));
   await copyFile(resolve(values.verify), join(dir, "verify.json"));
   if (values.prepare) await copyFile(resolve(values.prepare), join(dir, "prepare.json"));
+  let localConfigDigest;
+  if (values["local-config"]) {
+    const bytes = await readFile(resolve(values["local-config"]));
+    const { LocalWorkerConfigSchema } = await import("../dist/adapters/local/model-worker.js");
+    LocalWorkerConfigSchema.parse(JSON.parse(bytes));
+    await writeFile(join(dir, "local.json"), bytes, { mode: 0o600, flag: "wx" });
+    localConfigDigest = createHash("sha256").update(bytes).digest("hex");
+  }
   if (governedPolicy) await writeFile(join(dir, "governed-convergence-envelope.json"), governedPolicy.envelopeBytes, { mode: 0o600, flag: "wx" });
   await writeFile(join(dir, "inputs.json"), `${JSON.stringify({
     schema: governedPolicy ? "rhiz/operator-inputs/v2" : "rhiz/operator-inputs/v1",
     workId: contract.id,
     base,
     prepare: Boolean(values.prepare),
+    ...(localConfigDigest ? { localConfigDigest } : {}),
     correlationId: values["correlation-id"],
     ...(governedPolicy ? { governedConvergencePolicy: { present: true, digest: createHash("sha256").update(governedPolicy.envelopeBytes).digest("hex") } } : {}),
     startedAt: new Date().toISOString(),
   }, null, 2)}\n`, { mode: 0o600 });
-  return runAndReport(repo, contract.id, runnerArgsFor(repo, dir, base, Boolean(values.prepare), values["correlation-id"], Boolean(governedPolicy)), values);
+  return runAndReport(repo, contract.id, runnerArgsFor(repo, dir, base, Boolean(values.prepare), values["correlation-id"], Boolean(governedPolicy), Boolean(localConfigDigest)), values);
 }
 
-function runnerArgsFor(repo, dir, base, prepare, correlationId, governedConvergencePolicy = false) {
+function runnerArgsFor(repo, dir, base, prepare, correlationId, governedConvergencePolicy = false, local = false) {
   return [
     "--repo", repo.root,
     "--contract", join(dir, "contract.json"),
     "--verify", join(dir, "verify.json"),
     "--base", base,
     ...(prepare ? ["--prepare", join(dir, "prepare.json")] : []),
+    ...(local ? ["--local-config", join(dir, "local.json")] : []),
     ...(governedConvergencePolicy ? ["--governed-convergence-envelope", join(dir, "governed-convergence-envelope.json")] : []),
     ...(correlationId === undefined ? [] : ["--correlation-id", correlationId]),
   ];
 }
 
 async function resume(repo, query, values) {
+  if (values["local-config"] !== undefined) throw new Error("resume reuses the pinned local config and accepts no replacement");
   if (values["governed-convergence-envelope"] !== undefined) throw new Error("resume reuses the fixed persisted governed envelope and accepts no replacement");
   const { works } = await loadWorks(repo);
   const work = pickWork(works, query, "resume");
@@ -259,13 +270,14 @@ async function resume(repo, query, values) {
   const dir = operatorDir(repo, work.status.workId);
   const inputs = await readJsonIfPresent(join(dir, "inputs.json"));
   if (!inputs) throw new Error(`Work ${work.status.workId} was not started by rhiz-harness; its inputs are unknown`);
+  if (inputs.localConfigDigest && createHash("sha256").update(await readFile(join(dir, "local.json"))).digest("hex") !== inputs.localConfigDigest) throw new Error("persisted local model configuration changed; resume refused");
   if (work.status.workId.startsWith("work:horizon-convergence-")) {
     if (inputs.schema !== "rhiz/operator-inputs/v2" || inputs.governedConvergencePolicy?.present !== true) throw new Error("governed convergence Work has no canonical persisted policy input");
     const envelopePath = join(dir, "governed-convergence-envelope.json");
     const envelopeBytes = await readFile(envelopePath);
     if (createHash("sha256").update(envelopeBytes).digest("hex") !== inputs.governedConvergencePolicy.digest) throw new Error("persisted governed policy envelope digest mismatch");
   }
-  return runAndReport(repo, work.status.workId, [...runnerArgsFor(repo, dir, inputs.base, inputs.prepare, inputs.correlationId, Boolean(inputs.governedConvergencePolicy?.present)), "--resume", "true"], values);
+  return runAndReport(repo, work.status.workId, [...runnerArgsFor(repo, dir, inputs.base, inputs.prepare, inputs.correlationId, Boolean(inputs.governedConvergencePolicy?.present), Boolean(inputs.localConfigDigest)), "--resume", "true"], values);
 }
 
 async function status(repo, query, values) {

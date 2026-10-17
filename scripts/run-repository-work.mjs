@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { CodexAppServerHost } from "../dist/adapters/codex/app-server.js";
+import { LocalWorkerConfigSchema, OllamaLocalInference, LocalModelWorkerProvider, LocalModelHost } from "../dist/adapters/local/model-worker.js";
+import { createDefaultSandboxLauncher } from "../dist/adapters/local/sandbox.js";
 import { aggregateAttemptUsage, createRepositoryBenchmarkRun, repositoryRunContext } from "../dist/src/benchmark.js";
 import {
   assertGovernedExecutionRootIdentity,
@@ -128,6 +130,9 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   process.stdout.write(`${usage()}\n`);
   process.exit(0);
+}
+if (process.env.RHIZ_LOCAL_ONLY === "1" && !args["local-config"]) {
+  throw new Error("Studio local-only policy refuses cloud/subscription execution without explicit escalation authorization; supply a pinned local config");
 }
 const benchmarkCaseId = args["benchmark-case"] ?? null;
 const benchmarkVariantId = args["benchmark-variant"] ?? null;
@@ -317,7 +322,26 @@ const workspaceProvider = new GitWorktreeWorkspaceProvider({
         },
 });
 earlyWorkspaceProvider = workspaceProvider;
-const host = new CodexAppServerHost({
+// Studio-local configuration registers no paid provider, including subscription
+// workers. An unavailable local route fails through existing Crew/Ledger paths.
+const localConfig = args["local-config"]
+  ? LocalWorkerConfigSchema.parse(JSON.parse(await readFile(resolve(args["local-config"]), "utf8")))
+  : null;
+const executionBindingPath = join(ledgerRoot, "execution-provider.json");
+const executionBinding = JSON.stringify({ schema: "rhiz/execution-provider/v1", provider: localConfig ? "local-model" : "codex", config: localConfig });
+let previousBinding;
+try { previousBinding = await readFile(executionBindingPath, "utf8"); }
+catch (error) { if (error?.code !== "ENOENT") throw error; }
+if (args.resume === "true") {
+  if (previousBinding !== executionBinding) throw new Error("resume requires the exact persisted provider/configuration; no fallback or legacy route inference");
+} else if (previousBinding !== undefined && previousBinding !== executionBinding) {
+  throw new Error("Work provider/configuration is immutable; use governed new Work for a new route");
+} else if (previousBinding === undefined) {
+  await writeFile(executionBindingPath, executionBinding, { mode: 0o600, flag: "wx" });
+}
+const host = localConfig
+  ? new LocalModelHost(new LocalModelWorkerProvider(new OllamaLocalInference(localConfig), createDefaultSandboxLauncher(), localConfig.permittedPaths))
+  : new CodexAppServerHost({
   stdio: { command: process.env.RHIZ_CODEX_COMMAND || "codex" },
 });
 earlyHost = host;

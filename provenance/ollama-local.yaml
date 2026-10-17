@@ -1,0 +1,14 @@
+source_repository: ollama/ollama
+upstream_commit: null
+license: MIT
+strategy: backend
+upstream_paths: []
+rhiz_paths:
+  - adapters/local/model-worker.ts
+purpose: Optional numeric-loopback inference backend for existing Harness Work
+material_changes:
+  - Original adapter using the documented api/tags and api/chat protocol; no upstream source copied
+  - Exact digest and single structured replacement; no metered or subscription fallback
+reviewed_at: 2026-10-17
+reviewed_by: installation-agent
+compatibility: not-live-proven
