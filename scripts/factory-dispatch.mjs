@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { candidatePathScopesFromResources } from "../dist/adapters/git/index.js";
 import { summarizeOperatorWork } from '../dist/src/operator.js';
 import { recommendEngineeringDecision } from '../dist/src/router.js';
+import {freshProcessSnapshot,sessionOwnership} from './factory-sessions.mjs';
 const Profile=z.object({repo:z.string(),coordinationRepo:z.string(),githubRepo:z.string().regex(/^[\w-]+\/[\w-]+$/),runtime:z.string(),localConfig:z.string(),
  allowedFiles:z.array(z.string().regex(/^docs\/reference\/[A-Za-z0-9_/-]+\.md$/)).min(1).max(10),runtimeHead:z.string().regex(/^[a-f0-9]{40}$/),runtimeDigest:z.string().regex(/^[a-f0-9]{64}$/),
  scannerDigest:z.string().regex(/^[a-f0-9]{64}$/),maxTasks:z.number().int().min(1).max(3),
@@ -24,9 +25,10 @@ const git=(repo,...args)=>run('/usr/bin/git',args,repo).trim();
 const json=(cmd,args,cwd)=>JSON.parse(run(cmd,args,cwd));
 export function sufficientMemory(text,minimum){const free=Number(text.match(/free percentage:\s*(\d+)%/i)?.[1]);return Number.isFinite(free)&&free>=minimum;}
 export function scopeClaimsFile(scopes,file){return scopes.some(s=>s.kind==='repository'||(s.kind==='file'?file===s.path:file===s.path||file.startsWith(s.path+'/')));}
-export function agentCensus(text){const records=[];let current=null;for(const line of text.split('\n')){if(line.startsWith('p')){current={pid:line.slice(1)};records.push(current);}else if(current&&line.startsWith('c'))current.command=line.slice(1);else if(current&&line.startsWith('n'))current.cwd=line.slice(1);}if(!records.length)throw Error('Process census unavailable');return records.filter(r=>/^(?:codex|claude|opencode)$/.test(r.command??'')).map(r=>{if(!r.cwd||!/^\d+$/.test(r.pid))throw Error('Active agent scope unavailable');return r;});}
+export function agentCensus(text){const records=[];let current=null;for(const line of text.split('\n')){if(line.startsWith('p')){current={pid:line.slice(1)};records.push(current);}else if(current&&line.startsWith('c'))current.command=line.slice(1);else if(current&&line.startsWith('n'))current.cwd=line.slice(1);}if(!records.length)throw Error('Process census unavailable');return records.filter(r=>/^(?:codex|claude|opencode|mcode|node|node_repl)$/.test(r.command??'')).map(r=>{if(!r.cwd||!/^\d+$/.test(r.pid))throw Error('Active agent scope unavailable');return r;});}
 export function runtimeDigest(root){const entries=[];const visit=dir=>{for(const e of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())visit(f);else if(e.isFile())entries.push([f,hash(fs.readFileSync(path.join(root,f)))]);else throw Error('Runtime symlink refused');}};visit('dist');visit('scripts');return hash(JSON.stringify(entries.sort((a,b)=>Buffer.compare(Buffer.from(a[0]),Buffer.from(b[0])))));}
-export function ownershipScopes(board,w){
+export function ownershipScopes(board,w,liveSession=false){
+ if(liveSession||board.integration?.latestExecutionObservation?.state==='running')return candidatePathScopesFromResources(board.contract.writeScope);
  if(!board.integration)return candidatePathScopesFromResources(board.contract.writeScope);
  const scopes=[];
    const h=board.integration.headProof;
@@ -99,22 +101,31 @@ export async function dispatchLocalFactory(profilePath){
   const all=await readRepositoryWorkEvents(common);if(all.unreadable.length)throw Error('Work ownership evidence incomplete');
   const grouped=new Map(),identities=new Map();
   for(const e of [...all.events,...primary.events]){if(identities.has(e.id)){if(identities.get(e.id)!==JSON.stringify(e))throw Error('Conflicting canonical Work history');continue;}identities.set(e.id,JSON.stringify(e));grouped.set(e.workId,[...(grouped.get(e.workId)??[]),e]);}
-  const attempted=new Set(grouped.keys()),activeScopes=[];
+  const attempted=new Set(grouped.keys()),activeScopes=[],boards=[];
   for(const events of grouped.values()){
    const board=projectBoard(events),w=summarizeOperatorWork(events);if(board.violations.length||!board.contract)throw Error('Invalid canonical Work ownership');
+   const binding=events.findLast(e=>e.type==='integration.execution-observed');
+   boards.push({...board,sessionBindingSource:binding?.actor.kind==='service'&&binding.actor.id==='service:studio-operator-session'?binding.payload.observation.source:null});
    if(['accepted','rejected','cancelled'].includes(board.state))continue;
    activeScopes.push(...ownershipScopes(board,w));
   }
   const processes=agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo));
-  for(const agent of processes)if(agent.cwd===p.repo||agent.cwd===p.coordinationRepo)throw Error('Active agent in target root has ambiguous scope; park');
+  const roots=[p.repo,p.coordinationRepo];
+  const snapshot=await freshProcessSnapshot(processes.filter(a=>roots.includes(a.cwd)));
+  const current=agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo)).filter(a=>roots.includes(a.cwd));
+  for(const a of current)if(!snapshot.some(s=>s.pid===a.pid&&s.command===a.command&&s.cwd===a.cwd))throw Error(`New or changed primary session ${a.pid}; refresh census before dispatch`);
+  const sessions=sessionOwnership(current,boards,roots,snapshot);
+  for(const id of new Set(sessions.flatMap(s=>s.workIds))){const b=boards.find(b=>b.workId===id);activeScopes.push(...ownershipScopes(b,{},true));}
+  report.sessions=sessions;
   report.agentsChecked=processes.length;
-  return {ownership,issues,attempted,activeScopes};};
+  return {ownership,issues,attempted,activeScopes,ambiguous:sessions.filter(s=>s.status==='ambiguous')};};
   proposals.sort((a,b)=>(b.value-b.risk-b.verificationCost)-(a.value-a.risk-a.verificationCost)||Buffer.compare(Buffer.from(a.file),Buffer.from(b.file)));
   const chosenFiles=new Set();
   for(const task of proposals){
    if(stopping||report.selected.length>=p.maxTasks)break;
    assertRuntime(p);if(git(p.repo,'rev-parse','HEAD')!==sourceHead||fs.readFileSync(path.join(p.repo,task.file),'utf8')!==task.before)throw Error('Discovery baseline changed');
-   const {ownership,issues,attempted,activeScopes}=await census();
+   const {ownership,issues,attempted,activeScopes,ambiguous}=await census();
+   if(ambiguous.length){report.parked.push(...ambiguous.map(s=>s.resolution));break;}
    const workId='work:studio-link-'+hash(JSON.stringify([git(p.repo,'rev-parse','HEAD'),task.file,task.oldText,task.newText])).slice(0,24);
    const claimed=ownership.has(task.file)||issues.some(i=>i.assignees.length&&[task.file,path.dirname(task.file)].some(scope=>`${i.title}\n${i.body}`.includes(scope)))||scopeClaimsFile(activeScopes,task.file);
    const action=recommendEngineeringDecision({kind:'priority',facts:{authorized:p.allowedFiles.includes(task.file),duplicate:claimed,

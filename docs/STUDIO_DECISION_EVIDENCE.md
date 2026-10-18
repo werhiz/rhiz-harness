@@ -1,5 +1,23 @@
 # Studio decision evidence — 2026-10-17
 
+## Explicit session ownership
+
+An engineering process in a primary checkout has unknown write scope until the
+trusted operator associates its exact uid/PID/start identity with a scoped Work
+contract using `node scripts/factory-session.mjs --repo <coordination-repo>
+--contract <Work.json> --pid <owner-pid>`. The association is an existing
+`integration.execution-observed` event, not a lease transfer, acceptance, or new
+authority. The process and its observed descendants retain that Work's full
+canonical write scope while live. Heartbeat age never releases it.
+
+The existing observer host supplies a fresh process-birth census over Node IPC
+for each selection; privileged `ps` remains outside the dispatch sandbox.
+Unbound/new/reused processes remain parked with their exact PID and resolution
+action. A scoped session permits only unrelated authorized proposals; PR, Work,
+lease, attempted-ID and native worker-lock exclusions still apply. Terminal
+Work cannot authorize a new session. Subscription CLI installation does not
+enroll a provider in unattended dispatch; local Qwen remains the default.
+
 The existing Router remains the owner. The added deterministic adviser recommends actions; it cannot grant authority, accept Work, merge, promote lessons, or authorize inference. Factory dispatch is restricted to exact-file, unambiguous broken-link repairs in an operator-approved reference-doc allowlist. Missing coordination, pressure telemetry, runtime identity or proof parks execution. One worker, three tasks per cycle, zero paid budget, no cloud fallback.
 
 ## Reproduce
