@@ -213,7 +213,7 @@
     },
     {
       "id": "disposable/an-unresolvable-symlink-refuses-the-derivative",
-      "why": "A broken or cyclic link has no kernel witness of where it lands, and computing where it WOULD land means reimplementing partial path resolution \u2014 a clever containment proof that will eventually be wrong. Without this refusal a broken link whose target would land outside is accepted on no evidence at all.",
+      "why": "A broken or cyclic link has no kernel witness of where it lands, and computing where it WOULD land means reimplementing partial path resolution — a clever containment proof that will eventually be wrong. Without this refusal a broken link whose target would land outside is accepted on no evidence at all.",
       "file": "src/disposable.ts",
       "remove": "  throw new DerivativeLinkEscapeError(\n    unresolvable === \"ENOENT\"\n      ? `symlink ${relPath} -> ${target} is broken; where it would resolve once its target exists cannot be proven, so the derivative is refused`\n      : `symlink ${relPath} -> ${target} cannot be resolved by the kernel (${unresolvable}); a link with no kernel witness of where it lands cannot be proven contained`,\n    relPath,\n    target,\n  );\n",
       "testFile": "dist/test/disposable-symlinks.test.js"
@@ -367,14 +367,14 @@
     },
     {
       "id": "crew/dependency-output-is-not-spliced-into-objective",
-      "why": "Constitution \u00a79 forbids prompt text as an enforcement boundary. A SHIP worker's free-text summary must not reach a downstream worker's instruction channel; the only path is the typed TaintedAttachment array, which the adapter renders as fenced data (#15).",
+      "why": "Constitution §9 forbids prompt text as an enforcement boundary. A SHIP worker's free-text summary must not reach a downstream worker's instruction channel; the only path is the typed TaintedAttachment array, which the adapter renders as fenced data (#15).",
       "file": "src/crew.ts",
       "remove": "        taintedAttachments: missionContext.taintedAttachments,\n",
       "testFile": "dist/test/crew.test.js"
     },
     {
       "id": "crew/attempt-respects-deadline",
-      "why": "Constitution \u00a710 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
+      "why": "Constitution §10 requires bounded worker lifecycle waits alongside PID checks. Startup, result/observation lifecycle, SHIP authority preflight, post-result snapshot, and cancellation cleanup must all respect the attempt deadline; late startup handles or observations must not revive a closed Attempt. Removing this append omits the durable deadline failure required by the lifecycle regression.",
       "file": "src/crew.ts",
       "remove": "        await append(\n          \"attempt.failed\",\n          { reason: `attempt deadline ${attemptDeadlineAt} exceeded at ${deadlineObservedAt}`, recoverable: false,\n            ...(result?.observedUsage ? { observedUsage: result.observedUsage } : {}) },\n          { taskId, attemptId, actor: workerActor },\n          deadlineObservedAt,\n        );\n",
       "testFile": "dist/test/crew-deadline.test.js"
@@ -626,7 +626,7 @@
     },
     {
       "id": "integration/convergence-producer-does-not-review",
-      "why": "The actual native producer refused packaging when a shared objective assigned it the independent reviewer\u2019s packet inspection; producer and reviewer responsibilities must stay distinct.",
+      "why": "The actual native producer refused packaging when a shared objective assigned it the independent reviewer’s packet inspection; producer and reviewer responsibilities must stay distinct.",
       "file": "adapters/git/governed-convergence-policy.ts",
       "remove": "Artifact producer only: ",
       "testFile": "dist/test/governed-convergence-policy.test.js"
@@ -700,6 +700,20 @@
       "file": "scripts/rhiz-harness.mjs",
       "remove": ", ...(material ? [material.evidence] : [])",
       "testFile": "dist/test/operator-cli.test.js"
+    },
+    {
+      "id": "crew/empty-ship-attempt-is-not-finished",
+      "why": "A SHIP worker that made no Guard-allowed write and left its workspace unchanged produced no candidate. Recording it as finished parks the Work in verifying with 'authorship is unproven' as the only reason, and operators retry the same blocked Work (Protocol #3019 r1-r9).",
+      "file": "src/crew.ts",
+      "remove": "      if (deadlineObservedAt === undefined && result?.status === \"finished\" && changeViolations.length === 0\n        && workspace.mode === \"isolated-write\" && allowedWrites === 0\n        && before !== undefined && after !== undefined\n        && after.head === before.head && after.digest === before.digest) {\n        producedNoCandidate = true;\n      }\n",
+      "testFile": "dist/test/crew.test.js"
+    },
+    {
+      "id": "board/claimed-candidate-keeps-authorship-refusal",
+      "why": "Once a verification claims a candidate, who wrote it is exactly the question. The no-candidate reason must step aside there, or a candidate with no Guard-allowed write would be reported as an empty attempt instead of unproven authorship.",
+      "file": "src/board.ts",
+      "remove": "  if (board.verifications.some((verification) => verification.contractRevision === board.contractRevision)) return true;\n",
+      "testFile": "dist/test/no-candidate.test.js"
     }
   ]
 }
