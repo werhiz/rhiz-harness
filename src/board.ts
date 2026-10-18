@@ -495,8 +495,12 @@ export function acceptanceReadiness(board: BoardProjection): AcceptanceReadiness
   // Acceptance is the other reader that decides a Work is done, so it asks
   // the same question deriveState does. A Work nobody can be shown to have
   // authored is not acceptable, however good its verification.
+  // When nothing claims a candidate, the reason is that none was produced;
+  // authorship is the question only once a candidate is claimed.
+  const unproduced = candidateUnproduced(board);
   const unproven = authorshipUnproven(board);
-  if (unproven !== null) reasons.push(`authorship is unproven: ${unproven}`);
+  if (unproduced !== null) reasons.push(unproduced);
+  else if (unproven !== null) reasons.push(`authorship is unproven: ${unproven}`);
   const currentVerifications = board.verifications.filter(
     (verification) => verification.contractRevision === board.contractRevision && verification.status === "pass",
   );
@@ -696,16 +700,71 @@ export function authorshipUnproven(board: BoardProjection): string | null {
     if (attempt.workspaceId === undefined) {
       return `attempt ${attemptId} never held a workspace`;
     }
-    const guardedWrites = board.guardEvaluations.filter((evaluation) =>
-      evaluation.request.attemptId === attemptId
-      && evaluation.request.tool.category === "write"
-      && evaluation.verdict.decision === "allow"
-    ).length;
-    if (guardedWrites === 0) {
+    if (allowedGuardedWrites(board, attemptId) === 0) {
       return `attempt ${attemptId} produced no Guard-mediated write`;
     }
   }
   return null;
+}
+
+function allowedGuardedWrites(board: BoardProjection, attemptId: string): number {
+  return board.guardEvaluations.filter((evaluation) =>
+    evaluation.request.attemptId === attemptId
+    && evaluation.request.tool.category === "write"
+    && evaluation.verdict.decision === "allow"
+  ).length;
+}
+
+/**
+ * SHIP attempts that demonstrably ran and made no Guard-allowed write, on a
+ * Work where nothing yet claims a candidate exists.
+ *
+ * "Ran" means exactly what authorship already asks for: it held a workspace
+ * and streamed execution observations. An attempt missing either is an
+ * authorship question (an ingest shape), never this. And once a verification
+ * or an integrated head claims a candidate, who wrote it IS the question, so
+ * this returns nothing and `authorshipUnproven` speaks.
+ */
+function candidateClaimed(board: BoardProjection): boolean {
+  if (board.integration?.headProof !== null && board.integration?.headProof !== undefined) return true;
+  if (board.verifications.some((verification) => verification.contractRevision === board.contractRevision)) return true;
+  return board.activeVerification?.contractRevision === board.contractRevision;
+}
+
+export function attemptsWithoutCandidate(board: BoardProjection): string[] {
+  if (board.contract?.type !== "SHIP" || candidateClaimed(board)) return [];
+  return Object.values(board.attempts)
+    .filter((attempt) => attempt.state === "finished"
+      && attempt.observationCount > 0
+      && attempt.workspaceId !== undefined
+      && allowedGuardedWrites(board, attempt.id) === 0)
+    .map((attempt) => attempt.id);
+}
+
+/**
+ * Why there is nothing to verify, when that is the honest answer.
+ *
+ * The defect this answers: a worker that ran, edited nothing and said so was
+ * reported as "authorship is unproven", which is the question for a candidate
+ * of doubtful origin. With no candidate at all that reason pointed operators
+ * at the wrong fault and they retried the same blocked Work (#3019 r1-r9).
+ *
+ * Returns null whenever any candidate is claimed, so the authorship refusal
+ * keeps every case it was written for.
+ */
+export function candidateUnproduced(board: BoardProjection): string | null {
+  if (candidateClaimed(board)) return null;
+  const attempts = Object.values(board.attempts);
+  const finished = attempts.filter((attempt) => attempt.state === "finished");
+  if (finished.length === 0) {
+    return attempts.length > 0 && attempts.every((attempt) => attempt.state === "failed")
+      ? `every Attempt failed, so no candidate exists (${attempts.length} attempt(s))`
+      : null;
+  }
+  const empty = new Set(attemptsWithoutCandidate(board));
+  if (!finished.every((attempt) => empty.has(attempt.id))) return null;
+  const latest = finished.at(-1)!;
+  return `attempt ${latest.id} finished without a Guard-allowed write, so it produced no candidate to verify`;
 }
 
 function deriveState(board: BoardProjection): WorkState {

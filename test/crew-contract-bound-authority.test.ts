@@ -199,7 +199,9 @@ test("Crew activates Work write-category authority after every physical admissio
 test("Crew keeps category authority dormant when a host claims sandbox capability but exposes no sandbox", async () => {
   const { run, provider } = await runProbe({ exposeSandbox: false });
   try {
-    assert.equal(run.receipt.missions[0]?.status, "execution-finished");
+    // Dormant authority refuses the write, so the attempt produces no candidate.
+    assert.equal(run.receipt.missions[0]?.status, "failed");
+    assert.match(run.receipt.missions[0]?.error ?? "", /^worker finished without changing its workspace, so the attempt produced no candidate: /);
     assert.equal(provider.verdict?.decision, "forbid");
     assert.ok(provider.verdict?.ruleHits.includes("default-deny:no-per-tool-mode-match"));
   } finally {
@@ -210,7 +212,9 @@ test("Crew keeps category authority dormant when a host claims sandbox capabilit
 test("Crew keeps category authority dormant when the Work write grant does not cover writeScope", async () => {
   const { run, provider } = await runProbe({ narrowGrant: true });
   try {
-    assert.equal(run.receipt.missions[0]?.status, "execution-finished");
+    // Dormant authority refuses the write, so the attempt produces no candidate.
+    assert.equal(run.receipt.missions[0]?.status, "failed");
+    assert.match(run.receipt.missions[0]?.error ?? "", /^worker finished without changing its workspace, so the attempt produced no candidate: /);
     assert.equal(provider.verdict?.decision, "forbid");
   } finally {
     await run.close();

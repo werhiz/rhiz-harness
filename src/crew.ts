@@ -380,6 +380,9 @@ export class CatalogCrewWorkerResolver implements CrewWorkerResolver {
   }
 }
 
+/** The failure reason Crew records for a SHIP attempt that changed nothing. */
+const NO_CANDIDATE_REASON_PREFIX = "worker finished without changing its workspace, so the attempt produced no candidate: ";
+
 export const CrewMissionStatusSchema = z.enum(["execution-finished", "failed", "blocked"]);
 export type CrewMissionStatus = z.infer<typeof CrewMissionStatusSchema>;
 
@@ -928,6 +931,7 @@ export class CrewSupervisor {
     let projectionViolationCount = 0;
     let changeViolations: string[] = [];
     let errorMessage: string | undefined;
+    let allowedWrites = 0;
     let contractRevision = 1;
     let deadlineObservedAt: string | undefined;
     let correlationId = this.#correlationId;
@@ -1207,6 +1211,7 @@ export class CrewSupervisor {
         // that has already taken effect (#40).
         record: async (evaluation) => {
           if (attemptClosed()) return;
+          if (evaluation.request.tool.category === "write" && evaluation.verdict.decision === "allow") allowedWrites += 1;
           await append(
             "guard.evaluated",
             evaluation,
@@ -1383,7 +1388,22 @@ export class CrewSupervisor {
           // Snapshot failure remains represented by the original error.
         }
       }
-      if (deadlineObservedAt === undefined && result !== undefined && result.status === "finished" && changeViolations.length === 0) {
+      // A SHIP attempt exists to produce a candidate. A worker that returns
+      // "finished" with no Guard-allowed write while its isolated workspace
+      // is byte-for-byte where it started produced nothing to verify: it is a
+      // failed attempt, and its own account of why is the reason. Both
+      // signals are required, so neither a fake snapshot nor a missing Guard
+      // record alone can fail an attempt that did write. Recording it as finished left the
+      // Work in `verifying` with "authorship is unproven" as the only reason
+      // anyone saw, so operators retried the same blocked Work as new Work.
+      let producedNoCandidate = false;
+      if (deadlineObservedAt === undefined && result?.status === "finished" && changeViolations.length === 0
+        && workspace.mode === "isolated-write" && allowedWrites === 0
+        && before !== undefined && after !== undefined
+        && after.head === before.head && after.digest === before.digest) {
+        producedNoCandidate = true;
+      }
+      if (deadlineObservedAt === undefined && result !== undefined && result.status === "finished" && changeViolations.length === 0 && !producedNoCandidate) {
         await append(
           "attempt.finished",
           // WorkerResult deliberately admits a fuller operator-facing summary
@@ -1398,13 +1418,16 @@ export class CrewSupervisor {
       } else if (deadlineObservedAt === undefined && result !== undefined) {
         const reason = changeViolations.length > 0
           ? changeViolations.join("; ")
-          : result.summary;
+          : producedNoCandidate
+            ? `${NO_CANDIDATE_REASON_PREFIX}${result.summary}`
+            : result.summary;
         await append(
           "attempt.failed",
           { reason: reason.slice(0, 2000), recoverable: false,
             ...(result.observedUsage ? { observedUsage: result.observedUsage } : {}) },
           { taskId, attemptId, actor: workerActor },
         );
+        if (producedNoCandidate) errorMessage = reason.slice(0, 2000);
       }
       // When `result` is undefined (deadline-exceeded branch), the
       // attempt.failed event was already emitted with the timeout reason.
