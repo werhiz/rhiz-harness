@@ -561,12 +561,28 @@ test("Crew plan validation rejects cycles and ambiguous REVIEW workspaces, and k
   }), /acyclic graph/);
 
   const review = crewWork({ id: "work:review", type: "REVIEW", dependencies: [], preferredProviders: [] });
-  assert.throws(() => CrewPlanSchema.parse({
+  const fresh = {
     id: "crew:review",
-    objective: "invalid review",
+    objective: "review existing evidence at the declared base",
     baseRevision: "abc123",
     missions: [{ work: review, workspace: { strategy: "fresh", mode: "read-only" } }],
-  }), /REVIEW missions must inherit/);
+  };
+  assert.equal(CrewPlanSchema.parse(fresh).missions[0]!.work.type, "REVIEW");
+  assert.throws(() => CrewPlanSchema.parse({ ...fresh, missions: [{
+    work: review, workspace: { strategy: "fresh", mode: "isolated-write" },
+  }] }), /fresh REVIEW.*read-only/);
+  assert.throws(() => CrewPlanSchema.parse({ ...fresh, missions: [{
+    work: { ...review, verificationPolicy: { ...review.verificationPolicy, independentActor: false } },
+    workspace: { strategy: "fresh", mode: "read-only" },
+  }] }), /independentActor=true/);
+  assert.throws(() => CrewPlanSchema.parse({ ...fresh, missions: [
+    { work: { ...a, dependencies: [] }, workspace: { strategy: "fresh", mode: "read-only" } },
+    { work: { ...review, dependencies: [a.id] }, workspace: { strategy: "fresh", mode: "read-only" } },
+  ] }), /fresh REVIEW.*no dependencies/);
+  assert.throws(() => CrewPlanSchema.parse({ ...fresh, missions: [
+    { work: { ...a, dependencies: [] }, workspace: { strategy: "fresh", mode: "read-only" } },
+    { work: { ...review, dependencies: [a.id] }, workspace: { strategy: "inherit", mode: "read-only", fromWorkId: a.id } },
+  ] }), /inherit a SHIP workspace/);
 
   // A Work may carry a repair budget above one. Crew still runs exactly one
   // attempt per mission; the budget belongs to whoever drives the loop, so
