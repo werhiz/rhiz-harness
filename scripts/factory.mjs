@@ -37,7 +37,7 @@ class UsageError extends Error {}
 // Every argument must be a known flag, and every valued flag needs its value.
 // A misspelled or bare flag that was silently skipped would publish an
 // observation without the evidence the operator named.
-const VALUED_FLAGS = { observe: ["ledger", "runs"], replay: ["experiment", "pairs"] };
+const VALUED_FLAGS = { observe: ["ledger", "runs"], replay: ["experiment", "pairs"], dispatch: ["profile"] };
 
 function parseArgs(command, argv) {
   const values = Object.fromEntries((VALUED_FLAGS[command] ?? []).map((name) => [name, []]));
@@ -110,7 +110,11 @@ try {
 }
 const { values, json } = parsed;
 
-if (command === "observe") {
+if (command === "dispatch") {
+  if (values.profile.length !== 1) throw new UsageError("dispatch needs one --profile");
+  const { dispatchLocalFactory } = await import("./factory-dispatch.mjs");
+  console.log(JSON.stringify(await dispatchLocalFactory(values.profile[0]), null, 2));
+} else if (command === "observe") {
   const ledgers = values.ledger;
   const runFiles = values.runs;
   if (ledgers.length === 0 && runFiles.length === 0) {

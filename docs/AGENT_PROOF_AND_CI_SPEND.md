@@ -91,6 +91,24 @@ dependency and failure condition is unchanged. The upper bound adds at most
 adds no paid runner, job, trigger, credential or model traffic. Require a new
 exact-head hosted run to finish all three jobs before integration.
 
+**Studio stack timeout evidence (2026-10-17), owner: Studio integration.** Exact
+candidate `fd5bb9298571ab1470d7b28dfb8b7e7527ff3827`, hosted run
+[39072566857](https://github.com/werhiz/rhiz-harness/actions/runs/39072566857),
+passed the build lane but its guard job was cancelled. Check annotation
+`117513030654` states that the job exceeded 40m0s; DSH was consequently skipped.
+Guard execution started at 21:50:18 UTC and was cancelled at 22:30:04 UTC.
+The runner buffers individual proof results until all finish, so the completed
+proof count and any individual failure are unknown. This is incomplete proof,
+not a green result or evidence of a specific failed guard.
+
+Increase only the guard job bound from 40 to 50 minutes for the reconciled
+Studio candidate. Keep every manifest proof, refusal, check-lane stage and DSH
+dependency unchanged. This adds at most ten free public standard Ubuntu minutes
+per run, no paid runner, model call, permission or new job. Require all three
+hosted lanes on the new exact combined head plus independent local proof before
+landing; inspect observed duration on the successor run. The original worker
+and bridge commits remain ancestors rather than being rewritten.
+
 ## The check agent
 
 Before integration, a checker other than the author inspects the exact candidate
