@@ -139,6 +139,40 @@ test("an independent passing review makes review-required Work ready to accept",
   assert.equal(status.nextAction, "accept");
 });
 
+test("review refuses an expired admission after asynchronous Ledger replay", async () => {
+  const ledger = await ledgerWith(verifiedWork());
+  const before = (await ledger.replay(STREAM)).length;
+  let expired = false;
+  const delayed = {
+    append: ledger.append.bind(ledger), read: ledger.read.bind(ledger),
+    replay: async (streamId: string) => { const events = await ledger.replay(streamId); expired = true; return events; },
+  };
+  await assert.rejects(recordOperatorReview({ ledger: delayed, streamId: STREAM, reviewer, status: "pass", summary: "fine", now, idFactory,
+    beforeAppend: () => { if (expired) throw new Error("review deadline expired"); },
+  }), /review deadline expired/);
+  assert.equal((await ledger.replay(STREAM)).length, before);
+});
+
+test("review rechecks admission between appends and recovers an interrupted lifecycle", async () => {
+  const ledger = await ledgerWith(verifiedWork());
+  let expired = false;
+  const delayed = {
+    replay: ledger.replay.bind(ledger), read: ledger.read.bind(ledger),
+    append: async (event: HarnessEvent) => { await ledger.append(event); if (event.type === "review.started") expired = true; },
+  };
+  await assert.rejects(recordOperatorReview({ ledger: delayed, streamId: STREAM, reviewer, status: "pass", summary: "fine", now, idFactory,
+    beforeAppend: () => { if (expired) throw new Error("review deadline expired"); },
+  }), /review deadline expired/);
+  const interrupted = await ledger.replay(STREAM);
+  assert.equal(interrupted.some((event) => event.type === "review.started"), true);
+  assert.equal(interrupted.some((event) => event.type === "review.result"), false);
+  const recovered = await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "pass", summary: "fresh complete review", now, idFactory,
+    beforeAppend: () => {},
+  });
+  assert.equal(recovered.review.latest, "pass");
+  assert.equal(recovered.violations, 0);
+});
+
 test("resume closes an orphaned attempt as recoverable, once", async () => {
   const ledger = await ledgerWith(successfulExecution().filter((item) => item.type !== "attempt.finished"));
   const closed = await closeOrphanedAttempts({ ledger, streamId: STREAM, now, idFactory });

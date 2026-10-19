@@ -674,6 +674,13 @@
       "testFile": "dist/test/operator-review-material.test.js"
     },
     {
+      "id": "operator/review-append-admission",
+      "why": "A review deadline can expire during asynchronous Ledger replay or between lifecycle appends; an expired result must never become a canonical pass.",
+      "file": "src/operator.ts",
+      "remove": "    beforeAppend?.();\n",
+      "testFile": "dist/test/operator.test.js"
+    },
+    {
       "id": "operator/review-parts-observation-binds-results",
       "why": "Fresh-fetch recovery must reject an altered semantic part report even when input identities are unchanged.",
       "file": "scripts/rhiz-harness.mjs",

@@ -234,3 +234,5 @@ A prior full-run missing-part failure remains unexplained; a separately retained
 simulated pre-provider I/O stall shows a possible phase miss, not its cause.
 The named deadline-case body is the second explicit preservation exception to
 the physical extraction inventory. No acceptance or result is fabricated.
+
+The review admission predicate also runs after the canonical Ledger replay and immediately before each review lifecycle append. A deadline expiring while replay or an earlier append waits cannot admit a later passing result. An interrupted lifecycle remains evidence and is closed as failed by the existing fresh-review recovery path.

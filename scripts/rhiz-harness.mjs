@@ -665,6 +665,7 @@ async function review(repo, query, values) {
     if (completed) assertReviewDeadline(completed.deadline);
     return recordOperatorReview({
     ledger,
+    beforeAppend: completed ? () => assertReviewDeadline(completed.deadline) : undefined,
     streamId: work.status.streamId,
     reviewer: result.reviewer,
     status: result.verdict.status,
