@@ -26,11 +26,19 @@ worker's own containment (model process, contained write) cannot start inside
 the dispatch sandbox; every selected Work failed before inference. Under the
 launchd host, the sandboxed dispatcher still owns census, selection, inputs and
 post-run proof, then asks the host over the same IPC channel to execute. The
-host (`scripts/factory-host.mjs`) rebuilds the one permitted pinned
-`rhiz-harness start` from the profile and runs it only when the runtime digest,
-the approved offline local config, the broken-link Work contract and the exact
-verify template all match what Dispatch generates. Verifier commands are not
-separately sandboxed, so any other verifier code is refused.
+host (`scripts/factory-host.mjs`) reads each input once through a no-follow
+descriptor and rebuilds the whole Work contract, verify plan and local config
+with Dispatch's own `dispatchInputs`; any other field, check, command or code is
+refused. Verifier commands are not separately sandboxed, which is why the
+equality is total. The host then writes the validated bytes into a host-private
+0700 directory under `~/Library/Application Support/RhizStudio/factory-host`,
+keeps the run log and `TMPDIR` there, and gives `start` only those copies, so a
+rewrite in `dispatch-inputs/` after validation never reaches execution.
+
+`start` copies its inputs into `<git-common-dir>/rhiz-harness/operator/` and the
+runner reads them there, so the dispatch sandbox profile must not grant writes
+to `operator/`, `ledgers/`, the object store or refs. Under the host it needs
+only its lock files, `dispatch-inputs/` and `last-dispatch.json`.
 
 The existing observer host supplies a fresh process-birth census over Node IPC
 for each selection; privileged `ps` remains outside the dispatch sandbox.

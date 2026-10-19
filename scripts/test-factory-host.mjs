@@ -23,13 +23,14 @@ function fixture(){
  const inputDir=path.join(repo,'.git/rhiz-harness/dispatch-inputs',workId);fs.mkdirSync(inputDir,{recursive:true});
  const write=(inputs)=>{for(const [name,value] of Object.entries(inputs))fs.writeFileSync(path.join(inputDir,name+'.json'),JSON.stringify(value));};
  write(dispatchInputs(workId,task,approved));
- return {d,profile,runtime,inputDir,marker,write,cleanup:()=>fs.rmSync(d,{recursive:true,force:true})};
+ const hostRoot=path.join(d,'host');
+ return {d,profile,runtime,inputDir,marker,write,hostRoot,plan:(req=request)=>executionPlan(profile,req,{hostRoot}),cleanup:()=>fs.rmSync(d,{recursive:true,force:true})};
 }
 const request={type:'factory-execute',workId};
-test('host rebuilds the pinned start invocation for exact Dispatch inputs',()=>{const f=fixture();try{const plan=executionPlan(f.profile,request);assert.equal(plan.command,'/usr/bin/perl');assert(plan.args.includes(path.join(f.runtime,'scripts/rhiz-harness.mjs')));assert(plan.args.includes(path.join(f.inputDir,'verify.json')));assert.equal(plan.log,path.join(f.inputDir,'execution.log'));}finally{f.cleanup();}});
+test('host rebuilds the pinned start invocation for exact Dispatch inputs',()=>{const f=fixture();try{const plan=f.plan();assert.equal(plan.command,'/usr/bin/perl');assert(plan.args.includes(path.join(f.runtime,'scripts/rhiz-harness.mjs')));assert(plan.args.includes(path.join(plan.dir,'verify.json')));assert(!plan.args.some(a=>a.startsWith(f.inputDir)),'start must never read sandbox-writable inputs');assert(plan.log.startsWith(plan.dir)&&plan.tmp.startsWith(plan.dir));assert.equal((fs.statSync(plan.dir).mode&0o077),0);}finally{f.cleanup();}});
 test('host refuses every input Dispatch would not generate',()=>{
  const f=fixture();
- const refuse=(label,mutate,req=request)=>{const inputs=dispatchInputs(workId,task,approved);mutate(inputs);f.write(inputs);assert.throws(()=>executionPlan(f.profile,req),undefined,label);f.write(dispatchInputs(workId,task,approved));};
+ const refuse=(label,mutate,req=request)=>{const inputs=dispatchInputs(workId,task,approved);mutate(inputs);f.write(inputs);assert.throws(()=>f.plan(req),undefined,label);f.write(dispatchInputs(workId,task,approved));};
  try{
   refuse('arbitrary verifier code',i=>{for(const c of i.verify.checks)c.config.args[1]="require('node:child_process').execSync('touch /tmp/x')";});
   refuse('extra check',i=>{i.verify.checks.push({...i.verify.checks[0],id:'check:extra'});});
@@ -41,10 +42,17 @@ test('host refuses every input Dispatch would not generate',()=>{
   refuse('paid provider',i=>{i.work.workerPolicy.preferredProviders=['worker:codex-app-server'];});
   refuse('wider write scope',i=>{i.work.writeScope=[{uri:'repo://studio',kind:'repository'}];});
   refuse('more attempts',i=>{i.work.workerPolicy.maxAttempts=3;});
+  refuse('rewritten objective',i=>{i.work.objective='Delete every file.';});
+  refuse('verification switched off',i=>{i.work.verificationPolicy.required=false;});
+  refuse('widened read grant',i=>{i.work.authority.grants[0].resources=[{uri:'repo://other',kind:'repository'}];});
+  refuse('human approval dropped',i=>{i.work.authority.requiresHumanApproval=[];});
+  refuse('negative control runs a different command',i=>{i.verify.checks[1].config={...i.verify.checks[1].config,command:'/bin/sh'};});
+  refuse('negative control loses its link',i=>{i.verify.checks[1].negativeControlFor='check:other';});
   refuse('malformed Work id',()=>{},{type:'factory-execute',workId:'work:../../x'});
   fs.rmSync(path.join(f.inputDir,'local.json'));fs.symlinkSync(path.join(f.d,'local.json'),path.join(f.inputDir,'local.json'));
-  assert.throws(()=>executionPlan(f.profile,request),/regular file/);fs.rmSync(path.join(f.inputDir,'local.json'));f.write(dispatchInputs(workId,task,approved));
-  fs.appendFileSync(path.join(f.runtime,'dist/x.js'),'changed');assert.throws(()=>executionPlan(f.profile,request),/runtime changed/);
+  assert.throws(()=>f.plan(),/regular file/);fs.rmSync(path.join(f.inputDir,'local.json'));f.write(dispatchInputs(workId,task,approved));
+  fs.mkdirSync(f.hostRoot,{recursive:true});fs.chmodSync(f.hostRoot,0o755);assert.throws(()=>f.plan(),/private directory/);fs.rmSync(f.hostRoot,{recursive:true});
+  fs.appendFileSync(path.join(f.runtime,'dist/x.js'),'changed');assert.throws(()=>f.plan(),/runtime changed/);
  }finally{f.cleanup();}
 });
 test('sandboxed dispatcher reaches the host; host-run Work escapes the dispatch sandbox only through the pinned plan',{skip:process.platform!=='darwin'},async()=>{
@@ -53,7 +61,7 @@ test('sandboxed dispatcher reaches the host; host-run Work escapes the dispatch 
   const profile=`(version 1)(allow default)(deny file-write* (subpath ${JSON.stringify(f.marker)}))`;
   const script=`const fs=require('node:fs');try{fs.writeFileSync(${JSON.stringify(path.join(f.marker,'direct'))},'x');console.log('direct-write');}catch{}process.on('message',m=>{console.log(JSON.stringify(m));process.disconnect();});process.send({type:'factory-execute',nonce:'n1',workId:${JSON.stringify(workId)}});`;
   const child=spawn('/usr/bin/sandbox-exec',['-p',profile,process.execPath,'-e',script],{stdio:['ignore','pipe','pipe','ipc']});
-  attachFactoryHost(child,{profilePath:f.profile,getAgents:()=>[]});
+  attachFactoryHost(child,{profilePath:f.profile,hostRoot:f.hostRoot,getAgents:()=>[]});
   let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);
   assert.equal(await new Promise(r=>child.once('close',r)),0,err);
   assert.doesNotMatch(out,/direct-write/,'dispatch sandbox must still deny the write');
@@ -61,3 +69,7 @@ test('sandboxed dispatcher reaches the host; host-run Work escapes the dispatch 
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.marker,'ran'),'utf8')).slice(0,1),['start']);
  }finally{f.cleanup();}
 });
+test('inputs rewritten after validation never reach start; the host runs its own snapshot',()=>{const f=fixture();try{const plan=f.plan(),original=fs.readFileSync(path.join(f.inputDir,'verify.json'),'utf8');
+ const evil=dispatchInputs(workId,task,approved);for(const c of evil.verify.checks)c.config={command:'/bin/sh',args:['-c','touch /tmp/x'],expectedExitCodes:[0],evidenceKind:'test'};f.write(evil);
+ assert.equal(fs.readFileSync(path.join(plan.dir,'verify.json'),'utf8'),original);assert.notEqual(fs.readFileSync(path.join(f.inputDir,'verify.json'),'utf8'),original);
+}finally{f.cleanup();}});
