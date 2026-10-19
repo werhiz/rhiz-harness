@@ -1,5 +1,53 @@
 # Studio decision evidence — 2026-10-17
 
+## Explicit session ownership
+
+An engineering process in a primary checkout has unknown write scope until the
+trusted operator associates its exact uid/PID/start identity with a scoped Work
+contract using `node scripts/factory-session.mjs --repo <coordination-repo>
+--contract <Work.json> --pid <owner-pid>`. The association is an existing
+`integration.execution-observed` event, not a lease transfer, acceptance, or new
+authority. The process and its observed descendants retain that Work's full
+canonical write scope while live. Heartbeat age never releases it. Once the
+process is gone, its last `running` observation keeps no extra scope; ordinary
+checkpoint narrowing applies.
+
+Same-UID processes can write Ledgers and set any environment, so the event alone
+is not authority. Binding also asks the operator for `sudo` to install a
+root-owned record under `/Library/Application Support/RhizStudio/session-bindings`
+naming the exact Work, contract digest and process identity. Dispatch honours a
+binding only when that record is a root-owned, non-writable regular file with
+matching content; otherwise the session stays ambiguous and parks. Revoke a
+binding by deleting its record with `sudo`. The dispatcher excludes its own PID
+from the session census.
+
+macOS refuses `sandbox_apply` inside an already sandboxed process, so the
+worker's own containment (model process, contained write) cannot start inside
+the dispatch sandbox; every selected Work failed before inference. Under the
+launchd host, the sandboxed dispatcher still owns census, selection, inputs and
+post-run proof, then asks the host over the same IPC channel to execute. The
+host (`scripts/factory-host.mjs`) reads each input once through a no-follow
+descriptor and rebuilds the whole Work contract, verify plan and local config
+with Dispatch's own `dispatchInputs`; any other field, check, command or code is
+refused. Verifier commands are not separately sandboxed, which is why the
+equality is total. The host then writes the validated bytes into a host-private
+0700 directory under `~/Library/Application Support/RhizStudio/factory-host`,
+keeps the run log and `TMPDIR` there, and gives `start` only those copies, so a
+rewrite in `dispatch-inputs/` after validation never reaches execution.
+
+`start` copies its inputs into `<git-common-dir>/rhiz-harness/operator/` and the
+runner reads them there, so the dispatch sandbox profile must not grant writes
+to `operator/`, `ledgers/`, the object store or refs. Under the host it needs
+only its lock files, `dispatch-inputs/` and `last-dispatch.json`.
+
+The existing observer host supplies a fresh process-birth census over Node IPC
+for each selection; privileged `ps` remains outside the dispatch sandbox.
+Unbound/new/reused processes remain parked with their exact PID and resolution
+action. A scoped session permits only unrelated authorized proposals; PR, Work,
+lease, attempted-ID and native worker-lock exclusions still apply. Terminal
+Work cannot authorize a new session. Subscription CLI installation does not
+enroll a provider in unattended dispatch; local Qwen remains the default.
+
 The existing Router remains the owner. The added deterministic adviser recommends actions; it cannot grant authority, accept Work, merge, promote lessons, or authorize inference. Factory dispatch is restricted to exact-file, unambiguous broken-link repairs in an operator-approved reference-doc allowlist. Missing coordination, pressure telemetry, runtime identity or proof parks execution. One worker, three tasks per cycle, zero paid budget, no cloud fallback.
 
 ## Reproduce

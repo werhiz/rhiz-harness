@@ -5,16 +5,21 @@ import { pathToFileURL } from 'node:url';
 import { readRepositoryWorkEvents } from '../dist/adapters/local/work-ledgers.js';
 import { observeFactory } from '../dist/src/observer.js';
 import { projectBoard } from '../dist/src/board.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { z } from 'zod';
 import { candidatePathScopesFromResources } from "../dist/adapters/git/index.js";
 import { summarizeOperatorWork } from '../dist/src/operator.js';
 import { recommendEngineeringDecision } from '../dist/src/router.js';
-const Profile=z.object({repo:z.string(),coordinationRepo:z.string(),githubRepo:z.string().regex(/^[\w-]+\/[\w-]+$/),runtime:z.string(),localConfig:z.string(),
+import {freshProcessSnapshot,sessionOwnership,bindingSource,excludeProcess} from './factory-sessions.mjs';
+export const Profile=z.object({repo:z.string(),coordinationRepo:z.string(),githubRepo:z.string().regex(/^[\w-]+\/[\w-]+$/),runtime:z.string(),localConfig:z.string(),
  allowedFiles:z.array(z.string().regex(/^docs\/reference\/[A-Za-z0-9_/-]+\.md$/)).min(1).max(10),runtimeHead:z.string().regex(/^[a-f0-9]{40}$/),runtimeDigest:z.string().regex(/^[a-f0-9]{64}$/),
  scannerDigest:z.string().regex(/^[a-f0-9]{64}$/),maxTasks:z.number().int().min(1).max(3),
  autonomousPaidBudgetUsd:z.literal(0),cloudFallback:z.literal(false),enabled:z.boolean(),minFreePercent:z.number().min(20).max(90)}).strict();
+export const verifyCheck=(file,digest,destination)=>`const fs=require('node:fs'),crypto=require('node:crypto');if(crypto.createHash('sha256').update(fs.readFileSync(${JSON.stringify(file)})).digest('hex')!==${JSON.stringify(digest)}||!fs.existsSync(${JSON.stringify(destination)}))process.exit(1);`;
+// macOS refuses nested sandbox_apply, so under the launchd host the worker runs outside
+// this sandbox; the host revalidates every input (factory-host.mjs).
+function hostExecute(workId){const nonce=randomUUID();return new Promise((resolve,reject)=>{const done=(error,code)=>{clearTimeout(timer);process.off('message',onMessage);error?reject(error):resolve(code);};const onMessage=m=>{if(m?.type==='factory-execute-result'&&m.nonce===nonce)done(m.error?Error('Host refused execution: '+m.error):null,m.code);};const timer=setTimeout(()=>done(Error('Host execution timed out')),200000);process.on('message',onMessage);process.send({type:'factory-execute',nonce,workId},error=>{if(error)done(error);});});}
 export const workerLockArgs=(file,command,args=[])=>['-e','use Fcntl qw(:flock); $^F=255; open(my $lock, ">>", shift @ARGV) or die $!; flock($lock, LOCK_EX|LOCK_NB) or die "worker active"; exec @ARGV or die $!;',file,command,...args];
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const run=(cmd,args,cwd)=>{const p=spawnSync(cmd,args,{cwd,encoding:'utf8',timeout:45000,maxBuffer:8*2**20,
@@ -24,9 +29,12 @@ const git=(repo,...args)=>run('/usr/bin/git',args,repo).trim();
 const json=(cmd,args,cwd)=>JSON.parse(run(cmd,args,cwd));
 export function sufficientMemory(text,minimum){const free=Number(text.match(/free percentage:\s*(\d+)%/i)?.[1]);return Number.isFinite(free)&&free>=minimum;}
 export function scopeClaimsFile(scopes,file){return scopes.some(s=>s.kind==='repository'||(s.kind==='file'?file===s.path:file===s.path||file.startsWith(s.path+'/')));}
-export function agentCensus(text){const records=[];let current=null;for(const line of text.split('\n')){if(line.startsWith('p')){current={pid:line.slice(1)};records.push(current);}else if(current&&line.startsWith('c'))current.command=line.slice(1);else if(current&&line.startsWith('n'))current.cwd=line.slice(1);}if(!records.length)throw Error('Process census unavailable');return records.filter(r=>/^(?:codex|claude|opencode)$/.test(r.command??'')).map(r=>{if(!r.cwd||!/^\d+$/.test(r.pid))throw Error('Active agent scope unavailable');return r;});}
+export function agentCensus(text){const records=[];let current=null;for(const line of text.split('\n')){if(line.startsWith('p')){current={pid:line.slice(1)};records.push(current);}else if(current&&line.startsWith('c'))current.command=line.slice(1);else if(current&&line.startsWith('n'))current.cwd=line.slice(1);}if(!records.length)throw Error('Process census unavailable');return records.filter(r=>/^(?:codex|claude|opencode|mcode|node|node_repl)$/.test(r.command??'')).map(r=>{if(!r.cwd||!/^\d+$/.test(r.pid))throw Error('Active agent scope unavailable');return r;});}
 export function runtimeDigest(root){const entries=[];const visit=dir=>{for(const e of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())visit(f);else if(e.isFile())entries.push([f,hash(fs.readFileSync(path.join(root,f)))]);else throw Error('Runtime symlink refused');}};visit('dist');visit('scripts');return hash(JSON.stringify(entries.sort((a,b)=>Buffer.compare(Buffer.from(a[0]),Buffer.from(b[0])))));}
-export function ownershipScopes(board,w){
+export function ownershipScopes(board,w,liveSession=false){
+ // Only a currently proven live session keeps the whole scope; a dead owner's last
+ // 'running' observation falls back to checkpoint narrowing.
+ if(liveSession)return candidatePathScopesFromResources(board.contract.writeScope);
  if(!board.integration)return candidatePathScopesFromResources(board.contract.writeScope);
  const scopes=[];
    const h=board.integration.headProof;
@@ -36,6 +44,22 @@ export function ownershipScopes(board,w){
    if(noActive&&cleaned&&checkpoint?.effectiveProofState==='passed'&&checkpoint.checkpoint.head===h.head&&checkpoint.checkpoint.changedResources.every(r=>r.kind==='path'))scopes.push(...checkpoint.checkpoint.changedResources.map(r=>({path:r.resource,kind:'file'})));
    else scopes.push(...candidatePathScopesFromResources(board.contract.writeScope));
  return scopes;
+}
+/** The exact inputs Dispatch writes for one broken-link repair; the host accepts only these. */
+export function dispatchInputs(workId,task,local,node=process.execPath){
+ const resource={uri:'repo://studio/'+task.file,kind:'file'};
+ const work={id:workId,objective:`In ${task.file}, replace exactly ${JSON.stringify(task.oldText)} with ${JSON.stringify(task.newText)}. Repair only this proven broken link.`,type:'SHIP',
+  scope:[{uri:'repo://studio',kind:'repository'}],writeScope:[resource],nonGoals:['No other changes, network, publication, acceptance or learning promotion.'],
+  authority:{grants:[{action:'read',resources:[{uri:'repo://studio',kind:'repository'}],constraints:[]},{action:'write',resources:[resource],constraints:[]}],requiresHumanApproval:['approve','publish','spend','external-mutate']},
+  acceptanceCriteria:[{id:'criterion:link',description:'Exact file-only repair to existing unambiguous target',required:true}],
+  requiredEvidence:[{id:'evidence:link',description:'Independent content digest and disposable negative control',acceptedKinds:['test'],required:true}],
+  context:{strategy:'minimal',resources:[],includeHistory:false},dependencies:[],workerPolicy:{preferredProviders:['worker:local-model'],maxAttempts:1,attemptBudgetMs:120000,allowParallelAttempts:false,explicitProviderAuthorizations:[]},
+  verificationPolicy:{required:true,independentActor:true,reviewRequired:true,falsifiabilityExemptions:[]},createdBy:{id:'human:werhiz',kind:'human',displayName:'Standing low-risk local Studio authorization'},createdAt:new Date().toISOString()};
+ const check=verifyCheck(task.file,hash(task.after),task.destination);
+ const config={command:node,args:['-e',check],expectedExitCodes:[0],evidenceKind:'test'};
+ const verify={id:'plan:'+workId,workId,contractRevision:1,checks:[{id:'check:link',providerId:'verifier:local-command',description:'Exact trusted repair digest',criterionIds:['criterion:link'],requirementIds:['evidence:link'],config},
+  {id:'check:negative',providerId:'verifier:local-command',description:'Reject stale link',negativeControlFor:'check:link',perturbation:{kind:'overwrite-file',path:task.file,content:task.before,description:'Restore known broken link in disposable derivative'},config}]};
+ return {work,verify,local:{...local,permittedPaths:[task.file]}};
 }
 function assertRuntime(p){if(git(p.runtime,'rev-parse','HEAD')!==p.runtimeHead||git(p.runtime,'status','--porcelain','--untracked-files=no')||runtimeDigest(p.runtime)!==p.runtimeDigest)throw Error('Pinned source or built runtime changed');}
 export async function dispatchLocalFactory(profilePath){
@@ -99,22 +123,30 @@ export async function dispatchLocalFactory(profilePath){
   const all=await readRepositoryWorkEvents(common);if(all.unreadable.length)throw Error('Work ownership evidence incomplete');
   const grouped=new Map(),identities=new Map();
   for(const e of [...all.events,...primary.events]){if(identities.has(e.id)){if(identities.get(e.id)!==JSON.stringify(e))throw Error('Conflicting canonical Work history');continue;}identities.set(e.id,JSON.stringify(e));grouped.set(e.workId,[...(grouped.get(e.workId)??[]),e]);}
-  const attempted=new Set(grouped.keys()),activeScopes=[];
+  const attempted=new Set(grouped.keys()),activeScopes=[],boards=[];
   for(const events of grouped.values()){
    const board=projectBoard(events),w=summarizeOperatorWork(events);if(board.violations.length||!board.contract)throw Error('Invalid canonical Work ownership');
+   boards.push({...board,sessionBindingSource:bindingSource(board,events)});
    if(['accepted','rejected','cancelled'].includes(board.state))continue;
    activeScopes.push(...ownershipScopes(board,w));
   }
-  const processes=agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo));
-  for(const agent of processes)if(agent.cwd===p.repo||agent.cwd===p.coordinationRepo)throw Error('Active agent in target root has ambiguous scope; park');
+  const processes=excludeProcess(agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo)));
+  const roots=[p.repo,p.coordinationRepo];
+  const snapshot=await freshProcessSnapshot(processes.filter(a=>roots.includes(a.cwd)));
+  const current=excludeProcess(agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo))).filter(a=>roots.includes(a.cwd));
+  for(const a of current)if(!snapshot.some(s=>s.pid===a.pid&&s.command===a.command&&s.cwd===a.cwd))throw Error(`New or changed primary session ${a.pid}; refresh census before dispatch`);
+  const sessions=sessionOwnership(current,boards,roots,snapshot);
+  for(const id of new Set(sessions.flatMap(s=>s.workIds))){const b=boards.find(b=>b.workId===id);activeScopes.push(...ownershipScopes(b,{},true));}
+  report.sessions=sessions;
   report.agentsChecked=processes.length;
-  return {ownership,issues,attempted,activeScopes};};
+  return {ownership,issues,attempted,activeScopes,ambiguous:sessions.filter(s=>s.status==='ambiguous')};};
   proposals.sort((a,b)=>(b.value-b.risk-b.verificationCost)-(a.value-a.risk-a.verificationCost)||Buffer.compare(Buffer.from(a.file),Buffer.from(b.file)));
   const chosenFiles=new Set();
   for(const task of proposals){
    if(stopping||report.selected.length>=p.maxTasks)break;
    assertRuntime(p);if(git(p.repo,'rev-parse','HEAD')!==sourceHead||fs.readFileSync(path.join(p.repo,task.file),'utf8')!==task.before)throw Error('Discovery baseline changed');
-   const {ownership,issues,attempted,activeScopes}=await census();
+   const {ownership,issues,attempted,activeScopes,ambiguous}=await census();
+   if(ambiguous.length){report.parked.push(...ambiguous.map(s=>s.resolution));break;}
    const workId='work:studio-link-'+hash(JSON.stringify([git(p.repo,'rev-parse','HEAD'),task.file,task.oldText,task.newText])).slice(0,24);
    const claimed=ownership.has(task.file)||issues.some(i=>i.assignees.length&&[task.file,path.dirname(task.file)].some(scope=>`${i.title}\n${i.body}`.includes(scope)))||scopeClaimsFile(activeScopes,task.file);
    const action=recommendEngineeringDecision({kind:'priority',facts:{authorized:p.allowedFiles.includes(task.file),duplicate:claimed,
@@ -122,24 +154,12 @@ export async function dispatchLocalFactory(profilePath){
    if(action!=='execute'||attempted.has(workId)||chosenFiles.has(task.file)){report.parked.push(`${workId}: ${attempted.has(workId)?'already attempted':action}`);continue;}
    chosenFiles.add(task.file);
    const inputDir=path.join(root,'dispatch-inputs',workId);fs.mkdirSync(inputDir,{recursive:true,mode:0o700});
-   const resource={uri:'repo://studio/'+task.file,kind:'file'};
-   const work={id:workId,objective:`In ${task.file}, replace exactly ${JSON.stringify(task.oldText)} with ${JSON.stringify(task.newText)}. Repair only this proven broken link.`,type:'SHIP',
-    scope:[{uri:'repo://studio',kind:'repository'}],writeScope:[resource],nonGoals:['No other changes, network, publication, acceptance or learning promotion.'],
-    authority:{grants:[{action:'read',resources:[{uri:'repo://studio',kind:'repository'}],constraints:[]},{action:'write',resources:[resource],constraints:[]}],requiresHumanApproval:['approve','publish','spend','external-mutate']},
-    acceptanceCriteria:[{id:'criterion:link',description:'Exact file-only repair to existing unambiguous target',required:true}],
-    requiredEvidence:[{id:'evidence:link',description:'Independent content digest and disposable negative control',acceptedKinds:['test'],required:true}],
-    context:{strategy:'minimal',resources:[],includeHistory:false},dependencies:[],workerPolicy:{preferredProviders:['worker:local-model'],maxAttempts:1,attemptBudgetMs:120000,allowParallelAttempts:false,explicitProviderAuthorizations:[]},
-    verificationPolicy:{required:true,independentActor:true,reviewRequired:true,falsifiabilityExemptions:[]},createdBy:{id:'human:werhiz',kind:'human',displayName:'Standing low-risk local Studio authorization'},createdAt:new Date().toISOString()};
-   const check=`const fs=require('node:fs'),crypto=require('node:crypto');if(crypto.createHash('sha256').update(fs.readFileSync(${JSON.stringify(task.file)})).digest('hex')!==${JSON.stringify(hash(task.after))}||!fs.existsSync(${JSON.stringify(task.destination)}))process.exit(1);`;
-   const config={command:process.execPath,args:['-e',check],expectedExitCodes:[0],evidenceKind:'test'};
-   const verify={id:'plan:'+workId,workId,contractRevision:1,checks:[{id:'check:link',providerId:'verifier:local-command',description:'Exact trusted repair digest',criterionIds:['criterion:link'],requirementIds:['evidence:link'],config},
-    {id:'check:negative',providerId:'verifier:local-command',description:'Reject stale link',negativeControlFor:'check:link',perturbation:{kind:'overwrite-file',path:task.file,content:task.before,description:'Restore known broken link in disposable derivative'},config}]};
-   for(const [name,value] of Object.entries({work,verify,local:{...local,permittedPaths:[task.file]}}))fs.writeFileSync(path.join(inputDir,name+'.json'),JSON.stringify(value,null,2),{mode:0o600});
+   for(const [name,value] of Object.entries(dispatchInputs(workId,task,local)))fs.writeFileSync(path.join(inputDir,name+'.json'),JSON.stringify(value,null,2),{mode:0o600});
    const args=[runtimeCli,'start','--repo',p.repo,'--contract',path.join(inputDir,'work.json'),'--verify',path.join(inputDir,'verify.json'),'--local-config',path.join(inputDir,'local.json'),'--json'];
-   const log=fs.openSync(path.join(inputDir,'execution.log'),'w',0o600),start=Date.now();
-   const code=await new Promise((resolve,reject)=>{child=spawn('/usr/bin/perl',workerLockArgs(workerLock,process.execPath,args),{cwd:p.repo,detached:true,stdio:['ignore',log,log],
-    env:{...process.env,RHIZ_LOCAL_ONLY:'1',TMPDIR:'/private/tmp',GIT_OPTIONAL_LOCKS:'0'}});const timer=setTimeout(stop,180000);child.once('error',e=>{clearTimeout(timer);reject(e);});child.once('close',code=>{clearTimeout(timer);resolve(code);});});
-   fs.closeSync(log);child=null;if(killTimer)clearTimeout(killTimer);
+   const start=Date.now();
+   const code=typeof process.send==='function'?await hostExecute(workId):await new Promise((resolve,reject)=>{const log=fs.openSync(path.join(inputDir,'execution.log'),'w',0o600);child=spawn('/usr/bin/perl',workerLockArgs(workerLock,process.execPath,args),{cwd:p.repo,detached:true,stdio:['ignore',log,log],
+    env:{...process.env,RHIZ_LOCAL_ONLY:'1',TMPDIR:'/private/tmp',GIT_OPTIONAL_LOCKS:'0'}});const timer=setTimeout(stop,180000);child.once('error',e=>{clearTimeout(timer);reject(e);});child.once('close',code=>{clearTimeout(timer);fs.closeSync(log);resolve(code);});});
+   child=null;if(killTimer)clearTimeout(killTimer);
    let proof=null;
    if(code===0){const snapshot=await readRepositoryWorkEvents(common);if(snapshot.unreadable.length)throw Error('Post-run Ledger unreadable');
     const events=snapshot.events.filter(e=>e.workId===workId),board=projectBoard(events),v=events.findLast(e=>e.type==='verification.result'),h=board.integration.headProof;
