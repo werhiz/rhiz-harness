@@ -37,9 +37,12 @@ experiment, not integration approval. The real fixture task passed independent
 Verify including a disposable negative control on 2026-10-17; it did not modify a
 product or establish general coding quality. Full check and hosted proof remain open.
 On 2026-10-19 the Qwen3 8B Q4_K_M GGUF that Ollama stores for `qwen3:8b`
-(blob `sha256-a3de86cd…`) returned the exact schema-constrained replacement for a
-fixture broken-link prompt with this bridge's arguments in 37s on CPU. The JSON
+(GGUF SHA-256
+`a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f`) returned the exact schema-constrained replacement for a
+fixture broken-link prompt with this bridge's arguments in 37s on CPU, and 29s through `CliLocalInference` itself (sandbox and digest checks
+included). This is a single fixture prompt, not a benchmark. The JSON
 schema grammar suppresses thinking output. Pin that blob path and digest in
-`modelPath`/`digest`; the label alone grants nothing.
+`modelPath`/`digest`; the label alone grants nothing and is not checked against
+the digest, so the operator must keep them consistent.
 
-The Studio session cannot download Ollama, bind loopback sockets, initialize Codex state, inspect swap, or register launchd. Existing Qwen 2.5 CPU CLI inference works, but does not establish either requested Qwen 3 benchmark or a live Ollama Harness task. Persistent execution remains paused. The slow guard suite remains INCOMPLETE and is not rerun by this change. Full gate, independent exact-candidate review, real OS containment, model benchmark, safe stop and restart recovery are required before activation or integration.
+The Studio session cannot download Ollama, bind loopback sockets, initialize Codex state, inspect swap, or register launchd. As of 2026-10-17, Qwen 2.5 CPU CLI inference worked, but that did not establish either requested Qwen 3 benchmark or a live Ollama Harness task. Persistent execution remains paused. The slow guard suite remains INCOMPLETE and is not rerun by this change. Full gate, independent exact-candidate review, real OS containment, model benchmark, safe stop and restart recovery are required before activation or integration.
