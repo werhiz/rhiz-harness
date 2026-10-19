@@ -10,6 +10,12 @@ test("CLI rejects paid routing, cloud fallback and reserved mutation paths", () 
     { permittedPaths: ["scripts/worker.mjs"] }, { model: "other" }])
     assert.equal(CliWorkerConfigSchema.safeParse({ ...config, ...change }).success, false);
 });
+test("CLI accepts only pinned model identities and reports the configured one", () => {
+  assert.equal(new CliLocalInference(CliWorkerConfigSchema.parse({ ...config, model: "qwen3-8b-q4_k_m" })).model, "qwen3-8b-q4_k_m");
+  assert.equal(new CliLocalInference(CliWorkerConfigSchema.parse(config)).model, "qwen2.5-7b-instruct-q4_k_m");
+  for (const model of ["qwen3-coder:30b", "qwen3:8b", "qwen3-8b"])
+    assert.equal(CliWorkerConfigSchema.safeParse({ ...config, model }).success, false);
+});
 test("CLI cancellation refuses before reading a model", async () => {
   const controller = new AbortController(); controller.abort();
   await assert.rejects(new CliLocalInference(CliWorkerConfigSchema.parse(config)).replace("fix", controller.signal), /abort/i);
