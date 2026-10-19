@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { candidatePathScopesFromResources } from "../dist/adapters/git/index.js";
 import { summarizeOperatorWork } from '../dist/src/operator.js';
 import { recommendEngineeringDecision } from '../dist/src/router.js';
-import {freshProcessSnapshot,sessionOwnership} from './factory-sessions.mjs';
+import {freshProcessSnapshot,sessionOwnership,bindingSource,excludeProcess} from './factory-sessions.mjs';
 const Profile=z.object({repo:z.string(),coordinationRepo:z.string(),githubRepo:z.string().regex(/^[\w-]+\/[\w-]+$/),runtime:z.string(),localConfig:z.string(),
  allowedFiles:z.array(z.string().regex(/^docs\/reference\/[A-Za-z0-9_/-]+\.md$/)).min(1).max(10),runtimeHead:z.string().regex(/^[a-f0-9]{40}$/),runtimeDigest:z.string().regex(/^[a-f0-9]{64}$/),
  scannerDigest:z.string().regex(/^[a-f0-9]{64}$/),maxTasks:z.number().int().min(1).max(3),
@@ -28,7 +28,9 @@ export function scopeClaimsFile(scopes,file){return scopes.some(s=>s.kind==='rep
 export function agentCensus(text){const records=[];let current=null;for(const line of text.split('\n')){if(line.startsWith('p')){current={pid:line.slice(1)};records.push(current);}else if(current&&line.startsWith('c'))current.command=line.slice(1);else if(current&&line.startsWith('n'))current.cwd=line.slice(1);}if(!records.length)throw Error('Process census unavailable');return records.filter(r=>/^(?:codex|claude|opencode|mcode|node|node_repl)$/.test(r.command??'')).map(r=>{if(!r.cwd||!/^\d+$/.test(r.pid))throw Error('Active agent scope unavailable');return r;});}
 export function runtimeDigest(root){const entries=[];const visit=dir=>{for(const e of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){const f=path.join(dir,e.name);if(e.isDirectory())visit(f);else if(e.isFile())entries.push([f,hash(fs.readFileSync(path.join(root,f)))]);else throw Error('Runtime symlink refused');}};visit('dist');visit('scripts');return hash(JSON.stringify(entries.sort((a,b)=>Buffer.compare(Buffer.from(a[0]),Buffer.from(b[0])))));}
 export function ownershipScopes(board,w,liveSession=false){
- if(liveSession||board.integration?.latestExecutionObservation?.state==='running')return candidatePathScopesFromResources(board.contract.writeScope);
+ // Only a currently proven live session keeps the whole scope; a dead owner's last
+ // 'running' observation falls back to checkpoint narrowing.
+ if(liveSession)return candidatePathScopesFromResources(board.contract.writeScope);
  if(!board.integration)return candidatePathScopesFromResources(board.contract.writeScope);
  const scopes=[];
    const h=board.integration.headProof;
@@ -104,15 +106,14 @@ export async function dispatchLocalFactory(profilePath){
   const attempted=new Set(grouped.keys()),activeScopes=[],boards=[];
   for(const events of grouped.values()){
    const board=projectBoard(events),w=summarizeOperatorWork(events);if(board.violations.length||!board.contract)throw Error('Invalid canonical Work ownership');
-   const binding=events.findLast(e=>e.type==='integration.execution-observed');
-   boards.push({...board,sessionBindingSource:binding?.actor.kind==='service'&&binding.actor.id==='service:studio-operator-session'?binding.payload.observation.source:null});
+   boards.push({...board,sessionBindingSource:bindingSource(board,events)});
    if(['accepted','rejected','cancelled'].includes(board.state))continue;
    activeScopes.push(...ownershipScopes(board,w));
   }
-  const processes=agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo));
+  const processes=excludeProcess(agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo)));
   const roots=[p.repo,p.coordinationRepo];
   const snapshot=await freshProcessSnapshot(processes.filter(a=>roots.includes(a.cwd)));
-  const current=agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo)).filter(a=>roots.includes(a.cwd));
+  const current=excludeProcess(agentCensus(run('/usr/sbin/lsof',['-a','-u',String(process.getuid()),'-d','cwd','-Fpcn','+c','0'],p.repo))).filter(a=>roots.includes(a.cwd));
   for(const a of current)if(!snapshot.some(s=>s.pid===a.pid&&s.command===a.command&&s.cwd===a.cwd))throw Error(`New or changed primary session ${a.pid}; refresh census before dispatch`);
   const sessions=sessionOwnership(current,boards,roots,snapshot);
   for(const id of new Set(sessions.flatMap(s=>s.workIds))){const b=boards.find(b=>b.workId===id);activeScopes.push(...ownershipScopes(b,{},true));}

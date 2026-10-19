@@ -1,4 +1,6 @@
 // Fresh Runtime observations; scoped Work remains the only ownership record.
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
@@ -49,6 +51,31 @@ export function attachProcessCensus(child,getAgents){
   if(child.connected)child.send({type:'factory-process-census-result',nonce:m.nonce,...result},error=>{if(error&&child.connected)console.error('Process observation delivery failed:',error.message);});
  });
 }
+// Same-UID processes can write Ledgers and forge env/JSON, so a session binding is
+// authority only when the operator also created a root-owned record through sudo.
+export const AUTHORIZATION_ROOT='/Library/Application Support/RhizStudio/session-bindings';
+export const authorizationPath=(root,workId,source)=>path.join(root,digest(JSON.stringify([workId,source]))+'.json');
+export const authorizationRecord=(workId,contract,source)=>({schema:'rhiz/session-binding-authorization/v1',workId,contractDigest:digest(JSON.stringify(contract)),source});
+export function authorizedBinding(workId,contract,source,{root=AUTHORIZATION_ROOT,trustedUid=0}={}){
+ let st,text;
+ try{const file=authorizationPath(root,workId,source);st=fs.lstatSync(file);if(!st.isFile()||st.nlink!==1||st.uid!==trustedUid||(st.mode&0o022)!==0)return false;text=fs.readFileSync(file,'utf8');}catch{return false;}
+ return text===JSON.stringify(authorizationRecord(workId,contract,source));
+}
+export function authorizeWithSudo(file,record){
+ const staged=path.join(fs.mkdtempSync(path.join(os.tmpdir(),'rhiz-binding-')),'record.json');
+ try{
+  fs.writeFileSync(staged,JSON.stringify(record),{mode:0o644});
+  for(const args of [['/bin/mkdir','-p','-m','0755',path.dirname(file)],['/usr/bin/install','-o','root','-g','wheel','-m','0644',staged,file]]){
+   const r=spawnSync('/usr/bin/sudo',args,{stdio:'inherit'});if(r.status!==0)throw Error('Operator sudo authorization refused; session not bound');
+  }
+ }finally{fs.rmSync(path.dirname(staged),{recursive:true,force:true});}
+}
+export function bindingSource(board,events,options){
+ const binding=events.findLast(e=>e.type==='integration.execution-observed');
+ const source=binding?.actor.kind==='service'&&binding.actor.id==='service:studio-operator-session'?binding.payload.observation.source:null;
+ return source&&board.contract&&authorizedBinding(board.workId,board.contract,source,options)?source:null;
+}
+export const excludeProcess=(agents,pid=process.pid)=>agents.filter(a=>a.pid!==String(pid));
 export function sessionOwnership(agents,boards,roots,snapshot){
  const rows=new Map(snapshot.map(p=>[p.pid,p]));
  return agents.filter(a=>roots.includes(a.cwd)).map(a=>{

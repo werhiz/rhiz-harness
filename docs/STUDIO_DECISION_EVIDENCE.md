@@ -8,7 +8,18 @@ contract using `node scripts/factory-session.mjs --repo <coordination-repo>
 --contract <Work.json> --pid <owner-pid>`. The association is an existing
 `integration.execution-observed` event, not a lease transfer, acceptance, or new
 authority. The process and its observed descendants retain that Work's full
-canonical write scope while live. Heartbeat age never releases it.
+canonical write scope while live. Heartbeat age never releases it. Once the
+process is gone, its last `running` observation keeps no extra scope; ordinary
+checkpoint narrowing applies.
+
+Same-UID processes can write Ledgers and set any environment, so the event alone
+is not authority. Binding also asks the operator for `sudo` to install a
+root-owned record under `/Library/Application Support/RhizStudio/session-bindings`
+naming the exact Work, contract digest and process identity. Dispatch honours a
+binding only when that record is a root-owned, non-writable regular file with
+matching content; otherwise the session stays ambiguous and parks. Revoke a
+binding by deleting its record with `sudo`. The dispatcher excludes its own PID
+from the session census.
 
 The existing observer host supplies a fresh process-birth census over Node IPC
 for each selection; privileged `ps` remains outside the dispatch sandbox.

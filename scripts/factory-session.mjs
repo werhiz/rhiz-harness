@@ -5,7 +5,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {agentCensus} from './factory-dispatch.mjs';
-import {collectProcessSnapshot,processSource} from './factory-sessions.mjs';
+import {collectProcessSnapshot,processSource,AUTHORIZATION_ROOT,authorizationPath,authorizationRecord,authorizedBinding,authorizeWithSudo} from './factory-sessions.mjs';
 import {DurableEventLedger} from '../dist/adapters/local/durable-ledger.js';
 import {readRepositoryWorkLedgers} from '../dist/adapters/local/work-ledgers.js';
 import {WorkContractSchema,parseHarnessEvent} from '../dist/src/schemas.js';
@@ -13,7 +13,7 @@ import {projectBoard} from '../dist/src/board.js';
 import {IntegrationController} from '../dist/src/integration.js';
 import {streamIdForWork} from '../dist/src/refiner.js';
 import {harnessGitRefSegment} from '../dist/adapters/git/index.js';
-export async function bindSession({repo,contractFile,pid}){
+export async function bindSession({repo,contractFile,pid,authorization={root:AUTHORIZATION_ROOT,trustedUid:0,authorize:authorizeWithSudo}}){
  if(process.env.RHIZ_AUTONOMOUS_CONTEXT==='1')throw Error('Session binding requires the trusted operator; worker cannot change coordination scope');
  const git=(...args)=>{const r=spawnSync('/usr/bin/git',args,{cwd:repo,encoding:'utf8'});if(r.status!==0)throw Error(r.stderr);return r.stdout.trim();};
  const contract=WorkContractSchema.parse(JSON.parse(fs.readFileSync(contractFile,'utf8')));
@@ -24,6 +24,11 @@ export async function bindSession({repo,contractFile,pid}){
  if(!candidate)throw Error('Named live engineering process not found');
  const owner=collectProcessSnapshot([candidate]).processes.find(p=>p.pid===String(pid));
  if(!owner)throw Error('Named live engineering process not found');
+ const source=processSource(owner);
+ // The env check above is defence in depth; the operator's sudo-created root-owned
+ // record is the authority Dispatch verifies. Nothing is recorded without it.
+ authorization.authorize(authorizationPath(authorization.root,contract.id,source),authorizationRecord(contract.id,contract,source));
+ if(!authorizedBinding(contract.id,contract,source,authorization))throw Error('Root-owned operator authorization missing or altered; session not bound');
  const common=git('rev-parse','--path-format=absolute','--git-common-dir');
  const snapshots=await readRepositoryWorkLedgers(common);if(snapshots.unreadable.length)throw Error('Unreadable canonical Work');
  const existing=snapshots.ledgers.filter(l=>l.workIds.includes(contract.id));
@@ -42,7 +47,7 @@ export async function bindSession({repo,contractFile,pid}){
   if(board.violations.length||JSON.stringify(board.contract)!==JSON.stringify(contract)||['accepted','rejected','cancelled'].includes(board.state))throw Error('Only matching live canonical Work may bind a session');
   const options={ledger,workId:contract.id,actor};
   const integration=board.integration?await IntegrationController.open(options):await IntegrationController.initialize({...options,configuration:{ref:`refs/rhiz/work/${contract.id.replace(/[^A-Za-z0-9._-]/g,'-')}/integration`,head:git('rev-parse','HEAD'),horizonPolicyId:'policy:integration-horizon:provisional',provisionalHorizon:true}});
-  board=await integration.observeExecution({state:'running',source:processSource(owner),observedAt:new Date().toISOString()});
+  board=await integration.observeExecution({state:'running',source,observedAt:new Date().toISOString()});
   return {workId:contract.id,owner,scope:board.contract.writeScope,source:board.integration.latestExecutionObservation.source,accepted:false};
  }finally{await ledger.close();}
 }
