@@ -5,17 +5,21 @@ import { pathToFileURL } from 'node:url';
 import { readRepositoryWorkEvents } from '../dist/adapters/local/work-ledgers.js';
 import { observeFactory } from '../dist/src/observer.js';
 import { projectBoard } from '../dist/src/board.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { z } from 'zod';
 import { candidatePathScopesFromResources } from "../dist/adapters/git/index.js";
 import { summarizeOperatorWork } from '../dist/src/operator.js';
 import { recommendEngineeringDecision } from '../dist/src/router.js';
 import {freshProcessSnapshot,sessionOwnership,bindingSource,excludeProcess} from './factory-sessions.mjs';
-const Profile=z.object({repo:z.string(),coordinationRepo:z.string(),githubRepo:z.string().regex(/^[\w-]+\/[\w-]+$/),runtime:z.string(),localConfig:z.string(),
+export const Profile=z.object({repo:z.string(),coordinationRepo:z.string(),githubRepo:z.string().regex(/^[\w-]+\/[\w-]+$/),runtime:z.string(),localConfig:z.string(),
  allowedFiles:z.array(z.string().regex(/^docs\/reference\/[A-Za-z0-9_/-]+\.md$/)).min(1).max(10),runtimeHead:z.string().regex(/^[a-f0-9]{40}$/),runtimeDigest:z.string().regex(/^[a-f0-9]{64}$/),
  scannerDigest:z.string().regex(/^[a-f0-9]{64}$/),maxTasks:z.number().int().min(1).max(3),
  autonomousPaidBudgetUsd:z.literal(0),cloudFallback:z.literal(false),enabled:z.boolean(),minFreePercent:z.number().min(20).max(90)}).strict();
+export const verifyCheck=(file,digest,destination)=>`const fs=require('node:fs'),crypto=require('node:crypto');if(crypto.createHash('sha256').update(fs.readFileSync(${JSON.stringify(file)})).digest('hex')!==${JSON.stringify(digest)}||!fs.existsSync(${JSON.stringify(destination)}))process.exit(1);`;
+// macOS refuses nested sandbox_apply, so under the launchd host the worker runs outside
+// this sandbox; the host revalidates every input (factory-host.mjs).
+function hostExecute(workId){const nonce=randomUUID();return new Promise((resolve,reject)=>{const done=(error,code)=>{clearTimeout(timer);process.off('message',onMessage);error?reject(error):resolve(code);};const onMessage=m=>{if(m?.type==='factory-execute-result'&&m.nonce===nonce)done(m.error?Error('Host refused execution: '+m.error):null,m.code);};const timer=setTimeout(()=>done(Error('Host execution timed out')),200000);process.on('message',onMessage);process.send({type:'factory-execute',nonce,workId},error=>{if(error)done(error);});});}
 export const workerLockArgs=(file,command,args=[])=>['-e','use Fcntl qw(:flock); $^F=255; open(my $lock, ">>", shift @ARGV) or die $!; flock($lock, LOCK_EX|LOCK_NB) or die "worker active"; exec @ARGV or die $!;',file,command,...args];
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const run=(cmd,args,cwd)=>{const p=spawnSync(cmd,args,{cwd,encoding:'utf8',timeout:45000,maxBuffer:8*2**20,
@@ -40,6 +44,22 @@ export function ownershipScopes(board,w,liveSession=false){
    if(noActive&&cleaned&&checkpoint?.effectiveProofState==='passed'&&checkpoint.checkpoint.head===h.head&&checkpoint.checkpoint.changedResources.every(r=>r.kind==='path'))scopes.push(...checkpoint.checkpoint.changedResources.map(r=>({path:r.resource,kind:'file'})));
    else scopes.push(...candidatePathScopesFromResources(board.contract.writeScope));
  return scopes;
+}
+/** The exact inputs Dispatch writes for one broken-link repair; the host accepts only these. */
+export function dispatchInputs(workId,task,local,node=process.execPath){
+ const resource={uri:'repo://studio/'+task.file,kind:'file'};
+ const work={id:workId,objective:`In ${task.file}, replace exactly ${JSON.stringify(task.oldText)} with ${JSON.stringify(task.newText)}. Repair only this proven broken link.`,type:'SHIP',
+  scope:[{uri:'repo://studio',kind:'repository'}],writeScope:[resource],nonGoals:['No other changes, network, publication, acceptance or learning promotion.'],
+  authority:{grants:[{action:'read',resources:[{uri:'repo://studio',kind:'repository'}],constraints:[]},{action:'write',resources:[resource],constraints:[]}],requiresHumanApproval:['approve','publish','spend','external-mutate']},
+  acceptanceCriteria:[{id:'criterion:link',description:'Exact file-only repair to existing unambiguous target',required:true}],
+  requiredEvidence:[{id:'evidence:link',description:'Independent content digest and disposable negative control',acceptedKinds:['test'],required:true}],
+  context:{strategy:'minimal',resources:[],includeHistory:false},dependencies:[],workerPolicy:{preferredProviders:['worker:local-model'],maxAttempts:1,attemptBudgetMs:120000,allowParallelAttempts:false,explicitProviderAuthorizations:[]},
+  verificationPolicy:{required:true,independentActor:true,reviewRequired:true,falsifiabilityExemptions:[]},createdBy:{id:'human:werhiz',kind:'human',displayName:'Standing low-risk local Studio authorization'},createdAt:new Date().toISOString()};
+ const check=verifyCheck(task.file,hash(task.after),task.destination);
+ const config={command:node,args:['-e',check],expectedExitCodes:[0],evidenceKind:'test'};
+ const verify={id:'plan:'+workId,workId,contractRevision:1,checks:[{id:'check:link',providerId:'verifier:local-command',description:'Exact trusted repair digest',criterionIds:['criterion:link'],requirementIds:['evidence:link'],config},
+  {id:'check:negative',providerId:'verifier:local-command',description:'Reject stale link',negativeControlFor:'check:link',perturbation:{kind:'overwrite-file',path:task.file,content:task.before,description:'Restore known broken link in disposable derivative'},config}]};
+ return {work,verify,local:{...local,permittedPaths:[task.file]}};
 }
 function assertRuntime(p){if(git(p.runtime,'rev-parse','HEAD')!==p.runtimeHead||git(p.runtime,'status','--porcelain','--untracked-files=no')||runtimeDigest(p.runtime)!==p.runtimeDigest)throw Error('Pinned source or built runtime changed');}
 export async function dispatchLocalFactory(profilePath){
@@ -134,24 +154,12 @@ export async function dispatchLocalFactory(profilePath){
    if(action!=='execute'||attempted.has(workId)||chosenFiles.has(task.file)){report.parked.push(`${workId}: ${attempted.has(workId)?'already attempted':action}`);continue;}
    chosenFiles.add(task.file);
    const inputDir=path.join(root,'dispatch-inputs',workId);fs.mkdirSync(inputDir,{recursive:true,mode:0o700});
-   const resource={uri:'repo://studio/'+task.file,kind:'file'};
-   const work={id:workId,objective:`In ${task.file}, replace exactly ${JSON.stringify(task.oldText)} with ${JSON.stringify(task.newText)}. Repair only this proven broken link.`,type:'SHIP',
-    scope:[{uri:'repo://studio',kind:'repository'}],writeScope:[resource],nonGoals:['No other changes, network, publication, acceptance or learning promotion.'],
-    authority:{grants:[{action:'read',resources:[{uri:'repo://studio',kind:'repository'}],constraints:[]},{action:'write',resources:[resource],constraints:[]}],requiresHumanApproval:['approve','publish','spend','external-mutate']},
-    acceptanceCriteria:[{id:'criterion:link',description:'Exact file-only repair to existing unambiguous target',required:true}],
-    requiredEvidence:[{id:'evidence:link',description:'Independent content digest and disposable negative control',acceptedKinds:['test'],required:true}],
-    context:{strategy:'minimal',resources:[],includeHistory:false},dependencies:[],workerPolicy:{preferredProviders:['worker:local-model'],maxAttempts:1,attemptBudgetMs:120000,allowParallelAttempts:false,explicitProviderAuthorizations:[]},
-    verificationPolicy:{required:true,independentActor:true,reviewRequired:true,falsifiabilityExemptions:[]},createdBy:{id:'human:werhiz',kind:'human',displayName:'Standing low-risk local Studio authorization'},createdAt:new Date().toISOString()};
-   const check=`const fs=require('node:fs'),crypto=require('node:crypto');if(crypto.createHash('sha256').update(fs.readFileSync(${JSON.stringify(task.file)})).digest('hex')!==${JSON.stringify(hash(task.after))}||!fs.existsSync(${JSON.stringify(task.destination)}))process.exit(1);`;
-   const config={command:process.execPath,args:['-e',check],expectedExitCodes:[0],evidenceKind:'test'};
-   const verify={id:'plan:'+workId,workId,contractRevision:1,checks:[{id:'check:link',providerId:'verifier:local-command',description:'Exact trusted repair digest',criterionIds:['criterion:link'],requirementIds:['evidence:link'],config},
-    {id:'check:negative',providerId:'verifier:local-command',description:'Reject stale link',negativeControlFor:'check:link',perturbation:{kind:'overwrite-file',path:task.file,content:task.before,description:'Restore known broken link in disposable derivative'},config}]};
-   for(const [name,value] of Object.entries({work,verify,local:{...local,permittedPaths:[task.file]}}))fs.writeFileSync(path.join(inputDir,name+'.json'),JSON.stringify(value,null,2),{mode:0o600});
+   for(const [name,value] of Object.entries(dispatchInputs(workId,task,local)))fs.writeFileSync(path.join(inputDir,name+'.json'),JSON.stringify(value,null,2),{mode:0o600});
    const args=[runtimeCli,'start','--repo',p.repo,'--contract',path.join(inputDir,'work.json'),'--verify',path.join(inputDir,'verify.json'),'--local-config',path.join(inputDir,'local.json'),'--json'];
-   const log=fs.openSync(path.join(inputDir,'execution.log'),'w',0o600),start=Date.now();
-   const code=await new Promise((resolve,reject)=>{child=spawn('/usr/bin/perl',workerLockArgs(workerLock,process.execPath,args),{cwd:p.repo,detached:true,stdio:['ignore',log,log],
-    env:{...process.env,RHIZ_LOCAL_ONLY:'1',TMPDIR:'/private/tmp',GIT_OPTIONAL_LOCKS:'0'}});const timer=setTimeout(stop,180000);child.once('error',e=>{clearTimeout(timer);reject(e);});child.once('close',code=>{clearTimeout(timer);resolve(code);});});
-   fs.closeSync(log);child=null;if(killTimer)clearTimeout(killTimer);
+   const start=Date.now();
+   const code=typeof process.send==='function'?await hostExecute(workId):await new Promise((resolve,reject)=>{const log=fs.openSync(path.join(inputDir,'execution.log'),'w',0o600);child=spawn('/usr/bin/perl',workerLockArgs(workerLock,process.execPath,args),{cwd:p.repo,detached:true,stdio:['ignore',log,log],
+    env:{...process.env,RHIZ_LOCAL_ONLY:'1',TMPDIR:'/private/tmp',GIT_OPTIONAL_LOCKS:'0'}});const timer=setTimeout(stop,180000);child.once('error',e=>{clearTimeout(timer);reject(e);});child.once('close',code=>{clearTimeout(timer);fs.closeSync(log);resolve(code);});});
+   child=null;if(killTimer)clearTimeout(killTimer);
    let proof=null;
    if(code===0){const snapshot=await readRepositoryWorkEvents(common);if(snapshot.unreadable.length)throw Error('Post-run Ledger unreadable');
     const events=snapshot.events.filter(e=>e.workId===workId),board=projectBoard(events),v=events.findLast(e=>e.type==='verification.result'),h=board.integration.headProof;

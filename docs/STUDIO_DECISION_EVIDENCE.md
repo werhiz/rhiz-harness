@@ -21,6 +21,17 @@ matching content; otherwise the session stays ambiguous and parks. Revoke a
 binding by deleting its record with `sudo`. The dispatcher excludes its own PID
 from the session census.
 
+macOS refuses `sandbox_apply` inside an already sandboxed process, so the
+worker's own containment (model process, contained write) cannot start inside
+the dispatch sandbox; every selected Work failed before inference. Under the
+launchd host, the sandboxed dispatcher still owns census, selection, inputs and
+post-run proof, then asks the host over the same IPC channel to execute. The
+host (`scripts/factory-host.mjs`) rebuilds the one permitted pinned
+`rhiz-harness start` from the profile and runs it only when the runtime digest,
+the approved offline local config, the broken-link Work contract and the exact
+verify template all match what Dispatch generates. Verifier commands are not
+separately sandboxed, so any other verifier code is refused.
+
 The existing observer host supplies a fresh process-birth census over Node IPC
 for each selection; privileged `ps` remains outside the dispatch sandbox.
 Unbound/new/reused processes remain parked with their exact PID and resolution
