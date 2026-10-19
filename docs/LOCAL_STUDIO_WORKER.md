@@ -39,8 +39,8 @@ product or establish general coding quality. Full check and hosted proof remain 
 On 2026-10-19 the Qwen3 8B Q4_K_M GGUF that Ollama stores for `qwen3:8b`
 (GGUF SHA-256
 `a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f`) returned the exact schema-constrained replacement for a
-fixture broken-link prompt with this bridge's arguments in 37s on CPU, and 29s through `CliLocalInference` itself (sandbox and digest checks
-included). This is a single fixture prompt, not a benchmark. The JSON
+fixture broken-link prompt with this bridge's arguments, both directly and through `CliLocalInference` itself (sandbox and digest checks
+included). This is a single functional check, not a benchmark; no timing or quality claim is made. The JSON
 schema grammar suppresses thinking output. Pin that blob path and digest in
 `modelPath`/`digest`; the label alone grants nothing and is not checked against
 the digest, so the operator must keep them consistent.
