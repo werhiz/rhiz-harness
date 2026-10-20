@@ -45,6 +45,7 @@ test("convergence binds actual repository main even when PR comparison base is h
       const result = f.run(mode);
       if (mode === "wrong-main-ref") {
         assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /convergence requires exact durable OPEN head and fresh accepted repository main/);
         assert.equal(await readFile(f.calls, "utf8"), "");
         assert.equal(await readFile(join(f.repo, "source.txt"), "utf8"), f.original);
       } else {
