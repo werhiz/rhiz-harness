@@ -12,7 +12,7 @@ import { copyFile, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { harnessGitRefSegment } from "../dist/adapters/git/index.js";
+import { harnessGitRefSegment, validateGovernedConvergencePolicy } from "../dist/adapters/git/index.js";
 import { DurableEventLedger } from "../dist/adapters/local/durable-ledger.js";
 import { readVerifierRefusals } from "../dist/adapters/local/verifier-refusals.js";
 import { readRepositoryWorkLedgers } from "../dist/adapters/local/work-ledgers.js";
@@ -40,7 +40,7 @@ function usage() {
   return [
     "Usage: rhiz-harness <command> [work] [options]",
     "",
-    "  start  --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>]",
+    "  start  --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>] [--local-config <local.json>]",
     "         run SHIP Work in an isolated worktree until it is verified or its budget is spent",
     "  status [work]                 what every Work is doing and what it needs next",
     "  resume [work]                 continue non-terminal Work in its existing Ledger",
@@ -214,38 +214,59 @@ async function start(repo, values) {
     if (!values[required]) throw new Error(`start needs --${required}`);
   }
   const contract = parseWorkContract(await readJson(resolve(values.contract)));
+  const governedEnvelope = values["governed-convergence-envelope"];
+  if (contract.id.startsWith("work:horizon-convergence-") && !governedEnvelope) throw new Error("fixed Horizon convergence Work requires its validated governed policy envelope");
+  if (governedEnvelope && !contract.id.startsWith("work:horizon-convergence-")) throw new Error("governed convergence envelope is not available to generic Work");
   const dir = operatorDir(repo, contract.id);
   if (await readJsonIfPresent(join(dir, "inputs.json"))) {
     throw new Error(`Work ${contract.id} was already started; use resume, or give new Work a new id`);
   }
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const base = git(repo.root, ["rev-parse", `${values.base ?? "HEAD"}^{commit}`]);
+  let governedPolicy;
+  if (governedEnvelope) governedPolicy = validateGovernedConvergencePolicy({ repositoryRoot: repo.root, baseRevision: base, contract, envelopeFilename: resolve(governedEnvelope) });
   await copyFile(resolve(values.contract), join(dir, "contract.json"));
   await copyFile(resolve(values.verify), join(dir, "verify.json"));
   if (values.prepare) await copyFile(resolve(values.prepare), join(dir, "prepare.json"));
+  let localConfigDigest;
+  if (values["local-config"]) {
+    const bytes = await readFile(resolve(values["local-config"]));
+    const { LocalWorkerConfigSchema } = await import("../dist/adapters/local/model-worker.js");
+    const { CliWorkerConfigSchema } = await import("../dist/adapters/local/cli-inference.js");
+    LocalWorkerConfigSchema.or(CliWorkerConfigSchema).parse(JSON.parse(bytes));
+    await writeFile(join(dir, "local.json"), bytes, { mode: 0o600, flag: "wx" });
+    localConfigDigest = createHash("sha256").update(bytes).digest("hex");
+  }
+  if (governedPolicy) await writeFile(join(dir, "governed-convergence-envelope.json"), governedPolicy.envelopeBytes, { mode: 0o600, flag: "wx" });
   await writeFile(join(dir, "inputs.json"), `${JSON.stringify({
-    schema: "rhiz/operator-inputs/v1",
+    schema: governedPolicy ? "rhiz/operator-inputs/v2" : "rhiz/operator-inputs/v1",
     workId: contract.id,
     base,
     prepare: Boolean(values.prepare),
+    ...(localConfigDigest ? { localConfigDigest } : {}),
     correlationId: values["correlation-id"],
+    ...(governedPolicy ? { governedConvergencePolicy: { present: true, digest: createHash("sha256").update(governedPolicy.envelopeBytes).digest("hex") } } : {}),
     startedAt: new Date().toISOString(),
   }, null, 2)}\n`, { mode: 0o600 });
-  return runAndReport(repo, contract.id, runnerArgsFor(repo, dir, base, Boolean(values.prepare), values["correlation-id"]), values);
+  return runAndReport(repo, contract.id, runnerArgsFor(repo, dir, base, Boolean(values.prepare), values["correlation-id"], Boolean(governedPolicy), Boolean(localConfigDigest)), values);
 }
 
-function runnerArgsFor(repo, dir, base, prepare, correlationId) {
+function runnerArgsFor(repo, dir, base, prepare, correlationId, governedConvergencePolicy = false, local = false) {
   return [
     "--repo", repo.root,
     "--contract", join(dir, "contract.json"),
     "--verify", join(dir, "verify.json"),
     "--base", base,
     ...(prepare ? ["--prepare", join(dir, "prepare.json")] : []),
+    ...(local ? ["--local-config", join(dir, "local.json")] : []),
+    ...(governedConvergencePolicy ? ["--governed-convergence-envelope", join(dir, "governed-convergence-envelope.json")] : []),
     ...(correlationId === undefined ? [] : ["--correlation-id", correlationId]),
   ];
 }
 
 async function resume(repo, query, values) {
+  if (values["local-config"] !== undefined) throw new Error("resume reuses the pinned local config and accepts no replacement");
+  if (values["governed-convergence-envelope"] !== undefined) throw new Error("resume reuses the fixed persisted governed envelope and accepts no replacement");
   const { works } = await loadWorks(repo);
   const work = pickWork(works, query, "resume");
   if (work.status.nextAction !== "resume") {
@@ -254,7 +275,14 @@ async function resume(repo, query, values) {
   const dir = operatorDir(repo, work.status.workId);
   const inputs = await readJsonIfPresent(join(dir, "inputs.json"));
   if (!inputs) throw new Error(`Work ${work.status.workId} was not started by rhiz-harness; its inputs are unknown`);
-  return runAndReport(repo, work.status.workId, [...runnerArgsFor(repo, dir, inputs.base, inputs.prepare, inputs.correlationId), "--resume", "true"], values);
+  if (inputs.localConfigDigest && createHash("sha256").update(await readFile(join(dir, "local.json"))).digest("hex") !== inputs.localConfigDigest) throw new Error("persisted local model configuration changed; resume refused");
+  if (work.status.workId.startsWith("work:horizon-convergence-")) {
+    if (inputs.schema !== "rhiz/operator-inputs/v2" || inputs.governedConvergencePolicy?.present !== true) throw new Error("governed convergence Work has no canonical persisted policy input");
+    const envelopePath = join(dir, "governed-convergence-envelope.json");
+    const envelopeBytes = await readFile(envelopePath);
+    if (createHash("sha256").update(envelopeBytes).digest("hex") !== inputs.governedConvergencePolicy.digest) throw new Error("persisted governed policy envelope digest mismatch");
+  }
+  return runAndReport(repo, work.status.workId, [...runnerArgsFor(repo, dir, inputs.base, inputs.prepare, inputs.correlationId, Boolean(inputs.governedConvergencePolicy?.present), Boolean(inputs.localConfigDigest)), "--resume", "true"], values);
 }
 
 async function status(repo, query, values) {
@@ -361,16 +389,16 @@ function reviewMaterial(repo, uri, workId, revision, candidateHead) {
     return content === undefined ? { ...item } : { ...item, content };
   };
   const bodies = value.blobs.map((item) => {
-    if (!item || typeof item.label !== "string" || !item.label || labels.has(item.label) || Object.keys(item).some((key) => !["label", "blob", "digest", "tree", "path", "absent"].includes(key))) throw new Error("review material contains invalid or duplicate blob identity");
+    if (!item || typeof item.label !== "string" || !item.label || labels.has(item.label) || Object.keys(item).some((key) => !["label", "blob", "digest", "tree", "path", "absent", "mode"].includes(key))) throw new Error("review material contains invalid or duplicate blob identity");
     labels.add(item.label);
     if (item.tree !== undefined || item.path !== undefined || item.absent !== undefined) {
       if (!/^[a-f0-9]{40}$/.test(item.tree) || typeof item.path !== "string" || !item.path || item.path.includes("\0") || item.path.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("review material has invalid tree/path provenance");
       const found = materialGit(["ls-tree", "-z", item.tree, "--", item.path]).split("\0").filter(Boolean);
       if (item.absent === true) {
-        if (found.length || item.blob !== undefined || item.digest !== undefined) throw new Error("review material claims false source absence");
+        if (found.length || item.blob !== undefined || item.digest !== undefined || item.mode !== undefined) throw new Error("review material claims false source absence");
         return admitBody(item);
       }
-      if (found.length !== 1 || found[0].split("\t")[0].split(" ")[2] !== item.blob || !/^100(?:644|755) blob /.test(found[0])) throw new Error("review material blob differs from actual tree/path");
+      if (found.length !== 1 || found[0].split("\t")[0].split(" ")[2] !== item.blob || !/^100(?:644|755) blob /.test(found[0]) || (item.mode !== undefined && (!/^(?:100644|100755)$/.test(item.mode) || found[0].split("\t")[0].split(" ")[0] !== item.mode))) throw new Error("review material blob differs from actual tree/path");
     }
     if (!/^[a-f0-9]{40}$/.test(item.blob) || !/^[a-f0-9]{64}$/.test(item.digest)) throw new Error("review material contains invalid blob identity");
     const body = read(item.blob, value.partContextLabel === undefined ? MAX_REVIEW_DIFF_BYTES : MAX_COMPLETE_REVIEW_BYTES);

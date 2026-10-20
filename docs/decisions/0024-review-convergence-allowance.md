@@ -1,8 +1,8 @@
 # ADR 0024: A change under open review may answer its review past the size horizon
 
-Status: proposed
+Status: accepted
 
-Refines ADR 0023. Authorized by founder ruling, 2026-09-24.
+Refines ADR 0023. Accepted by founder ruling, 2026-09-24 and 2026-10-14.
 
 ## Context
 
@@ -236,3 +236,75 @@ The named deadline-case body is the second explicit preservation exception to
 the physical extraction inventory. No acceptance or result is fabricated.
 
 The review admission predicate also runs after the canonical Ledger replay and immediately before each review lifecycle append. A deadline expiring while replay or an earlier append waits cannot admit a later passing result. An interrupted lifecycle remains evidence and is closed as failed by the existing fresh-review recovery path.
+
+## Founder-approved review-context anchor for integration effects (2026-10-14 and 2026-10-15)
+
+Authority record: in response to the question, “Approve the narrow Harness
+amendment allowing a fresh exact-head READY review to establish the size anchor
+for a governed integration resolution, retaining the existing 125% bound,
+independent artifact review, current-main checks, and all merge gates?”, the
+founder replied, “Approve the bounded READY-review amendment” on 2026-10-14.
+The direct response item is
+`call_20d74309a0eb429e9f838660f12c40d0`; the contemporaneous transcription is
+`/tmp/rhiz-landing-decisions-20261014.md`.
+
+Within that scope, for `resolve-integration` only, the latest attributable
+canonical READY or NOT READY verdict for the exact durable OPEN source head may
+establish the effect-only growth anchor as that head's full committed diff
+against the forge review base. A NOT READY verdict qualifies only as active
+findings context for one governed reconciliation whose projected packet
+preserves the reviewed source and addresses those findings; it is not a
+correction receipt or acceptance claim. This does not create or change a
+correction receipt and grants no ordinary write permission. The complete
+projected integration tree must remain strictly below the existing inclusive
+125% growth bound and still pass fresh controlled Work, Verify, and independent
+whole-packet Review before the one exact resolution effect.
+
+Persisted NOT READY correction receipts remain unchanged and continue to be
+preferred when an attributable receipt exists. Unrecorded NOT READY context and
+READY do not authorize `repair-reviewed-target`, `converge --review-receipt`, or
+ordinary writes. Fresh exact-head and upstream
+durability, OPEN state, current accepted-main binding, four-hour review context,
+less-than-ten-ahead boundary, complete conflict scope, unchanged source state,
+and revalidation before effect remain required. No clock, 125% threshold,
+main binding, review work, or verification requirement changes.
+
+Reconsider or disable this fallback if a falsifier shows that another purpose,
+stale/foreign/non-latest review, ordinary check, terminal correction, or receipt
+write can use it; re-enable only after the owning controls prove the same
+bounded behavior on an exact candidate.
+
+**Bounded NOT READY integration context amendment (2026-10-15).** In response to
+the proposal “Approve bounded NOT READY integration repair (recommended),” the
+founder approved the amendment on 2026-10-15. The direct approval is recorded in
+`/tmp/rhiz-landing-decisions-20261014.md`. It permits only the `resolve-integration`
+effect-anchor fallback to use a fresh exact-head canonical NOT READY review as
+active findings context. It does not widen ordinary writes, correction receipts,
+terminal repair, history limits, the growth bound, or any Work/Verify/independent
+Review requirement. The required owner tests include real-Git NOT READY positive
+and negative controls and the guard falsifier.
+
+
+### Accepted-main policy as a bounded runtime-only overlay (2026-10-15)
+
+For the exact governed convergence Work, the validated accepted-main hook bytes
+may be materialized in its isolated execution workspace as runtime input after
+that Work is durably created. This overlay is derived from the same-repository
+current `main` commit and is bound to the retained packet, exact source hook
+blob/mode, accepted hook blob/mode, and execution-root digest. It does not alter
+the source branch, source index, candidate tree, or source hook identity. The
+only candidate checkpoint is the direct child of the exact source head that
+adds the one Work-specific artifact. The overlay cannot pass through workspace
+inheritance to a dependent Work; each acquire validates the single exact Work
+identity. This exception is runtime-only and grants no general hook, source,
+branch, merge, acceptance, or effect authority. Removal falsifiers cover exact
+review admission, inheritance refusal, source hook/index retention, accepted
+bytes and mode, and artifact-only candidate lineage.
+
+When both pinned source and accepted-main Git trees prove that the exact hook
+path is absent, the same generic convergence may use a derived no-overlay
+policy. No caller flag selects this mode. If either tree contains the path,
+both sides must instead provide valid regular executable hook blobs and the
+full overlay binding applies; one-sided, malformed, non-executable, or linked
+paths refuse. The common exact Work, Verify, independent whole-packet Review,
+actor, and bounded effect gates remain required in either mode.

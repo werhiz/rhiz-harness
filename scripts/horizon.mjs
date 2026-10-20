@@ -36,6 +36,7 @@ import { TempDirectoryDerivativeFactory } from "../dist/src/disposable.js";
 import { digestExecutionRoot } from "../dist/src/workspace-digest.js";
 import { pushHarnessCheckpoint, harnessGitRefSegment } from "../dist/adapters/git/checkpoints.js";
 import { HARDENED_GIT_FLAGS, hardenedGitEnv } from "../dist/adapters/git/worktrees.js";
+import { canonicalGovernedReviewHeading, governedConvergenceObjective } from "../dist/adapters/git/governed-convergence-policy.js";
 
 import { validateReviewObservation } from "./rhiz-harness.mjs";
 
@@ -58,6 +59,7 @@ import {
 const EXIT_CLEAR = 0;
 const EXIT_TRIPPED = 1;
 const EXIT_UNAVAILABLE = 2;
+const MAX_CAPTURED_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const BASELINE_FILE = ".rhiz-horizon-baseline.json";
 const REVIEW_FILE = ".rhiz-horizon-reviews.json";
@@ -74,6 +76,13 @@ const flag = (name) => process.argv.includes(`--${name}`);
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
+}
+
+function captureGitOutput(cwd, args, maxBuffer = MAX_CAPTURED_GIT_OUTPUT_BYTES, env = process.env) {
+  if (!Number.isSafeInteger(maxBuffer) || maxBuffer < 1 || maxBuffer > MAX_CAPTURED_GIT_OUTPUT_BYTES) {
+    throw new RangeError(`Git output buffer must be between 1 and ${MAX_CAPTURED_GIT_OUTPUT_BYTES} bytes`);
+  }
+  return execFileSync("git", args, { cwd, maxBuffer, env });
 }
 
 function tryGit(cwd, args) {
@@ -204,10 +213,13 @@ function reviewComment(repo, pr, commentUrl, head, allowReadyContext = false) {
   const issue = new URL(comment.issue_url);
   const expectedHost = target.hostname === "github.com" ? "api.github.com" : target.hostname;
   const body = comment.body;
-  const namedHead = typeof body === "string" ? (allowReadyContext ? /^## (?:NOT READY|READY) at ([a-f0-9]{7,40})\s*$/m : /^## NOT READY at ([a-f0-9]{7,40})\s*$/m).exec(body)?.[1] : undefined;
+  const namedVerdict = typeof body === "string" ? canonicalGovernedReviewHeading(body, head, allowReadyContext) : undefined;
+  const verdict = namedVerdict?.verdict;
+  const namedHead = namedVerdict?.namedHead;
   // GUARD integration/review-receipt-binds-forge-head
   if (String(comment.id) !== id || comment.html_url !== selected.href || issue.hostname !== expectedHost || !issue.pathname.endsWith(`/repos/${owner}/${name}/issues/${pr.number}`) || !["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association) || typeof comment.user?.login !== "string" || !namedHead || !head.startsWith(namedHead) || !body.includes("<!-- rhiz-review-agent -->") || !body.includes(`Independent review by the \`pr-reviewer\` agent (\`scripts/review-pr.mts\`) of head \`${head}\`.`)) throw new Error("receipt is not an attributable exact-head correction review");
-  return { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
+  const receipt = { commentUrl: selected.href, commentId: comment.id, commentDigest: createHash("sha256").update(body).digest("hex"), reviewerLogin: comment.user.login };
+  return allowReadyContext ? { ...receipt, verdict } : receipt;
 }
 
 function commandReviewReceipt(repo, integrationRef, branch, commentUrl) {
@@ -419,7 +431,6 @@ const CONVERGENCE_SCHEMA = "rhiz/convergence-request/v1";
 const ARTIFACT_SCHEMA = "rhiz/convergence-artifact/v1";
 const MAX_CONVERGENCE_BYTES = 192 * 1024;
 const MAX_CONVERGENCE_PATHS = 64;
-const MAX_SOURCE_INDEX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const stable = (value) => JSON.stringify(value);
 
@@ -454,10 +465,10 @@ function parseConvergenceRequest(filename) {
   return input;
 }
 
-function captureSourceState(repo, branch) {
+export function captureSourceState(repo, branch, maxBuffer = MAX_CAPTURED_GIT_OUTPUT_BYTES) {
   const head = git(repo, ["rev-parse", branch]);
-  const status = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, maxBuffer: 64 * 1024 * 1024 });
-  const entries = status.split("\0").filter(Boolean);
+  const status = captureGitOutput(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], maxBuffer, { ...process.env, GIT_OPTIONAL_LOCKS: "0" });
+  const entries = status.toString("utf8").split("\0").filter(Boolean);
   const dirty = new Set();
   for (let i = 0; i < entries.length; i++) {
     const row = entries[i];
@@ -465,11 +476,12 @@ function captureSourceState(repo, branch) {
     if (row[0] === "R" || row[1] === "R" || row[0] === "C" || row[1] === "C") dirty.add(safeSourcePath(entries[++i], false));
   }
   const files = [...dirty].sort().map((name) => [name, sourceFileIdentity(repo, name)]);
-  const index = execFileSync("git", ["ls-files", "--stage", "-z"], { cwd: repo, encoding: "utf8", maxBuffer: MAX_SOURCE_INDEX_OUTPUT_BYTES });
-  const unmerged = execFileSync("git", ["ls-files", "--unmerged", "-z"], { cwd: repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const index = captureGitOutput(repo, ["ls-files", "--stage", "-z"], maxBuffer);
+  const unmerged = captureGitOutput(repo, ["ls-files", "--unmerged", "-z"], maxBuffer);
   const mergeHead = tryGit(repo, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+  const unmergedText = unmerged.toString("utf8");
   const state = { head, currentBranch: currentBranch(repo), mergeHead: mergeHead ?? null, statusDigest: sha(status), indexDigest: sha(index), unmergedDigest: sha(unmerged), files };
-  return { ...state, digest: sha(stable(state)), unmergedPaths: [...new Set(unmerged.split("\0").filter(Boolean).map((row) => safeSourcePath(row.slice(row.indexOf("\t") + 1), false)))].sort() };
+  return { ...state, digest: sha(stable(state)), unmergedPaths: [...new Set(unmergedText.split("\0").filter(Boolean).map((row) => safeSourcePath(row.slice(row.indexOf("\t") + 1), false)))].sort() };
 }
 
 function assertCanonicalMergeStages(repo, sourceHead, integrationHead) {
@@ -523,6 +535,26 @@ function validateConvergencePacket(packet, expectedDigest) {
   if (!packet || packet.schema !== ARTIFACT_SCHEMA || sha(stable(packet)) !== expectedDigest) throw new Error("immutable convergence artifact differs from the captured request");
 }
 
+const GOVERNED_HOOK_PATH = ".claude/hooks/horizon-check.sh";
+function governedHookIdentity(repo, commit) {
+  const rows = git(repo, ["ls-tree", "-z", commit, "--", GOVERNED_HOOK_PATH]).split("\0").filter(Boolean);
+  if (rows.length === 0) return null;
+  if (rows.length !== 1 || !/^100755 blob [a-f0-9]{40}\t\.claude\/hooks\/horizon-check\.sh$/.test(rows[0])) throw new Error("Horizon hook must be absent or one tracked regular executable at the exact governed path");
+  const blob = rows[0].split("\t")[0].split(" ")[2];
+  const bytes = execFileSync("git", ["cat-file", "blob", blob], { cwd: repo, maxBuffer: MAX_CONVERGENCE_BYTES });
+  new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (bytes.includes(0)) throw new Error("governed Horizon hook must be UTF-8 shell text");
+  return { mode: "100755", blob, sha256: sha(bytes) };
+}
+
+function convergenceExecutionPolicy(repo, sourceHead, acceptedHead, workId) {
+  const source = governedHookIdentity(repo, sourceHead);
+  const accepted = governedHookIdentity(repo, acceptedHead);
+  if (source === null && accepted === null) return { mode: "no-overlay", workId, purpose: "horizon-governed-detached-workspace", path: GOVERNED_HOOK_PATH };
+  if (source === null || accepted === null) throw new Error("governed overlay requires matching valid hooks at both source and accepted main");
+  return { mode: "overlay", workId, purpose: "horizon-governed-detached-workspace", path: GOVERNED_HOOK_PATH, source, accepted };
+}
+
 async function canonicalConvergenceWork(repo, workId) {
   const common = resolve(repo, git(repo, ["rev-parse", "--git-common-dir"]));
   const result = await readRepositoryWorkLedgers(common);
@@ -534,16 +566,16 @@ async function canonicalConvergenceWork(repo, workId) {
   return { events, board: projectBoard(events), directory: matches[0].directory };
 }
 
-function fixedConvergenceContract(repo, workId, packet, artifactPath, contextPath) {
+function fixedConvergenceContract(repo, workId, packet, artifactPath, contextPath, packetBlob) {
   const auditEmail = git(repo, ["config", "user.email"]);
   if (!auditEmail) throw new Error("existing operator audit identity is unavailable");
   const resources = packet.request.paths.map((name) => ({ uri: `repo://source/${name}`, kind: "file" }));
   const artifact = { uri: `repo://source/${artifactPath}`, kind: "file" };
   return parseWorkContract({ id: workId, type: "SHIP", createdBy: { id: `human:${auditEmail}`.slice(0, 200), kind: "human" }, createdAt: new Date().toISOString(),
-    objective: `Artifact producer only: Copy the complete JSON manifest supplied in the Context into ${artifactPath}, retaining every field and its order. The manifest is the complete producer input; packetBlob and inputCheckpoint intentionally reference a separate immutable packet, not missing patch data. Use the native file-change tool to create only this artifact; its parent directories are already prepared. Do not run shell commands, inspect the referenced packet/source blobs, perform review, or satisfy the separate reviewer obligations. Packaging makes no authorship, semantic correctness, verification, acceptance, or source-application claim. Do not modify any source file.`,
+    objective: governedConvergenceObjective(artifactPath, packetBlob),
     scope: [{ uri: "repo://source", kind: "repository" }], writeScope: [artifact, ...resources],
     nonGoals: ["No source writes in this attempt", "No application effects or accepted Outcome", "No new feature scope, clock reset, authority widening, or fabricated proof"],
-    authority: { grants: [{ action: "read", resources: [{ uri: "repo://source" }], constraints: [] }, { action: "write", resources: [artifact, ...resources], constraints: [] }], requiresHumanApproval: ["publish", "external-mutate", "spend"] },
+    authority: { grants: [{ action: "read", resources: [{ uri: "repo://source", kind: "repository" }], constraints: [] }, { action: "write", resources: [artifact, ...resources], constraints: [] }], requiresHumanApproval: ["publish", "external-mutate", "spend"] },
     acceptanceCriteria: [{ id: "criterion:exact-convergence-artifact", description: "Artifact exactly retains the captured source snapshot, explicit source scope and proposed patch; no other candidate file changes.", required: true }],
     requiredEvidence: [{ id: "evidence:convergence-check", description: "Actual exact-artifact check with an altered-artifact negative control", acceptedKinds: ["test"], required: true }],
     context: { strategy: "explicit", resources: [{ uri: `repo://source/${contextPath}`, kind: "file" }], tokenBudget: 32768, includeHistory: false }, dependencies: [],
@@ -594,6 +626,15 @@ async function projectConvergenceTree(repo, privateRoot, input, originals, integ
 
 function convergenceReviewBlobs(repo, packet, checkpoint) {
   const entries = [{ label: "packet", blob: checkpoint.blob, digest: checkpoint.digest, tree: checkpoint.head, path: "artifact.json" }];
+  if (packet.executionPolicy.mode === "overlay") {
+    for (const [label, commit, identity] of [["source-policy", packet.source.head, packet.executionPolicy.source], ["accepted-policy", packet.forge.integration, packet.executionPolicy.accepted]]) {
+      const actual = governedHookIdentity(repo, commit);
+      if (!actual || actual.blob !== identity.blob || actual.sha256 !== identity.sha256 || actual.mode !== identity.mode) throw new Error("governed policy changed while review material was assembled");
+      entries.push({ label, blob: identity.blob, digest: identity.sha256, tree: commit, path: packet.executionPolicy.path, mode: identity.mode });
+    }
+  } else if (governedHookIdentity(repo, packet.source.head) !== null || governedHookIdentity(repo, packet.forge.integration) !== null) {
+    throw new Error("hook-free convergence changed hook state while review material was assembled");
+  }
   for (const name of packet.request.paths) {
     for (const [label, tree] of [["original", packet.source.head], ["accepted-main", packet.forge.integration], ["projected", packet.projected.tree]]) {
       const row = git(repo, ["ls-tree", "-z", tree, "--", name]).split("\0").filter(Boolean);
@@ -645,7 +686,7 @@ function retainActualReviewObservation(repo, canonical, reviewed, material, cove
   return artifact;
 }
 
-function qualifiedConvergenceAnchor(repo, branch, forge) {
+function qualifiedConvergenceAnchor(repo, branch, forge, purpose) {
   const stored = readReviews(repo)[branch];
   for (const receipt of [...(stored?.correctionReceipts ?? [])].reverse()) {
     try {
@@ -654,6 +695,10 @@ function qualifiedConvergenceAnchor(repo, branch, forge) {
       if (actual.commentDigest !== receipt.commentDigest || actual.reviewerLogin !== receipt.reviewerLogin) continue;
       return committedDiffLines(repo, forge.reviewBase, receipt.head);
     } catch { continue; }
+  }
+  // GUARD integration/review-context-anchor-is-effect-only
+  if (purpose === "resolve-integration" && ["NOT READY", "READY"].includes(forge.comment.verdict)) {
+    return committedDiffLines(repo, forge.reviewBase, forge.head);
   }
   throw new Error("convergence growth requires an attributable existing correction round; cached numbers confer no authority");
 }
@@ -775,13 +820,14 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
   if (stable(patchPaths(repo, patchPath)) !== stable(input.paths)) throw new Error("patch paths differ from exact reviewed scope");
   git(repo, ["apply", "--check", patchPath]);
   const projected = await projectConvergenceTree(repo, privateRoot, input, originals, forge.integration);
-  const anchor = qualifiedConvergenceAnchor(repo, branch, forge);
+  const anchor = qualifiedConvergenceAnchor(repo, branch, forge, input.purpose);
   if (projected.diffLines >= Math.ceil(anchor * 1.25)) throw new Error("projected convergence exceeds the existing inclusive growth bound");
-  const packet = { schema: ARTIFACT_SCHEMA, request: input, source: before, forge, originals, projected, mergeStages };
+  const workId = `work:horizon-convergence-${sha(stable([forge.prUrl, forge.head, forge.comment.commentId, input.purpose])).slice(0, 40)}`;
+  const executionPolicy = convergenceExecutionPolicy(repo, before.head, forge.integration, workId);
+  const packet = { schema: ARTIFACT_SCHEMA, request: input, source: before, forge, originals, projected, mergeStages, executionPolicy };
   const packetDigest = sha(stable(packet));
   const packetBlob = execFileSync("git", [...HARDENED_GIT_FLAGS, "hash-object", "-w", "--stdin"], { cwd: repo, env: hardenedGitEnv(), encoding: "utf8", input: stable(packet) }).trim();
-  const manifest = { schema: ARTIFACT_SCHEMA, sourceHead: before.head, integrationHead: forge.integration, sourceDigest: before.digest, packetBlob, packetDigest, scope: input.paths, projectedTree: projected.tree };
-  const workId = `work:horizon-convergence-${sha(stable([forge.prUrl, forge.head, forge.comment.commentId, input.purpose])).slice(0, 40)}`;
+  const manifest = { schema: ARTIFACT_SCHEMA, workId, sourceHead: before.head, integrationHead: forge.integration, sourceDigest: before.digest, packetBlob, packetDigest, scope: input.paths, projectedTree: projected.tree, executionPolicy };
   if (await canonicalConvergenceWork(repo, workId)) throw new Error("this correction window already owns a Work; cached results cannot skip fresh execution");
   const artifactDate = git(repo, ["show", "-s", "--format=%cI", before.head]);
   const projectedCommit = execFileSync("git", [...HARDENED_GIT_FLAGS, "commit-tree", projected.tree, "-p", before.head, "-p", forge.integration], { cwd: repo, env: { ...hardenedGitEnv(), GIT_AUTHOR_DATE: artifactDate, GIT_COMMITTER_DATE: artifactDate, GIT_AUTHOR_NAME: "Harness Convergence", GIT_COMMITTER_NAME: "Harness Convergence", GIT_AUTHOR_EMAIL: "horizon-convergence@rhiz.invalid", GIT_COMMITTER_EMAIL: "horizon-convergence@rhiz.invalid" }, encoding: "utf8", input: "rhiz: retained projected convergence artifact\n" }).trim();
@@ -789,6 +835,9 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
   const reviewBlobs = convergenceReviewBlobs(repo, packet, retainedInput);
   manifest.inputCheckpoint = retainedInput;
   const manifestDigest = sha(stable(manifest));
+  const envelopePath = join(privateRoot, "governed-convergence-envelope.json");
+  const envelope = { schema: "rhiz/governed-convergence-policy-envelope/v1", workId, manifest, manifestDigest, inputCheckpointDigest: retainedInput.digest };
+  writeFileSync(envelopePath, stable(envelope), { mode: 0o600, flag: "wx" });
   const artifactPath = `tools/horizon-convergence-artifacts/${workId.slice(-40)}/artifact.json`;
   const contextPath = `.context/horizon-convergence/${workId.slice(-40)}.json`;
   const contextFilename = join(repo, contextPath);
@@ -801,8 +850,7 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     prepareCustodyParent(repo, ".context/horizon-convergence");
     writeFileSync(contextFilename, stable(manifest), { mode: 0o600, flag: "wx" });
     contextCreated = true;
-    const contract = fixedConvergenceContract(repo, workId, packet, artifactPath, contextPath);
-    contract.objective += ` Independent review only: After the producer has completed its packaging and Verify has passed, the separate independent reviewer must read the WHOLE immutable packet via git cat-file blob ${packetBlob}, inspect the actual original and accepted-main blobs, and judge preservation of both source legs and repair-only scope against its active findings. The reviewer must refuse if the whole patch or its source evidence cannot be inspected. These obligations belong to the reviewer, not the artifact producer. Deterministic identity checks do not prove these semantics.`;
+    const contract = fixedConvergenceContract(repo, workId, packet, artifactPath, contextPath, packetBlob);
     const check = `const fs=require('node:fs'),crypto=require('node:crypto'),cp=require('node:child_process');const a=JSON.parse(fs.readFileSync(${JSON.stringify(artifactPath)},'utf8'));if(crypto.createHash('sha256').update(JSON.stringify(a)).digest('hex')!==${JSON.stringify(manifestDigest)})process.exit(1);const packet=cp.execFileSync('git',['cat-file','blob',${JSON.stringify(packetBlob)}],{encoding:'utf8'});if(crypto.createHash('sha256').update(packet).digest('hex')!==${JSON.stringify(packetDigest)})process.exit(1);const changed=cp.execFileSync('git',['diff','--name-only',${JSON.stringify(before.head)}+'..HEAD'],{encoding:'utf8'}).trim().split(String.fromCharCode(10));if(JSON.stringify(changed)!==JSON.stringify([${JSON.stringify(artifactPath)}]))process.exit(1);`;
     const config = { command: process.execPath, args: ["-e", check], expectedExitCodes: [0], evidenceKind: "test" };
     const plan = { id: `plan:${workId}`, workId, contractRevision: 1, checks: [
@@ -824,11 +872,16 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
         throw new Error(`controlled ${args[0]} failed: ${failure}`);
       }
     };
-    const started = invoke(["start", "--contract", join(privateRoot, "contract.json"), "--verify", join(privateRoot, "verify.json"), "--prepare", join(privateRoot, "prepare.json"), "--base", before.head]);
+    const started = invoke(["start", "--contract", join(privateRoot, "contract.json"), "--verify", join(privateRoot, "verify.json"), "--prepare", join(privateRoot, "prepare.json"), "--base", before.head, "--governed-convergence-envelope", envelopePath]);
     if (started.exitCode !== 0 || !started.receipt?.candidate?.head) throw new Error("controlled artifact production/verification failed; no effect authorized");
     const produced = await canonicalConvergenceWork(repo, workId);
     const target = produced?.board.integration?.headProof;
     if (!target || target.head !== started.receipt.candidate.head) throw new Error("actual producer receipt differs from canonical integration proof");
+    const executionPolicyReceipt = started.receipt.governedConvergencePolicy;
+    if (!executionPolicyReceipt || executionPolicyReceipt.mode !== executionPolicy.mode || executionPolicyReceipt.sourceHead !== before.head || executionPolicyReceipt.acceptedPolicyHead !== forge.integration || !executionPolicyReceipt.baselineExecutionRootDigest || !executionPolicyReceipt.workerExecutionRootDigest || executionPolicyReceipt.workerExecutionRootDigest !== executionPolicyReceipt.verifierExecutionRootDigest || (executionPolicy.mode === "overlay" && (executionPolicyReceipt.sourcePolicyBlob !== executionPolicy.source.blob || executionPolicyReceipt.runtimePolicyBlob !== executionPolicy.accepted.blob)) || (executionPolicy.mode === "no-overlay" && (executionPolicyReceipt.sourcePolicyBlob !== null || executionPolicyReceipt.runtimePolicyBlob !== null))) throw new Error("controlled Work receipt does not prove its Git-derived policy mode and worker/verifier execution digest");
+    const executionPolicyArtifact = retainConvergenceArtifact(repo, workId, "execution-policy-receipt", executionPolicyReceipt, [retainedInput.head, target.head]);
+    await recordConvergenceArtifact(produced, workId, "execution-policy-receipt", executionPolicyArtifact);
+    reviewBlobs.push({ label: "execution-policy-receipt", blob: executionPolicyArtifact.blob, digest: executionPolicyArtifact.digest, tree: executionPolicyArtifact.head, path: "artifact.json" });
     const actual = JSON.parse(git(repo, ["show", `${target.head}:${artifactPath}`]));
     validateConvergencePacket(actual, manifestDigest);
     const brief = { purpose: input.purpose, scope: input.paths, sourceHead: before.head, acceptedMain: forge.integration, projectedTree: projected.tree, packetDigest,
@@ -836,7 +889,7 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     const proposal = { purpose: input.purpose, scope: input.paths, sourceHead: before.head, acceptedMain: forge.integration, projectedTree: projected.tree, packetDigest, activeFindings: forge.findings, patch: input.patch };
     const reviewInputs = retainConvergenceArtifact(repo, workId, "review-inputs", { schema: "rhiz/convergence-review-inputs/v1", packetDigest }, [retainedInput.head, target.head], [["part-context.json", brief], ["integration-proposal.json", proposal]]);
     const supplemental = reviewInputs.files.map((file) => ({ label: file.name === "part-context.json" ? "part-context" : "integration-proposal", blob: file.blob, digest: file.digest, tree: reviewInputs.head, path: file.name }));
-    const reviewMaterial = retainConvergenceArtifact(repo, workId, "review-material", { schema: "rhiz/operator-review-material/v1", workId, contractRevision: 1, candidateHead: target.head, integrationLabel: "integration-proposal", partContextLabel: "part-context", blobs: [...reviewBlobs, ...supplemental] }, [retainedInput.head, target.head, reviewInputs.head]);
+    const reviewMaterial = retainConvergenceArtifact(repo, workId, "review-material", { schema: "rhiz/operator-review-material/v1", workId, contractRevision: 1, candidateHead: target.head, integrationLabel: "integration-proposal", partContextLabel: "part-context", blobs: [...reviewBlobs, ...supplemental] }, [retainedInput.head, target.head, reviewInputs.head, executionPolicyArtifact.head]);
     await recordConvergenceArtifact(produced, workId, "review-material", reviewMaterial);
     const reviewStartedAtMs = Date.now();
     const reviewed = invoke(["review", workId, "--reviewer", "claude", "--review-material", `git:${reviewMaterial.head}:artifact.json`, "--review-max-calls", "20"]);
@@ -851,7 +904,7 @@ async function commandConvergenceArtifact(repo, integrationRef, filename) {
     const exactDiff = `git:${before.head}..${target.head}`;
     const current = captureSourceState(repo, branch);
     const freshForge = convergenceForge(repo, branch, integrationRef, input);
-    const freshAnchor = qualifiedConvergenceAnchor(repo, branch, freshForge);
+    const freshAnchor = qualifiedConvergenceAnchor(repo, branch, freshForge, input.purpose);
     const freshMeasurement = measureBranchDrift({ repositoryRoot: repo, integrationRef, branch });
     if (freshMeasurement.kind !== "measured" || stable(freshMeasurement.signals) !== stable({ ...measured.signals, divergenceAgeMs: freshMeasurement.signals.divergenceAgeMs })) throw new Error("source drift changed during controlled execution");
     const refusals = convergenceEffectRefusals({ purpose: input.purpose, signals: freshMeasurement.signals,
@@ -907,9 +960,11 @@ async function main() {
   }
 }
 
-try {
-  process.exit(await main());
-} catch (error) {
-  console.error(`horizon: UNAVAILABLE (${error.message})`);
-  process.exit(EXIT_UNAVAILABLE);
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+  try {
+    process.exit(await main());
+  } catch (error) {
+    console.error(`horizon: UNAVAILABLE (${error.message})`);
+    process.exit(EXIT_UNAVAILABLE);
+  }
 }

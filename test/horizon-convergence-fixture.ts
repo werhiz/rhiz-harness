@@ -104,4 +104,3 @@ export async function convergenceFixture() {
   const recover = (workId: string, changedIdentity = false) => spawnSync(process.execPath, [hostScript, "converge", "--repo", repo, "--recover-effect", workId], { cwd: repo, env: { ...env, ...(changedIdentity ? { GIT_AUTHOR_NAME: "Changed author", GIT_AUTHOR_EMAIL: "changed-author@example.invalid", GIT_COMMITTER_NAME: "Changed committer", GIT_COMMITTER_EMAIL: "changed-committer@example.invalid" } : {}) }, encoding: "utf8" });
   return { root, repo, git, head, base, original, inputFile, request, run, recover, calls, anchor, remote };
 }
-

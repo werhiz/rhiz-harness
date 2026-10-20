@@ -162,4 +162,3 @@ export function cliRun(f: ReturnType<typeof fixture>, args: string[]) {
 export function json(result: ReturnType<typeof spawnSync>) {
   return JSON.parse(String(result.stdout));
 }
-

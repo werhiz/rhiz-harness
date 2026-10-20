@@ -73,6 +73,42 @@ credential or model traffic. Raising the limit or guessing at worker concurrency
 would retain the observed aggregate bottleneck. Inspect the exact replacement
 run on 2026-10-12 before integration; require all three jobs to finish successfully.
 
+**Guard-job timeout follow-up (2026-10-15), owner: #4183 author.** On exact
+candidate `a6d313d5d4d678d6e01429bd124590a4f5d6ab9e`, hosted run
+[38680907664](https://github.com/werhiz/rhiz-harness/actions/runs/38680907664)
+completed the check job successfully. The separate guard job built the exact
+candidate and emitted passing results for all 91 declared guard proofs, but
+GitHub canceled the guard step at its 30-minute job bound, 17 ms after the
+final passing result. The dependent DSH job was skipped, so this run is not a
+complete hosted pass.
+
+This is evidence to extend only the guard job's timeout: its proof lane now
+runs separately, but checkout, setup, dependency installation and build still
+consume part of the same 30-minute bound. The guard timeout is 40 minutes;
+the check job remains at 30 minutes, the DSH job at 10, and every proof stage,
+dependency and failure condition is unchanged. The upper bound adds at most
+10 minutes on the free public Ubuntu runner for a run that needs the time. It
+adds no paid runner, job, trigger, credential or model traffic. Require a new
+exact-head hosted run to finish all three jobs before integration.
+
+**Studio stack timeout evidence (2026-10-17), owner: Studio integration.** Exact
+candidate `fd5bb9298571ab1470d7b28dfb8b7e7527ff3827`, hosted run
+[39072566857](https://github.com/werhiz/rhiz-harness/actions/runs/39072566857),
+passed the build lane but its guard job was cancelled. Check annotation
+`117513030654` states that the job exceeded 40m0s; DSH was consequently skipped.
+Guard execution started at 21:50:18 UTC and was cancelled at 22:30:04 UTC.
+The runner buffers individual proof results until all finish, so the completed
+proof count and any individual failure are unknown. This is incomplete proof,
+not a green result or evidence of a specific failed guard.
+
+Increase only the guard job bound from 40 to 50 minutes for the reconciled
+Studio candidate. Keep every manifest proof, refusal, check-lane stage and DSH
+dependency unchanged. This adds at most ten free public standard Ubuntu minutes
+per run, no paid runner, model call, permission or new job. Require all three
+hosted lanes on the new exact combined head plus independent local proof before
+landing; inspect observed duration on the successor run. The original worker
+and bridge commits remain ancestors rather than being rewritten.
+
 ## The check agent
 
 Before integration, a checker other than the author inspects the exact candidate

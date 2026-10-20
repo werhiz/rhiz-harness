@@ -37,9 +37,10 @@ Authority order for any conflict:
 | [0021](0021-proof-admissibility.md) | Admissibility is derived from property, attested environment, executed falsifier, and exact candidate | proposed |
 | [0022](0022-symlink-representation-in-disposable-derivatives.md) | Symlink representation in disposable derivatives | accepted |
 | [0023](0023-calibrated-integration-horizon.md) | The integration horizon is calibrated, enforced, and cannot forgive missing durability | proposed |
-| [0024](0024-review-convergence-allowance.md) | A change under open review may answer its review past the size horizon | proposed |
+| [0024](0024-review-convergence-allowance.md) | A change under open review may answer its review past the size horizon | accepted |
 | [0025](0025-factory-runtime-observer-and-replay.md) | Factory Runtime v1 starts with the Observer and historical replay | proposed |
 | [0026](0026-operator-loop-and-acceptance-driven-learning.md) | The operator loop (start, status, resume, review, accept), and acceptance as the start of Router and Refiner learning | accepted |
+| [0027](0027-delegated-policy-acceptance.md) | Delegated policy acceptance for an unattended Studio | proposed |
 
 Lessons derived from real work live in `../lessons/`. Independent reviews and integration analyses
 live in `../reviews/`. Both record evidence. Either becomes authority only when an ADR, Rule, or

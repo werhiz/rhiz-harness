@@ -1,4 +1,4 @@
-import { acceptanceReadiness, projectBoard, type BoardProjection } from "./board.js";
+import { acceptanceReadiness, attemptsWithoutCandidate, candidateUnproduced, projectBoard, type BoardProjection } from "./board.js";
 import type { EventLedger } from "./ledger.js";
 import type { RefinerBridge } from "./refiner-bridge.js";
 import { countHumanInterventions, deriveWorkRecord, type RefinerAnalysis } from "./refiner.js";
@@ -134,6 +134,32 @@ function latestStatus(items: readonly { status: "pass" | "fail"; contractRevisio
   return current.length === 0 ? null : current[current.length - 1]!.status;
 }
 
+const ATTEMPT_ACCOUNT_LIMIT = 600;
+
+/**
+ * The newest attempt's own account of why it produced no candidate, when the
+ * Board says none exists. A worker that could not do the Work usually says
+ * exactly why (missing Context, a refused tool); that sentence is the one an
+ * operator needs before spending another attempt, so it travels with the
+ * next action instead of a reason about authorship.
+ */
+function noCandidateAccount(events: readonly HarnessEvent[], board: BoardProjection): string | undefined {
+  if (candidateUnproduced(board) === null) return undefined;
+  const empty = new Set(attemptsWithoutCandidate(board));
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.attemptId === undefined) continue;
+    if (event.type === "attempt.failed") {
+      return `attempt ${event.attemptId} failed: ${event.payload.reason}`.slice(0, ATTEMPT_ACCOUNT_LIMIT);
+    }
+    if (event.type === "attempt.finished" && empty.has(event.attemptId)) {
+      return `attempt ${event.attemptId} finished without a Guard-allowed write, so it produced no candidate; the worker reported: ${event.payload.resultSummary}`
+        .slice(0, ATTEMPT_ACCOUNT_LIMIT);
+    }
+  }
+  return undefined;
+}
+
 export function summarizeOperatorWork(events: readonly HarnessEvent[]): OperatorWorkStatus {
   const { workId, streamId } = single(events);
   const board = projectBoard(events);
@@ -171,6 +197,7 @@ export function summarizeOperatorWork(events: readonly HarnessEvent[]): Operator
   };
   const { nextAction, nextActionReason } = nextActionFor(
     board, readiness.ready, readiness.reasons, active, budget, readiness.verificationEventId,
+    noCandidateAccount(events, board),
   );
   return {
     workId,
@@ -199,6 +226,7 @@ function nextActionFor(
   active: number,
   budget: number | null,
   verificationEventId: string | undefined,
+  noCandidate?: string,
 ): { nextAction: OperatorNextAction; nextActionReason: string } {
   if (board.state === "accepted" || board.state === "rejected" || board.state === "cancelled") {
     return { nextAction: "none", nextActionReason: `Work is ${board.state}` };
@@ -217,9 +245,12 @@ function nextActionFor(
   if (active > 0) return { nextAction: "resume", nextActionReason: `${active} attempt(s) have no terminal event` };
   const spent = Object.keys(board.attempts).length;
   if (budget !== null && spent >= budget) {
-    return { nextAction: "none", nextActionReason: `attempt budget ${budget} is spent; amend or reject the Work` };
+    return {
+      nextAction: "none",
+      nextActionReason: `attempt budget ${budget} is spent; amend or reject the Work${noCandidate === undefined ? "" : ` (${noCandidate})`}`,
+    };
   }
-  return { nextAction: "resume", nextActionReason: reasons[0] ?? `Work is ${board.state}` };
+  return { nextAction: "resume", nextActionReason: noCandidate ?? reasons[0] ?? `Work is ${board.state}` };
 }
 
 export function summarizeOperatorWorks(statuses: readonly OperatorWorkStatus[]): OperatorDigest {

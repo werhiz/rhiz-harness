@@ -256,7 +256,10 @@ test("a native Claude tool request is denied before effect and its Guard verdict
     }).run();
 
     const mission = run.receipt.missions[0]!;
-    assert.equal(mission.status, "execution-finished", mission.error ?? "mission did not reach execution");
+    // The worker ran to a finished result through the seam and changed nothing,
+    // so Crew records the attempt as producing no candidate.
+    assert.equal(mission.status, "failed", mission.error ?? "mission did not reach execution");
+    assert.match(mission.error ?? "", /^worker finished without changing its workspace, so the attempt produced no candidate: /);
     assert.equal(existsSync(marker), false, "Guard DENY was returned but the native operation still took effect");
 
     const events = await ledger.replay(mission.streamId!);
@@ -574,7 +577,10 @@ test("the durable guard record comes from Guard, not from what the provider echo
     }).run();
 
     const mission = run.receipt.missions[0]!;
-    assert.equal(mission.status, "execution-finished", mission.error ?? "mission did not reach execution");
+    // The worker ran to a finished result through the seam and changed nothing,
+    // so Crew records the attempt as producing no candidate.
+    assert.equal(mission.status, "failed", mission.error ?? "mission did not reach execution");
+    assert.match(mission.error ?? "", /^worker finished without changing its workspace, so the attempt produced no candidate: /);
     assert.equal(provider.evaluations, 1, "the provider never reached the mediation seam");
     const board = projectBoard(await ledger.replay(mission.streamId!));
     assert.equal(board.guardEvaluations.length, 1, "the Guard decision was recorded a number of times other than once");
@@ -663,7 +669,10 @@ test("Crew keeps its mediation scope inside the Guard request bounds for long pl
     }).run();
 
     const mission = run.receipt.missions[0]!;
-    assert.equal(mission.status, "execution-finished", mission.error ?? "mission did not reach execution");
+    // The worker ran to a finished result through the seam and changed nothing,
+    // so Crew records the attempt as producing no candidate.
+    assert.equal(mission.status, "failed", mission.error ?? "mission did not reach execution");
+    assert.match(mission.error ?? "", /^worker finished without changing its workspace, so the attempt produced no candidate: /);
     assert.equal(provider.evaluations, 1, "the provider never reached the mediation seam");
     const board = projectBoard(await ledger.replay(mission.streamId!));
     assert.equal(board.guardEvaluations.length, 1, "a long crew identity cost the attempt its durable Guard record");
@@ -1209,7 +1218,10 @@ test("a Crew ledger keeps the argument summary and not the argument values", asy
     }).run();
 
     const mission = run.receipt.missions[0]!;
-    assert.equal(mission.status, "execution-finished", mission.error ?? "mission did not reach execution");
+    // The worker ran to a finished result through the seam and changed nothing,
+    // so Crew records the attempt as producing no candidate.
+    assert.equal(mission.status, "failed", mission.error ?? "mission did not reach execution");
+    assert.match(mission.error ?? "", /^worker finished without changing its workspace, so the attempt produced no candidate: /);
     const events = await ledger.replay(mission.streamId!);
     const board = projectBoard(events);
     assert.equal(board.guardEvaluations.length, 1);
