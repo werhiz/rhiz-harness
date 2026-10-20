@@ -61,7 +61,12 @@ candidate commit:
 2. **Independent verification.** It passed, including every negative control.
 3. **Independent review.** The latest independent review (0026 D2a) passes. Its reviewer is
    distinct from the executor, the verifier and the policy, and that review ran on a different
-   model family or process than the executor.
+   model family or process than the executor. Both the review start and result events must bind
+   the repository, candidate commit SHA, candidate tree and contract revision. The Board compares
+   those fields with the accepted integration candidate and the verification/CI evidence at
+   admission. A changed integration head invalidates the review even when the contract revision
+   is unchanged. Existing review events without this binding cannot authorize policy acceptance;
+   a passing opinion or a diff reference alone is insufficient.
 4. **CI.** It is green on the exact head SHA.
 5. **Scope.** The Work's write scope is inside the delegation's globs, and the daily cap has not
    been reached.
@@ -70,11 +75,42 @@ candidate commit:
 
 A missing fact refuses acceptance. It never defaults to pass.
 
-### D4. Landing uses the existing landing path
+The daily cap is enforced through one durable, repository-wide acceptance journal at the trusted
+Board persistence boundary, rather than by scanning separate Work ledgers. Before recording a
+policy acceptance, the Board atomically compares the delegation identity/version, policy,
+repository, UTC day and remaining cap, then durably reserves one slot. The transaction returns a
+unique reservation bound to the Work id and exact candidate SHA. Competing processes serialize
+through that same journal; a provider that cannot guarantee crash-safe compare-and-reserve must
+refuse policy acceptance. Workers cannot write or reset the journal through their write scope.
 
-After acceptance, landing goes only through the repository's existing landing tool, which reads the
-review marker at the exact SHA and requires CI. The policy gets no force-push, no branch-protection
-bypass and no direct write to the default branch.
+The reservation is persisted before the Work's acceptance event, which names it. Retrying the
+same Work/candidate reuses its reservation and cannot consume a second slot or append a second
+acceptance. After a crash, recovery reconciles the reservation with the Work ledger before
+continuing. An unresolved reservation still consumes the cap; it is never released merely on a
+timeout or process death. Delegation replacement, expiry, revocation and PAUSED are rechecked at
+admission. A reservation does not outlive or widen that authority.
+
+### D4. Landing requires a concrete repository adapter
+
+Acceptance does not merge. This Harness checkout currently has no canonical landing command;
+the repository Work runner explicitly leaves integration to its owner. Implementation of this
+proposal therefore requires a typed landing adapter behind the existing repository integration
+boundary. Until a target repository has a configured and verified adapter, automatic landing is
+unavailable and the accepted Work stays explicitly awaiting integration.
+
+The adapter receives the repository identity, PR identity, expected base and candidate SHA, the
+bound passing review and verification evidence, and exact-head required CI check identities. It
+must reread those facts, refuse stale or missing evidence, use the target repository's protected
+merge path pinned to the candidate SHA, and independently read back the merged PR and resulting
+default-branch commit. An uncertain response is UNKNOWN and must be reconciled before retrying.
+The receipt preserves the input candidate, actual merged head and merge commit; acceptance alone
+cannot produce that receipt.
+
+For `werhiz/rhizprotocol`, the existing integration owner is its committed `scripts/land.mts`
+controller and the exact-head `rhiz/land-verdict` it produces. For `werhiz/rhiz-harness`, the adapter
+must be implemented and proven against this repository's required Kernel CI checks before
+activation. No nonexistent Harness tool is assumed. The policy gets no force-push,
+branch-protection bypass or direct write to the default branch.
 
 ### D5. Learning
 
@@ -92,6 +128,11 @@ Each must be a test that fails without its guard:
 - Acceptance is refused when any one D3 gate is removed: a stale SHA, a failing latest review, a
   reviewer equal to the executor, red CI, scope outside the globs, or the cap exceeded.
 - A policy actor that executed, verified or reviewed the same Work is refused.
+- A passing review for candidate A cannot authorize candidate B, even at the same contract revision.
+- With one daily slot remaining, two concurrent Work acceptances admit at most one; crash/retry
+  between reservation and acceptance neither restores the slot nor duplicates acceptance.
+- An expired or revoked delegation cannot admit an already reserved acceptance.
+- Missing landing adapter, stale review/CI identity and uncertain merge readback cannot report landed.
 - A human actor's acceptance path is unchanged.
 
 ## Rollback
