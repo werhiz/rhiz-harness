@@ -114,19 +114,22 @@ test("native final admission requires retired work and seals all subsequent item
   }
 });
 
-test("native provisioning resolves local nested architecture packages and refuses incompatible layouts", { skip: process.platform === "win32" }, async (t) => {
+test("native provisioning resolves pinned local Darwin artifacts and refuses incompatible layouts", { skip: process.platform === "win32" }, async (t) => {
   const root = await candidate(); t.after(() => rm(root, { recursive: true, force: true }));
   const receipt = await runDisposableProof({
     candidateRoot: root, probe: new GitCandidateIdentityProbe(), factory: new TempDirectoryDerivativeFactory(),
     proof: async (derivative) => {
       for (const [arch, triple] of Object.entries({ arm64: "aarch64-apple-darwin", x64: "x86_64-apple-darwin" })) {
-        const base = `${arch}/node_modules/@openai/codex`, platform = `${base}/node_modules/@openai/codex-darwin-${arch}`;
+        const base = arch, platform = `${arch}/node_modules/@openai/codex-darwin-${arch}`;
         const binary = `${platform}/vendor/${triple}/bin/codex`, packageRoot = derivative.resolve(arch);
         await mkdir(dirname(derivative.resolve(binary)), { recursive: true });
-        const wrapper = { name: "@openai/codex", version: "0.162.1", optionalDependencies: { [`@openai/codex-darwin-${arch}`]: `npm:@openai/codex@0.162.1-darwin-${arch}` } };
+        const wrapper = { devDependencies: { "@werhiz/native-review-test-tools": "file:test/fixtures/native-tools" } };
+        const tools = { name: "@werhiz/native-review-test-tools", version: "0.0.0", optionalDependencies: { [`@openai/codex-darwin-${arch}`]: `npm:@openai/codex@0.162.1-darwin-${arch}` } };
         const details = { name: "@openai/codex", version: `0.162.1-darwin-${arch}`, os: ["darwin"], cpu: [arch] };
         const seed = async () => {
-          await derivative.mutate(`${base}/package.json`, JSON.stringify(wrapper), "seed local wrapper metadata");
+          await derivative.mutate(`${base}/package.json`, JSON.stringify(wrapper), "seed pinned optional artifact declaration");
+          await mkdir(derivative.resolve(`${base}/test/fixtures/native-tools`), { recursive: true });
+          await derivative.mutate(`${base}/test/fixtures/native-tools/package.json`, JSON.stringify(tools), "seed dev-only artifact owner");
           await derivative.mutate(`${platform}/package.json`, JSON.stringify(details), "seed local platform metadata");
         };
         await seed();
@@ -135,7 +138,8 @@ test("native provisioning resolves local nested architecture packages and refuse
         await chmod(derivative.resolve(binary), 0o755);
         assert.equal(await nativeReviewExecutable(derivative.root, packageRoot, "darwin", arch), await realpath(derivative.resolve(binary)));
         for (const [path, value] of [
-          [`${base}/package.json`, { ...wrapper, version: "wrong" }],
+          [`${base}/package.json`, { devDependencies: { "@werhiz/native-review-test-tools": "wrong" } }],
+          [`${base}/test/fixtures/native-tools/package.json`, { ...tools, optionalDependencies: { [`@openai/codex-darwin-${arch}`]: "wrong" } }],
           [`${platform}/package.json`, { ...details, version: "wrong" }],
           [`${platform}/package.json`, { ...details, os: ["linux"] }],
           [`${platform}/package.json`, { ...details, cpu: [arch === "arm64" ? "x64" : "arm64"] }],

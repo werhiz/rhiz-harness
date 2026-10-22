@@ -128,10 +128,29 @@ Native file-URL paths decode once before exact scope/access and duplicate checks
 Installed-host tool/startup/network/socket/PTY containment and paid canary evidence
 orchestration still lack checked-in automation. P1 remains open; this checkpoint
 does not claim that a passing portable suite proves the native boundary.
-Normal `npm ci` provisions exact test-only `@openai/codex@0.162.1` and its platform
-package. Fixtures resolve local nested or hoisted packages, validate metadata and
-native version, and use no global/PATH fallback or test-time downloader. ARM64/x64
-layout tests use scripted binaries; actual native execution proves only this host.
+Normal `npm ci` provisions a private fixture-tools package through a root
+development dependency. That fixture declares only the exact Darwin ARM64/x64 optional npm
+artifacts for Codex 0.162.1. Linux does not install an irrelevant native binary;
+`--omit=dev` does not install the fixture or either artifact, including a Darwin
+target install. Fixtures resolve the local locked artifact, validate its
+platform metadata and native version, and use no global/PATH fallback or
+test-time downloader. ARM64/x64 layout tests use scripted binaries; actual
+native execution proves only the available host.
+
+`src/workspace-digest.ts` retains the ordinary 256 MiB per-file and 4 GiB total
+budgets and accepts only generic bounded path policies. The concrete Codex
+adapter recognizes the exact two pinned Darwin executable paths for a named
+512 MiB allowance only when the dev-only declaration, fixture owner, npm lock
+integrity/version, and installed platform metadata match. Explicit caller
+per-file limits always win. Every executable byte is still streamed into the
+manifest and total byte count; the applied allowance and bounded-read declaration
+fingerprint enter the digest scope and aggregate identity. Git probe and
+workspace identity resolve the concrete policy; disposable copies and Verify
+negative controls carry only the generic policy from the trusted pinned scope.
+Sparse boundary
+fixtures prove identity beyond the ordinary cap, candidate/derivative parity,
+and refusals for lookalikes, drift, explicit smaller budgets and over-limit
+artifacts. These tests establish identity policy, not native containment.
 
 The scoped implementation executor used deterministic shell, TypeScript and Node
 on Darwin. No model inference, operator credential mutation, push, PR or full gate

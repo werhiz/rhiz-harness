@@ -25,14 +25,17 @@ export async function nativeReviewExecutable(
     x64: "x86_64-apple-darwin",
   };
   if (platform !== "darwin" || !triples[arch]) throw new Error("unsupported native fixture platform or architecture");
-  const local = join(packageRoot, "node_modules/@openai/codex/package.json");
-  const wrapper = createRequire(join(packageRoot, "package.json")).resolve("@openai/codex/package.json");
-  if (await realpath(wrapper) !== await realpath(local)) throw new Error("native fixture requires the local Codex dependency");
-  const metadata = JSON.parse(await readFile(wrapper, "utf8")), alias = `@openai/codex-darwin-${arch}`;
-  if (metadata.name !== "@openai/codex" || metadata.version !== "0.162.1"
-    || metadata.optionalDependencies?.[alias] !== `npm:@openai/codex@0.162.1-darwin-${arch}`) throw new Error("native fixture wrapper metadata mismatch");
-  const packaged = await realpath(createRequire(wrapper).resolve(`${alias}/package.json`));
-  if (!packaged.startsWith((await realpath(join(packageRoot, "node_modules"))) + "/")) throw new Error("native fixture requires a local platform package");
+  const alias = `@openai/codex-darwin-${arch}`;
+  const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+  const fixture = "test/fixtures/native-tools";
+  const tools = JSON.parse(await readFile(join(packageRoot, fixture, "package.json"), "utf8"));
+  if (metadata.devDependencies?.["@werhiz/native-review-test-tools"] !== `file:${fixture}`
+    || tools.name !== "@werhiz/native-review-test-tools" || tools.version !== "0.0.0"
+    || tools.optionalDependencies?.[alias] !== `npm:@openai/codex@0.162.1-darwin-${arch}`) throw new Error("native fixture dependency metadata mismatch");
+  const local = join(packageRoot, "node_modules", alias, "package.json");
+  const packaged = await realpath(createRequire(join(packageRoot, "package.json")).resolve(`${alias}/package.json`));
+  if (packaged !== await realpath(local)
+    || !packaged.startsWith((await realpath(join(packageRoot, "node_modules"))) + "/")) throw new Error("native fixture requires a local platform package");
   const details = JSON.parse(await readFile(packaged, "utf8"));
   if (details.name !== "@openai/codex" || details.version !== `0.162.1-darwin-${arch}`
     || !Array.isArray(details.os) || !details.os.includes("darwin")

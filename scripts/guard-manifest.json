@@ -826,6 +826,76 @@
       "file": "adapters/codex/native-review.ts",
       "remove": "      if (finishedItems.has(event.item.id)\n        || (event.type === \"item.completed\" && activeType !== event.item.type\n          && (activeType !== undefined || ![\"agent_message\", \"reasoning\"].includes(event.item.type!)))) {\n        throw new Error(\"native review item lifecycle mismatch\");\n      }\n",
       "testFile": "dist/test/codex-native-review.test.js"
+    },
+    {
+      "id": "identity/native-artifact-admission",
+      "why": "Only the exact dev-owned pinned Darwin native artifacts may exceed the ordinary per-file budget; dependency, lock integrity and platform metadata drift must refuse.",
+      "file": "adapters/codex/native-artifact-identity.ts",
+      "remove": "    if (declaration.devDependencies?.[owner] !== `file:${fixture}` || lock.packages?.[\"\"]?.devDependencies?.[owner] !== `file:${fixture}`\n      || fixtureManifest.name !== owner || fixtureManifest.version !== \"0.0.0\" || fixtureManifest.optionalDependencies?.[alias] !== pin\n      || lock.packages?.[fixture]?.dev !== true || lock.packages[fixture].optionalDependencies?.[alias] !== pin\n      || locked?.name !== \"@openai/codex\" || locked.version !== version || locked.integrity !== artifact.integrity || locked.optional !== true || locked.dev !== true\n      || metadata.name !== \"@openai/codex\" || metadata.version !== version\n      || JSON.stringify(metadata.os) !== '[\"darwin\"]' || JSON.stringify(metadata.cpu) !== JSON.stringify([artifact.arch])) return undefined;\n",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/native-artifact-explicit-cap",
+      "why": "An artifact policy must never override an explicit caller per-file budget.",
+      "file": "src/workspace-digest.ts",
+      "remove": "options.limits?.maxFileBytes === undefined && ",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/file-allowance-ceiling",
+      "why": "A trusted adapter allowance still has a finite portable per-file ceiling.",
+      "file": "src/workspace-digest.ts",
+      "remove": ".max(512 * 1024 * 1024)",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/file-allowance-scope-binding",
+      "why": "The applied policy and evidence must enter scope and aggregate identity even when executable bytes do not change.",
+      "file": "src/workspace-digest.ts",
+      "remove": "    ...(fileSizeAllowances.length ? { fileSizeAllowances } : {}),\n",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/native-probe-policy",
+      "why": "The default Git probe must pass the concrete artifact policy to the portable digest.",
+      "file": "adapters/git/candidate-identity.ts",
+      "remove": ", fileSizeAllowances: await resolveNativeArtifactAllowances(root)",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/pinned-allowance-copy",
+      "why": "The default disposable factory must reproduce the generic policy bound into the pinned candidate scope.",
+      "file": "src/disposable.ts",
+      "remove": "      fileSizeAllowances: candidate.digestScope.fileSizeAllowances ?? [],\n",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/workspace-acquire-native-policy",
+      "why": "Workspace preparation must identify the complete installed native artifact before capturing the acquisition baseline.",
+      "file": "adapters/git/worktrees.ts",
+      "remove": ", fileSizeAllowances: await resolveNativeArtifactAllowances(executionRoot)",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/workspace-snapshot-native-policy",
+      "why": "A workspace snapshot must retain native artifact identity and policy at verification time.",
+      "file": "adapters/git/worktrees.ts",
+      "remove": ", fileSizeAllowances: await resolveNativeArtifactAllowances(record.executionRoot)",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/negative-control-allowance",
+      "why": "A real Verify negative control must carry the trusted snapshot's generic identity policy through its isolated copy.",
+      "file": "src/verify/engine.ts",
+      "remove": "before.digestScope.fileSizeAllowances ?? ",
+      "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "identity/native-artifact-no-parent-links",
+      "why": "Eager concrete artifact recognition must never read external metadata or bytes through a linked parent that the portable content walk would not follow.",
+      "file": "adapters/codex/native-artifact-identity.ts",
+      "remove": "    if (info.isSymbolicLink() || (index < parts.length - 1 ? !info.isDirectory() : !info.isFile())) return undefined;\n",
+      "testFile": "dist/test/native-artifact-digest.test.js"
     }
   ]
 }

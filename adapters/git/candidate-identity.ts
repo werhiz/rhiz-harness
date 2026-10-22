@@ -6,6 +6,7 @@ import type { CandidateIdentity, CandidateIdentityProbe } from "../../src/dispos
 import { CandidateIdentitySchema } from "../../src/disposable.js";
 import { digestExecutionRoot, type ExecutionRootDigestLimits } from "../../src/workspace-digest.js";
 import { HARDENED_GIT_FLAGS, hardenedGitEnv } from "./worktrees.js";
+import { resolveNativeArtifactAllowances } from "../codex/native-artifact-identity.js";
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -78,7 +79,7 @@ export class GitCandidateIdentityProbe implements CandidateIdentityProbe {
       tree = "unborn";
     }
 
-    const identity = await digestExecutionRoot(root, { limits: this.#digestLimits });
+    const identity = await digestExecutionRoot(root, { limits: this.#digestLimits, fileSizeAllowances: await resolveNativeArtifactAllowances(root) });
     return CandidateIdentitySchema.parse({
       executionRoot: root,
       head,
