@@ -896,6 +896,34 @@
       "file": "adapters/codex/native-artifact-identity.ts",
       "remove": "    if (info.isSymbolicLink() || (index < parts.length - 1 ? !info.isDirectory() : !info.isFile())) return undefined;\n",
       "testFile": "dist/test/native-artifact-digest.test.js"
+    },
+    {
+      "id": "ledger/directory-sync-failure-propagation",
+      "why": "A directory open/sync/close failure must refuse lock, snapshot, archive or repair success; a file fsync cannot certify its directory entry.",
+      "file": "adapters/local/durable-ledger.ts",
+      "remove": "  if (failures.length === 1) throw failures[0];\n  if (failures.length > 1) throw new AggregateError(failures, \"Ledger directory sync failed\");\n",
+      "testFile": "dist/test/durable-ledger-fsync.test.js"
+    },
+    {
+      "id": "ledger/new-file-directory-barrier",
+      "why": "The first matching barrier publishes a newly created Ledger file before returning a writer; its absence must fail the creation-directory fault test without discarding committed records.",
+      "file": "adapters/local/durable-ledger.ts",
+      "remove": "    await syncDirectory(dirname(filePath));\n",
+      "testFile": "dist/test/durable-ledger-fsync.test.js"
+    },
+    {
+      "id": "ledger/new-file-fsync",
+      "why": "The first matching file fsync belongs to new Ledger creation; a failed file barrier must refuse the writer before any append can be acknowledged.",
+      "file": "adapters/local/durable-ledger.ts",
+      "remove": "await handle.sync(); ",
+      "testFile": "dist/test/durable-ledger-fsync.test.js"
+    },
+    {
+      "id": "ledger/failed-lock-publication-cleanup",
+      "why": "A failed directory barrier while publishing an owned lock must release that same-token lock so the live process can reopen without discarding Ledger data.",
+      "file": "adapters/local/durable-ledger.ts",
+      "remove": "        try { await releaseLock(lockPath, token); } catch (cleanupError) {\n          throw new AggregateError([error, cleanupError], \"Ledger lock publication failed\");\n        }\n",
+      "testFile": "dist/test/durable-ledger-fsync.test.js"
     }
   ]
 }
