@@ -13,11 +13,16 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createConnection, createServer, type AddressInfo } from "node:net";
+import { DurableEventLedger, readDurableLedgerEvents } from "../adapters/local/durable-ledger.js";
+import { LocalCommandVerifierProvider } from "../adapters/local/command-verifier.js";
+import { VerificationEngine, VerifierCatalog, parseVerificationPlan } from "../src/verify.js";
+import { recordOperatorReview, summarizeOperatorWork } from "../src/operator.js";
 
 import { GitWorktreeWorkspaceProvider } from "../adapters/git/worktrees.js";
 import { LocalCommandWorkerProvider, LocalContainedWorkerHost } from "../adapters/local/command-worker.js";
@@ -771,4 +776,166 @@ test("a seam's authority report reaches the Ledger and the Board, on every platf
     ["granted", "denied"],
     "authority events fell through the Board projection",
   );
+});
+
+
+function evidenceReview(id: string): WorkContract {
+  const original = containmentWork(id);
+  return parseWorkContract({
+    ...original, type: "REVIEW", writeScope: [],
+    authority: { grants: [{ action: "read", resources: original.scope, constraints: [] }], requiresHumanApproval: ["write"] },
+    verificationPolicy: { required: true, independentActor: true, reviewRequired: true },
+    objective: "Independently inspect existing source with no production writes",
+  });
+}
+
+function readOnlyRequest(root: string): WorkerStartRequest {
+  const work = evidenceReview("work:read-only-contract");
+  return { work, taskId: "task:read-only", attemptId: "attempt:read-only", objective: work.objective,
+    authority: work.authority, context: work.context,
+    workspace: { workspaceId: "workspace:read-only", leaseId: "lease:read-only", uri: `file://${root}`,
+      executionRoot: root, baseRevision: "pinned", mode: "read-only" } };
+}
+
+test("read-only local worker truthfully declares and enforces its narrower authority", async () => {
+  const area = mkdtempSync(join(realpathSync(tmpdir()), "rhiz-readonly-policy-"));
+  const root = join(area, "workspace"), home = join(area, "home");
+  mkdirSync(root); mkdirSync(home);
+  // Keep this input usable against the old constructor for the baseline falsifier.
+  const options = { command: process.execPath, args: ["--version"], sandbox: null, readOnly: true, homeDirectory: home };
+  const worker = new LocalCommandWorkerProvider(options);
+  const ordinary = new LocalCommandWorkerProvider({ ...options, ...{ readOnly: false } });
+  try {
+    assert.equal((await worker.describe()).writeAccess, "none");
+    assert.equal((await ordinary.describe()).writeAccess, "workspace");
+    assert.equal((await worker.capabilities()).guardedToolMediation, false);
+    const request = readOnlyRequest(root);
+    assert.deepEqual(worker.policyFor(request).writableRoots, [home]);
+    const writable = { ...request, work: containmentWork("work:write"), workspace: { ...request.workspace, mode: "isolated-write" as const } };
+    assert.throws(() => worker.policyFor(writable), /read-only.*write/);
+    await assert.rejects(() => worker.start(writable), /read-only.*write/);
+    assert.throws(() => worker.policyFor({ ...writable, workspace: request.workspace }), /read-only.*write/);
+  } finally { await worker.close(); await ordinary.close(); rmSync(area, { recursive: true, force: true }); }
+});
+
+test("read-only local worker refuses scratch HOME overlap including symlink aliases", async () => {
+  const area = mkdtempSync(join(realpathSync(tmpdir()), "rhiz-readonly-overlap-"));
+  const root = join(area, "workspace"), nested = join(root, "scratch"), alias = join(area, "alias");
+  mkdirSync(nested, { recursive: true }); symlinkSync(root, alias);
+  try {
+    for (const homeDirectory of [root, nested, area, alias, join(alias, "scratch")]) {
+      const options = { command: process.execPath, sandbox: null, readOnly: true, homeDirectory };
+      const worker = new LocalCommandWorkerProvider(options);
+      try {
+        assert.throws(() => worker.policyFor(readOnlyRequest(root)), /scratch HOME.*overlap/);
+        await assert.rejects(() => worker.start(readOnlyRequest(root)), /scratch HOME.*overlap/);
+      } finally { await worker.close(); }
+    }
+  } finally { rmSync(area, { recursive: true, force: true }); }
+});
+
+test("read-only local worker never runs without a configured available sandbox", async () => {
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "rhiz-readonly-no-sandbox-"));
+  const marker = join(root, "SHOULD_NOT_EXIST");
+  try {
+    for (const sandbox of [null, { id: "sandbox:unavailable", available: async () => false,
+      wrap: async () => { throw new Error("unreachable"); } }]) {
+      const options = { command: process.execPath, args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)},'bad')`], sandbox, readOnly: true };
+      const worker = new LocalCommandWorkerProvider(options);
+      try { await assert.rejects(() => worker.start(readOnlyRequest(root)), SandboxUnavailableError); }
+      finally { await worker.close(); }
+      assert.equal(existsSync(marker), false);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("fresh REVIEW runs through real contained Crew, durable Ledger and independent Verify", { skip: skipUnlessDarwin }, async (t) => {
+  const repository = fixtureRepository();
+  const area = mkdtempSync(join(realpathSync(tmpdir()), "rhiz-fresh-review-"));
+  const home = join(area, "home"), outside = join(area, "outside");
+  mkdirSync(home); mkdirSync(join(home, "tmp")); writeFileSync(outside, "unchanged");
+  const server = createServer(socket => socket.end());
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  // Prove the endpoint is reachable outside containment before testing refusal.
+  await new Promise<void>((resolve, reject) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    socket.once("connect", () => { socket.destroy(); resolve(); }); socket.once("error", reject);
+  });
+  const command = String.raw`
+    const assert = require('node:assert/strict'), fs = require('node:fs'), net = require('node:net'), path = require('node:path');
+    process.on('uncaughtException', e => { fs.writeFileSync(path.join(process.env.HOME,'command-error.txt'),e.stack); process.exit(1); });
+    assert.equal(fs.readFileSync('src/a.ts','utf8'),'export const a = 1;\n');
+    for (const target of ['src/a.ts', ${JSON.stringify(outside)}]) {
+      assert.throws(() => fs.writeFileSync(target,'escaped'), e => e.code === 'EPERM' || e.code === 'EACCES');
+    }
+    fs.writeFileSync(path.join(require('node:os').tmpdir(),'scratch-proof'),'allowed');
+    const socket = net.createConnection({host:'127.0.0.1',port:${port}});
+    socket.setTimeout(2000,()=>{socket.destroy();throw Error('timeout is not refusal proof');});
+    socket.once('connect',()=>{socket.destroy();throw Error('network escaped');});
+    socket.once('error',e=>{assert.ok(['EPERM','EACCES'].includes(e.code),String(e));fs.writeFileSync(path.join(process.env.HOME,'boundary-proof.json'),JSON.stringify({sourceDenied:true,outsideDenied:true,networkDenied:e.code,scratchAllowed:true}));});
+  `;
+  const options = { id: "worker:real-readonly-review", command: process.execPath, args: ["-e", command],
+    sandbox: new MacosSandboxExecLauncher(), readOnly: true, homeDirectory: home,
+    environment: { TMPDIR: join(home, "tmp") }, timeoutMs: 10_000 };
+  const worker = new LocalCommandWorkerProvider(options);
+  const host = new LocalContainedWorkerHost({ worker });
+  const catalog = new WorkerCatalog(); catalog.registerHost(host);
+  const workspaceProvider = new GitWorktreeWorkspaceProvider({ repositoryRoot: repository, worktreeRoot: join(area, "worktrees") });
+  const ledger = await DurableEventLedger.open({ directory: join(area, "ledger") });
+  const verifier = new LocalCommandVerifierProvider({ sandbox: new MacosSandboxExecLauncher(), requireContainment: true });
+  const work = evidenceReview("work:fresh-real-review");
+  const baseRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
+  try {
+    const run = await new CrewSupervisor({ plan: parseCrewPlan({ id: "crew:fresh-review", objective: work.objective, baseRevision,
+      missions: [{ work, workspace: { strategy: "fresh", mode: "read-only" } }] }),
+      ledger, workerCatalog: catalog, workspaceProvider, actor: human }).run();
+    const mission = run.receipt.missions[0]!;
+    assert.equal(mission.status, "execution-finished", existsSync(join(home, "command-error.txt"))
+      ? readFileSync(join(home, "command-error.txt"), "utf8") : mission.error ?? "mission did not finish");
+    assert.equal(mission.workerDescriptor!.writeAccess, "none");
+    assert.equal(mission.projectionViolationCount, 0); assert.deepEqual(mission.changeViolations, []);
+    const workspace = run.workspaces[0]!;
+    const before = mission.workspaceBefore!;
+    assert.equal(before.head, baseRevision);
+    assert.equal((await workspaceProvider.snapshot(workspace)).digest, before.digest);
+    assert.equal(readFileSync(outside, "utf8"), "unchanged");
+    assert.equal(readFileSync(join(home, "tmp", "scratch-proof"), "utf8"), "allowed");
+    assert.equal(JSON.parse(readFileSync(join(home, "boundary-proof.json"), "utf8")).sourceDenied, true);
+    const streamId = mission.streamId!;
+    const events = await ledger.replay(streamId);
+    assert.equal(events.filter(e => e.type === "attempt.started").length, 1);
+    assert.equal(events.filter(e => e.type === "attempt.finished").length, 1);
+    assert.equal(events.filter(e => e.type === "authority.granted").length, 1);
+    assert.equal(events.some(e => e.type === "work.accepted"), false);
+    const config = { command: process.execPath, args: ["-e", String.raw`require('node:assert/strict').equal(require('node:fs').readFileSync('src/a.ts','utf8'),'export const a = 1;\n')`] };
+    const plan = parseVerificationPlan({ id: "verify:fresh-review", workId: work.id, contractRevision: 1, checks: [
+      { id: "source", providerId: verifier.id, description: "inspect exact source", criterionIds: [work.acceptanceCriteria[0]!.id], config },
+      { id: "source-falsifier", providerId: verifier.id, description: "detect changed source", negativeControlFor: "source", config,
+        perturbation: { kind: "overwrite-file", path: "src/a.ts", content: "export const a = 2;\n", description: "corrupt the isolated source" } },
+    ] });
+    const input = { streamId, work, contractRevision: 1, workspace, expectedSnapshot: await workspaceProvider.snapshot(workspace), plan };
+    await assert.rejects(() => new VerificationEngine({ ledger, workspaceProvider, verifierCatalog: new VerifierCatalog(verifier),
+      verifier: { id: worker.id, kind: "verifier" } }).verify(input), /independent|execut/);
+    const receipt = await new VerificationEngine({ ledger, workspaceProvider, verifierCatalog: new VerifierCatalog(verifier),
+      verifier: { id: "verifier:independent-fixture", kind: "verifier" } }).verify(input);
+    assert.equal(receipt.status, "pass", JSON.stringify(receipt.checks));
+    assert.equal(receipt.projectionViolationCount, 0);
+    await assert.rejects(() => recordOperatorReview({ ledger, streamId, reviewer: { id: worker.id, kind: "agent" },
+      status: "pass", summary: "must refuse executor self-review" }), /cannot review.*independently/);
+    const status = await recordOperatorReview({ ledger, streamId, reviewer: { id: "verifier:independent-review-fixture", kind: "verifier" },
+      status: "pass", summary: "fixture source, falsifier, containment and canonical events inspected", evidence: [receipt.artifactIdentityEvidence] });
+    assert.equal(status.readiness.ready, true);
+    assert.equal(status.state, "ready");
+    await ledger.close();
+    const durable = await readDurableLedgerEvents(join(area, "ledger"));
+    assert.equal(summarizeOperatorWork(durable).readiness.ready, true);
+    assert.equal(durable.some(e => e.type === "work.accepted"), false);
+    t.diagnostic(JSON.stringify({ baseRevision, digest: receipt.target.digest, verificationId: receipt.verificationId,
+      events: durable.map(e => ({ id: e.id, type: e.type })), boundary: JSON.parse(readFileSync(join(home, "boundary-proof.json"), "utf8")) }));
+  } finally {
+    await ledger.close(); await verifier.close(); await host.close(); await workspaceProvider.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(repository, { recursive: true, force: true }); rmSync(area, { recursive: true, force: true });
+  }
 });

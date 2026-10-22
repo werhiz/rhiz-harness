@@ -52,7 +52,7 @@ jobs:
   guards:
     name: Complete guard falsifiers
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -110,7 +110,7 @@ jobs:
             --ignore-scripts \
             --no-audit \
             --no-fund \
-            @deepseek-ai/cordis@4.0.4 \
+            @deepseek-ai/cordis@4.0.5 \
             @deepseek-ai/dsh-sdk-client@0.1.0-rc.8 \
             @deepseek-ai/dsh-sdk-jsonrpc-demo@0.1.0-rc.8 \
             @deepseek-ai/dsh-sdk-jsonrpc-server@0.1.0-rc.8 \
