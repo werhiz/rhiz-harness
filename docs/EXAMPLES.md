@@ -1,6 +1,6 @@
 # Examples
 
-Status: current examples for the shipped pre-alpha contracts. Validate copied JSON with the current parsers before using it against valuable repositories.
+Status: current examples for the public-alpha contracts. Validate copied JSON with the current parsers before using it against valuable repositories.
 
 Actor records in these examples are audit data. `kind: "human"` is a schema label, not proof that the actor was authenticated or authorized. A real product surface must enforce identity and organizational permission before recording human-only decisions or exceptions.
 

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Status: current private-dogfood troubleshooting guide.
+Status: current troubleshooting guide for the public alpha and active dogfood. The npm package is unpublished; use the source-checkout setup in [Getting Started](GETTING_STARTED.md).
 
 Start with the smallest failing boundary. Rhiz Harness is intentionally layered, so a provider-auth failure, workspace-binding failure, Guard denial, verification failure, Board violation, and Ledger-integrity failure should be diagnosed as different problems.
 
@@ -82,13 +82,13 @@ Do not broaden the canary write scope to accommodate unexplained writes.
 
 ## `repository Work runner v0 accepts SHIP Work only`
 
-The current runner is deliberately SHIP-only. Use Crew/programmatic APIs for other Work forms during pre-alpha, or add a separately reviewed operator path rather than bypassing the runner check.
+The current runner is deliberately SHIP-only. Use Crew/programmatic APIs for other Work forms during alpha, or add a separately reviewed operator path rather than bypassing the runner check.
 
 ## `repository runner requires Work created by a human audit actor`
 
 The current runner requires the creator record to declare `createdBy.kind = "human"`.
 
-This validates an audit label, not authenticated identity. If the record is wrong, correct it rather than relabeling an agent to pass the check. Current private dogfood relies on the operator boundary around contract creation. A multi-user/public surface must authenticate and authorize the person before writing a human-only actor claim.
+This validates an audit label, not authenticated identity. If the record is wrong, correct it rather than relabeling an agent to pass the check. The current operator path relies on the operator boundary around contract creation. A multi-user/public surface must authenticate and authorize the person before writing a human-only actor claim.
 
 ## `verification plan must target this Work at contract revision 1`
 

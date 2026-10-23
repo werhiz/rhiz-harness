@@ -80,7 +80,7 @@ The runner requires:
 - a working Codex CLI / App Server authentication path;
 - verification commands that can execute locally under the verifier policy.
 
-The creator-kind requirement validates the recorded audit shape only. `ActorRef.kind` is self-declared metadata and does not authenticate a person. Current private dogfood relies on the operator boundary around contract creation. Any public or multi-user product surface must authenticate and authorize the person before writing a human-only actor claim.
+The creator-kind requirement validates the recorded audit shape only. `ActorRef.kind` is self-declared metadata and does not authenticate a person. The current operator path relies on the operator boundary around contract creation. Any public or multi-user product surface must authenticate and authorize the person before writing a human-only actor claim.
 
 The Work's write scope must map cleanly to repository paths the candidate is allowed to change.
 

@@ -1,6 +1,6 @@
 # Rhiz Harness
 
-**A coding harness for humans and agents being prepared for open-source release.**
+**An open-source coding harness for humans and agents.**
 
 Rhiz Harness turns models, coding agents, tools, runtimes, repositories, and humans into a disciplined engineering system with bounded authority, independent verification, durable evidence, and learning that compounds across Work.
 
@@ -25,12 +25,16 @@ The current engineering phase is convergence: make those pieces operate as one t
 
 ## Current operator path
 
-Install dependencies and run the canonical repository gate:
+Use Node `24.19.0` and npm `11.17.0`, the repository and CI pins. Start from a source checkout:
 
 ```bash
-npm install
+git clone https://github.com/werhiz/rhiz-harness.git
+cd rhiz-harness
+npm ci --ignore-scripts --no-audit --no-fund
 npm run check
 ```
+
+The complete gate includes adversarial proofs and can take tens of minutes. For a first build without model credentials, run `npm run build`; see [Getting Started](docs/GETTING_STARTED.md) for the first local contract example, expected output and full validation.
 
 Run the live Codex App Server canary when Codex is installed and authenticated:
 
@@ -105,11 +109,7 @@ Rhiz Harness is standalone. Rhiz Protocol is a major Customer Zero and may suppl
 
 Rhiz Harness is open source under the [Apache License 2.0](LICENSE). Upstream work it derives from is attributed in [`NOTICE`](NOTICE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), with per-module records in [`provenance/`](provenance/).
 
-This is an alpha. Contracts change between commits, and no release line is supported yet. Install from Git at an exact commit:
-
-```bash
-npm install github:werhiz/rhiz-harness#<commit>
-```
+This is an alpha. Contracts change between commits, and no release line is supported yet. Use the source checkout above. For reproducibility, check out the full commit SHA you intend to evaluate before installing dependencies. A successful source build does not establish npm distribution support.
 
 The npm package is not published yet. `package.json` keeps `"private": true` so nothing reaches the registry by accident; the rest of the public-release gate is tracked in the [Open Source Release Checklist](docs/OPEN_SOURCE_RELEASE_CHECKLIST.md).
 

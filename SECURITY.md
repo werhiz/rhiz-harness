@@ -114,4 +114,4 @@ Stronger prompt wording alone is insufficient for a consequential authority defe
 
 The project will coordinate disclosure after a fix and affected-release analysis exist. Public details should explain the affected boundary, impact, fixed versions/commits, and any operator action required without exposing unrelated private data.
 
-During pre-alpha, there is no promised stable security-support window. Public release policy will be added before the first supported public release.
+During alpha, there is no promised stable security-support window. Public release policy will be added before the first supported public release.
