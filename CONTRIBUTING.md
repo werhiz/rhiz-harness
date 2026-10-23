@@ -1,6 +1,6 @@
 # Contributing to Rhiz Harness
 
-Rhiz Harness is currently in private pre-alpha dogfood and is being prepared for an eventual open-source release. Contributions should strengthen one coherent Harness rather than add parallel systems.
+Rhiz Harness is a public alpha in active dogfood. The npm package is unpublished; source-checkout setup is documented in `docs/GETTING_STARTED.md`. Contributions should strengthen one coherent Harness rather than add parallel systems.
 
 ## Before changing code
 

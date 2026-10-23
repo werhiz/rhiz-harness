@@ -225,4 +225,4 @@ A security change should narrow claims to what the mechanism actually establishe
 
 ## Reporting vulnerabilities
 
-Use the repository process in [`SECURITY.md`](../SECURITY.md). Do not disclose exploit details in a public issue once the repository is public.
+Use the repository process in [`SECURITY.md`](../SECURITY.md). Do not disclose exploit details in a public issue.
