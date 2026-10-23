@@ -1,17 +1,18 @@
 # Compatibility and Versioning
 
-Status: current pre-alpha compatibility guide. Package manifests, workflow pins, and adapter tests remain executable authority when this document and source differ.
+Status: current public-alpha compatibility guide. Package manifests, workflow pins, and adapter tests remain executable authority when this document and source differ.
 
 ## Current package status
 
 ```text
 package: @werhiz/rhiz-harness
 version: 0.0.1-kernel.0
-visibility: private
+source repository: public alpha
+npm publication: unpublished (private: true)
 module format: ESM
 ```
 
-The package is pre-alpha and has not crossed the public compatibility boundary. Portable concepts are intentionally stable at the architecture level, while TypeScript APIs and adapter details may still change before a public release.
+Source is available as a public alpha. No supported release line or npm distribution is declared. Portable concepts are intentionally stable at the architecture level; TypeScript APIs and adapter details may change between commits. Use an exact source commit and the pins below when reproducing behavior.
 
 ## Runtime toolchain
 
@@ -118,7 +119,7 @@ A feature that requires containment must fail closed when the platform launcher 
 
 ## Package exports
 
-Current public-shaped entry points inside the private package are:
+Current package export entry points in a built source checkout are:
 
 ```text
 @werhiz/rhiz-harness
@@ -132,7 +133,7 @@ Current public-shaped entry points inside the private package are:
 
 See [API Reference](API_REFERENCE.md) for responsibilities.
 
-## Versioning before public release
+## Versioning during alpha
 
 The current version `0.0.1-kernel.0` signals pre-release development. Until the first declared public compatibility line:
 
@@ -142,9 +143,9 @@ The current version `0.0.1-kernel.0` signals pre-release development. Until the 
 - adapter internals may change faster than Work/Board/Ledger meaning;
 - a successful build on an untested provider/runtime version is evidence of compatibility for that run, not a project-wide support promise.
 
-## Public compatibility policy to establish before release
+## Compatibility policy needed for a supported release
 
-Before public alpha, define and publish:
+The public alpha does not establish a supported release line. Before claiming one, define and publish:
 
 - supported Node line(s);
 - npm/package-manager expectations;

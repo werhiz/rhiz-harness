@@ -1,21 +1,14 @@
 # Open Source Release Checklist
 
-Status: release gate for the intended public Rhiz Harness open-source release.
+Status: publication record and remaining package distribution/support gates for the public alpha.
 
 Rhiz Harness is a public alpha under Apache-2.0 (decided by the founder on 2026-10-01). A further release claim, such as a published npm package or a supported release line, is earned only when repository, package, legal, security, documentation, provenance, and distribution state agree.
 
-## Release principle
+## Claim boundaries
 
-Do not announce the Harness as open source while any of these remain true:
+The public source release happened on 2026-10-01, as recorded below. `private: true` prevents npm publication; it does not make the source repository private. Unchecked items remain open evidence or release work and must not be read as completed.
 
-- GitHub repository is private;
-- package is marked `private`;
-- no license has been selected and committed;
-- public contribution/security processes are absent;
-- the older embedded Harness authority in Rhiz Protocol still creates an ambiguous product boundary;
-- public install instructions do not work from a clean machine;
-- public documentation describes proposed behavior as shipped;
-- provenance or upstream license obligations are unresolved.
+Before claiming npm installation, a supported release line or a wider safety guarantee, complete the relevant package, install, compatibility and proof gates below. Keep proposed interfaces distinct from the executable operator paths. Source availability alone proves none of those later claims.
 
 ## 1. Product boundary
 
@@ -44,7 +37,7 @@ Do not announce the Harness as open source while any of these remain true:
 - [ ] Confirm trademarks/brand usage policy if needed.
 - [x] Verify every provenance manifest has a resolvable upstream identity and license classification.
 
-This checklist deliberately does not choose a license. That is a legal/product decision and should not be inferred from the intent to open source.
+The publication record above records the Apache-2.0 decision; any future license change requires an explicit release decision.
 
 ## 3. Repository visibility and governance
 
@@ -85,7 +78,7 @@ Before publication:
 
 The intended Developer Experience describes npm/npx and later single-binary/brew paths. Public docs must match what actually ships at release.
 
-Minimum public-alpha proof:
+Remaining clean-install and distribution proof:
 
 - [ ] one supported install command works from a clean documented environment;
 - [ ] Node version requirement is explicit when Node is required;
@@ -167,7 +160,7 @@ Also prove the relevant live integrations on the exact candidate:
 - [ ] Bind benchmark claims to exact Harness version.
 - [ ] Avoid broad autonomy/performance claims from a single task class.
 
-The first public release may precede a sweeping performance claim. Public claims should never outrun evidence.
+A public source release does not establish a performance claim. Public claims should never outrun evidence.
 
 ## 10. Provenance
 
@@ -189,9 +182,9 @@ See [Provenance](PROVENANCE.md).
 - [ ] install verification uses the published artifact, not a local checkout.
 - [ ] rollback/unpublish policy is understood before publication.
 
-## 12. Public alpha exit criteria
+## 12. Package distribution and support exit criteria
 
-A reasonable public-alpha gate is:
+Before claiming a supported, installable release beyond the source alpha, require:
 
 ```text
 public repository
