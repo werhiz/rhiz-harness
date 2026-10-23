@@ -20,6 +20,7 @@ The current engineering phase is convergence: make those pieces operate as one t
 - [Examples](docs/EXAMPLES.md)
 - [Security model](docs/SECURITY_MODEL.md)
 - [Repository Work runner](docs/REPOSITORY_WORK_RUNNER.md)
+- [Follow-through supervision](docs/FOLLOW_THROUGH.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security reporting](SECURITY.md)
 
