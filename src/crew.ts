@@ -157,6 +157,8 @@ export const CrewMissionSchema = z.object({
    * `event-before-work-created` rather than silently inventing a Work.
    */
   continuesWork: z.boolean().default(false),
+  /** Optimistic dispatch cursor, checked under the Work stream lock before effects. */
+  expectedLastEventId: id.nullable().optional(),
   /**
    * Evidence from earlier attempts on this Work, carried to the worker as
    * DATA. Verifier output is untrusted bytes: it renders under the provider's
@@ -970,6 +972,9 @@ export class CrewSupervisor {
     const releaseCrewStream = await acquireCrewStream(this.#ledger, streamId);
     try {
       const existingEvents = await this.#ledger.replay(streamId);
+      if (mission.expectedLastEventId !== undefined && (existingEvents.at(-1)?.id ?? null) !== mission.expectedLastEventId) {
+        throw new Error(`Work ${work.id} changed after dispatch inspection; inspect it again`);
+      }
       if (existingEvents.length > 0) {
         const originalCorrelationId = existingEvents.find((event) => event.type === "work.created")?.correlationId;
         if (correlationId !== undefined && correlationId !== originalCorrelationId) {
