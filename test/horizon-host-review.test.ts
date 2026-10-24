@@ -6,11 +6,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { readRepositoryWorkLedgers } from "../adapters/local/work-ledgers.js";
 
-const HOUR = 60 * 60 * 1000;
-const hostScript = resolve("scripts/horizon.mjs");
+import { HOUR, hostScript } from "./horizon-convergence-fixture.js";
 
-// Fresh repositories and a local bare remote exercise real measurement and
-// durability. Only the external forge transport is controlled by this fixture.
 test("host requires an open exact-pushed-head review for bounded-age corrections", async () => {
   const root = await mkdtemp(join(tmpdir(), "horizon-review-host-"));
   const repo = join(root, "repo");
