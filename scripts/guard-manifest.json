@@ -765,6 +765,13 @@
       "testFile": "dist/test/operator-review-multipart.test.js"
     },
     {
+      "id": "operator/review-final-prompt-admitted-before-spend",
+      "why": "A near-limit immutable convergence proposal cannot spend partial model reviews when the final whole-source semantic prompt is provably too large; the full prompt lower bound must fail before any provider call.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "  assertFinalCrossFileBudget(contract, diff, history, material, plan);\n",
+      "testFile": "dist/test/operator-review-multipart.test.js"
+    },
+    {
       "id": "operator/review-parts-total-deadline",
       "why": "An actual provider pass followed by slow retained I/O cannot become a canonical pass after the original total deadline.",
       "file": "scripts/rhiz-harness.mjs",

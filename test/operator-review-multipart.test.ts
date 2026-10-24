@@ -56,6 +56,16 @@ test("operator CLI: production-sized multipart review covers exact UTF-8 bytes a
     const prompts = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string);
     assert.equal(prompts.length, record.parts.length + 1);
     assert.ok(prompts.every((prompt) => Buffer.byteLength(prompt) <= 200_000));
+    const nearLimitProposal = JSON.stringify({ paths: ["real-reviewed-change.ts"], patch: "X".repeat(196_000) });
+    const nearLimit = material({ ...base, blobs: base.blobs.map((entry) => entry.label === "integration"
+      ? { label: "integration", blob: blob(nearLimitProposal), digest: hash(nearLimitProposal) }
+      : entry) });
+    const trafficBefore = readFileSync(log, "utf8");
+    const rejectedBeforeSpend = invoke(nearLimit);
+    assert.notEqual(rejectedBeforeSpend.status, 0, "a near-limit complete proposal must fail at admission");
+    assert.match(rejectedBeforeSpend.stderr, /whole multipart provider input exceeds review size limit before any provider calls/);
+    assert.equal(readFileSync(log, "utf8"), trafficBefore, "unreviewable final input must spend zero partial provider calls");
+
     const reconstructed: Record<string, Buffer[]> = {};
     for (const prompt of prompts.slice(0, -1)) {
       const ranges = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1));
