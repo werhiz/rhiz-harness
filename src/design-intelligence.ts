@@ -12,6 +12,7 @@ import {
   streamIdForWork,
 } from "./refiner.js";
 import type { EvidenceRef, HarnessEvent, RefinerProposal } from "./schemas.js";
+import { WorkContractSchema, type WorkContract } from "./schemas.js";
 
 const id = z.string().trim().min(1).max(200);
 const shortText = z.string().trim().min(1).max(500);
@@ -19,6 +20,46 @@ const text = z.string().trim().min(1).max(4000);
 const evidenceRefs = z.array(id).min(1).max(64);
 const receiptEvidenceRefs = z.array(id).min(1).max(62);
 const sha256 = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+
+/** Selected design identity and the concrete qualities a repair must retain. */
+export const DesignContinuityPolicySchema = z.object({
+  baselineUri: z.string().trim().min(1).max(2048),
+  baselineDigest: sha256,
+  protectedFeatures: z.array(z.string().trim().min(1).max(500)).min(1).max(32),
+}).strict();
+export type DesignContinuityPolicy = z.infer<typeof DesignContinuityPolicySchema>;
+
+/**
+ * Bind design fidelity into an as-yet uncreated Work contract. This strengthens
+ * verification; it never grants additional tools, publication or write scope.
+ * Visual judgment is supplied by independent rendered review, not a code score.
+ */
+export function withDesignContinuity(input: WorkContract, policy: DesignContinuityPolicy): WorkContract {
+  const work = WorkContractSchema.parse(input);
+  const design = DesignContinuityPolicySchema.parse(policy);
+  const criteria = [
+    { id: "design:baseline", required: true, description: `Compare the rendered candidate with selected baseline ${design.baselineDigest} at ${design.baselineUri.slice(0, 500)}. Preserve its visual character and functional depth.` },
+    ...design.protectedFeatures.map((feature, index) => ({ id: `design:feature:${index + 1}`, required: true, description: `Preserve and exercise: ${feature}` })),
+    { id: "design:viewports", required: true, description: "Independently inspect the actual candidate on desktop and mobile, including composition, authentic assets, typography, spatial hierarchy, motion where applicable, and the primary action. A functional interaction must remain functional." },
+  ];
+  const evidence = [
+    { id: "design:screenshot:desktop", required: true, description: "Rendered desktop candidate screenshot with exact artifact identity", acceptedKinds: ["screenshot" as const] },
+    { id: "design:screenshot:mobile", required: true, description: "Rendered mobile candidate screenshot with exact artifact identity", acceptedKinds: ["screenshot" as const] },
+    { id: "design:interaction", required: true, description: "Browser proof exercising preserved interactions and the primary action on the exact candidate", acceptedKinds: ["browser" as const] },
+    { id: "design:comparison", required: true, description: "Independent rendered comparison against the selected baseline, covering every protected feature", acceptedKinds: ["review" as const] },
+  ];
+  const criterionIds = new Set(criteria.map(item => item.id));
+  const evidenceIds = new Set(evidence.map(item => item.id));
+  // Rebinding is idempotent; an existing durable Work still needs an explicit
+  // amendment before the resulting contract can execute through Crew.
+  return WorkContractSchema.parse({
+    ...work,
+    context: { ...work.context, resources: [...work.context.resources.filter(resource => resource.uri !== design.baselineUri), { uri: design.baselineUri, kind: "artifact" }] },
+    acceptanceCriteria: [...work.acceptanceCriteria.filter(item => !criterionIds.has(item.id)), ...criteria],
+    requiredEvidence: [...work.requiredEvidence.filter(item => !evidenceIds.has(item.id)), ...evidence],
+    verificationPolicy: { ...work.verificationPolicy, required: true, independentActor: true, reviewRequired: true },
+  });
+}
 
 export const DesignTargetSchema = z.discriminatedUnion("scope", [
   z.object({ scope: z.literal("rhiz-first-party"), surfaceId: id }).strict(),

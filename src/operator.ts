@@ -527,6 +527,17 @@ export async function closeOrphanedAttempts(input: OperatorWriteOptions & {
   const events = await input.ledger.replay(input.streamId);
   const { workId } = single(events);
   const board = projectBoard(events);
+  // Do not convert an interrupted verifier into a recovered SHIP attempt.
+  // Verification runs under its own independent actor. Synthesizing a result
+  // using the resume service's identity would forge that actor's verdict.
+  // Fail before spending another worker attempt or appending any recovery.
+  if (board.activeVerification !== null) {
+    throw new OperatorError(
+      "Cannot resume: an independent verification started but has no terminal result. " +
+      "Preserve the Ledger and recover the original verifier evidence before another attempt; " +
+      "operator resume cannot attest to a verifier result."
+    );
+  }
   const orphaned = Object.values(board.attempts).filter((attempt) => attempt.state === "running" || attempt.state === "blocked");
   if (orphaned.length === 0) return [];
   const now = input.now ?? (() => new Date().toISOString());

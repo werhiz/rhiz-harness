@@ -10,6 +10,7 @@ export * from "./crew.js";
 export * from "./design-intelligence.js";
 export * from "./disposable.js";
 export * from "./failure-taxonomy.js";
+export * from "./follow-through.js";
 export * from "./guard.js";
 export * from "./horizon.js";
 export * from "./host.js";

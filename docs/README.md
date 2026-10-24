@@ -6,11 +6,11 @@ This index is the entry point for readers. The repository also contains architec
 
 ## Current status
 
-Rhiz Harness is in active private dogfood and pre-alpha. The package remains private. The public open-source release boundary has not been crossed yet.
+Rhiz Harness is a **public alpha**, in active dogfood, under Apache-2.0. The source repository is public; the npm package is **unpublished** and retains `private: true` as a publication guard. No supported release line is declared. The [root release status](../README.md#license-and-release-status) and [publication record](OPEN_SOURCE_RELEASE_CHECKLIST.md#publication-record-2026-10-01) distinguish these boundaries.
 
 The shipped repository contains portable Work and event contracts, Board, Context, Crew, Guard, Verify, Router, Ledger, Refiner, integration control, sandboxing, Git worktree isolation, benchmarks, worker/provider seams, DSH adapters, a Codex App Server adapter, falsifiable guards, and a real repository Work runner.
 
-The proposed `rhiz` CLI described in `DEVELOPER_EXPERIENCE_V1.md` is design authority through ADR 0015, while the full CLI does not ship yet. Current operator entry points are the npm scripts documented in `GETTING_STARTED.md` and `REPOSITORY_WORK_RUNNER.md`.
+The full proposed `rhiz` CLI in `DEVELOPER_EXPERIENCE_V1.md` remains accepted design through ADR 0015. The shipped operator loop is `npm run operator -- ...` ([ADR 0026](decisions/0026-operator-loop-and-acceptance-driven-learning.md)); `npm run work:repository -- ...` is the bounded repository runner. See [Getting Started](GETTING_STARTED.md) for setup and the [root operator guide](../README.md#current-operator-path) for the current commands.
 
 ## Read this first
 
@@ -73,7 +73,7 @@ Source, tests, executed proof, and durable receipts determine what is actually w
 | Prove the Codex App Server path | [Getting Started: canary](GETTING_STARTED.md#run-the-real-codex-canary) |
 | Run verified Work against another repository | [Repository Work Runner](REPOSITORY_WORK_RUNNER.md) |
 | Diagnose common failures | [Troubleshooting](TROUBLESHOOTING.md) |
-| Prepare for public release | [Open Source Release Checklist](OPEN_SOURCE_RELEASE_CHECKLIST.md) |
+| Review package publication and support gates | [Open Source Release Checklist](OPEN_SOURCE_RELEASE_CHECKLIST.md) |
 
 ## Design and historical records
 

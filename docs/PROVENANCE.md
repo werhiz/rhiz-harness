@@ -1,6 +1,6 @@
 # Open-Source Provenance and Upstream Policy
 
-Rhiz Harness is intended to become an open-source project that learns aggressively from the best systems in the ecosystem while remaining able to explain exactly what it owns and what it inherited.
+Rhiz Harness is an open-source public alpha that learns from other systems while recording what it owns and what it inherited. The [publication record](OPEN_SOURCE_RELEASE_CHECKLIST.md#publication-record-2026-10-01) records the source-release boundary.
 
 This document is architectural policy, not legal advice. License compatibility must be verified before public redistribution.
 
@@ -38,7 +38,7 @@ A future machine-readable registry should live under `provenance/` and generate 
 
 ## License posture
 
-The intended Rhiz Harness core license is Apache-2.0, subject to formal review before public release.
+The Rhiz Harness core license is Apache-2.0, as recorded in [LICENSE](../LICENSE). New upstream adoption still requires the classification and attribution review below.
 
 Permissive upstream licenses such as Apache-2.0, MIT, BSD, and ISC are generally compatible candidates, but the exact license and notice obligations must still be recorded.
 

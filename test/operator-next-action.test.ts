@@ -98,3 +98,34 @@ test("verified Work may be reviewed even after its execution budget is spent", (
   assert.equal(status.attempts.total, status.attempts.budget);
   assert.equal(status.nextAction, "review");
 });
+
+test("interrupted verification refuses recovery before any Ledger writes or another worker attempt", async () => {
+  const ledger = new InMemoryEventLedger();
+  const original=[...successfulExecution(reviewedContract()),verificationStart()];
+  for (const item of original) await ledger.append(item);
+  await assert.rejects(
+    closeOrphanedAttempts({ledger,streamId:"stream:work:1"}),
+    /independent verification started but has no terminal result/
+  );
+  assert.deepEqual(await ledger.replay("stream:work:1"),original);
+  const status=summarizeOperatorWork(await ledger.replay("stream:work:1"));
+  assert.equal(status.readiness.ready,false);
+});
+
+test("a terminal verifier refusal may still resume without manufacturing a second result",async()=>{
+  const ledger=new InMemoryEventLedger();
+  const events=[
+    ...successfulExecution(reviewedContract()),
+    verificationStart(),
+    event("verification.result",{
+      verificationId:"verification:1",
+      contractRevision:1,
+      status:"fail",
+      criterionResults:[{criterionId:"criterion:tests",status:"fail",evidence:[]}],
+      evidenceSatisfaction:[],
+      falsifiability:{provenCriteria:["criterion:tests"],exemptedCriteria:[]},
+    },{actor:verifier}),
+  ];
+  for(const item of events)await ledger.append(item);
+  assert.deepEqual(await closeOrphanedAttempts({ledger,streamId:"stream:work:1"}),[]);
+});

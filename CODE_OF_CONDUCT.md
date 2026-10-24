@@ -36,7 +36,7 @@ This policy applies in project-controlled spaces including:
 
 ## Reporting conduct concerns
 
-During private dogfood, report conduct concerns privately to a repository maintainer through the established project channel. Do not publish private personal information as part of a report.
+During the public alpha, report conduct concerns privately to a repository maintainer through the established project channel. Do not publish private personal information as part of a report.
 
 Maintainers handling a report should limit information to the people needed to evaluate and resolve it, while preserving enough evidence to make a fair decision.
 

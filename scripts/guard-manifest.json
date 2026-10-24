@@ -2,6 +2,34 @@
   "$comment": "Each entry names one safety guard, the exact code that enforces it, and the test that must go red when that code is removed. A guard with no falsifying test is not a guard, it is a comment that compiles.",
   "guards": [
     {
+      "id": "crew/dispatch-cursor-current",
+      "why": "A concurrent operator can finish or amend Work after coordinator inspection; stale dispatch must refuse before workspace acquisition or worker effects.",
+      "file": "src/crew.ts",
+      "remove": "      if (mission.expectedLastEventId !== undefined && (existingEvents.at(-1)?.id ?? null) !== mission.expectedLastEventId) {\n        throw new Error(`Work ${work.id} changed after dispatch inspection; inspect it again`);\n      }\n",
+      "testFile": "dist/test/follow-through-review.test.js"
+    },
+    {
+      "id": "follow-through/interface-needs-selected-design",
+      "why": "An interface assignment without its selected baseline and protected features permits a generic replacement instead of preserving the approved design.",
+      "file": "src/follow-through.ts",
+      "remove": "  if (value.deliveryKind === \"interface\" && value.designContinuity === undefined) {\n    ctx.addIssue({ code: \"custom\", path: [\"designContinuity\"], message: \"Interface delivery requires its selected design reference and protected features\" });\n  }\n",
+      "testFile": "dist/test/follow-through-design.test.js"
+    },
+    {
+      "id": "follow-through/design-contract-bound",
+      "why": "A design policy recorded beside an unbound contract cannot make visual and interaction proof mandatory for acceptance.",
+      "file": "src/follow-through.ts",
+      "remove": "  if (value.designContinuity !== undefined && JSON.stringify(withDesignContinuity(value.mission.work, value.designContinuity)) !== JSON.stringify(value.mission.work)) {\n    ctx.addIssue({ code: \"custom\", path: [\"mission\", \"work\"], message: \"Bind design continuity into the Work contract with withDesignContinuity before dispatch\" });\n  }\n",
+      "testFile": "dist/test/follow-through-design.test.js"
+    },
+    {
+      "id": "follow-through/finished-awaits-verification",
+      "why": "Finished worker execution must wait for independent verification rather than spend another Attempt or appear accepted.",
+      "file": "src/follow-through.ts",
+      "remove": "        action = \"verify\"; reason = \"Worker execution finished; verification or an explicit repair decision is required\";\n",
+      "testFile": "dist/test/follow-through.test.js"
+    },
+    {
       "id": "verify/command-capture-retains-exact-evidence",
       "why": "A trusted capture must retain the exact observed command, target and bounded outcome before its result can carry evidence; altered receipt identities cannot become verification proof.",
       "file": "adapters/local/command-verifier.ts",
