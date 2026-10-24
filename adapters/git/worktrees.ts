@@ -29,6 +29,7 @@ import {
   type ExecutionRootDigestLimits,
 } from "../../src/workspace-digest.js";
 import { isValidatedGovernedConvergencePolicy, type ValidatedGovernedConvergencePolicy } from "./governed-convergence-policy.js";
+import { resolveNativeArtifactAllowances } from "../codex/native-artifact-identity.js";
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -304,7 +305,7 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
       // Ignored dependencies created by trusted preparation are included by the
       // execution-root digest. The resulting baseline therefore identifies the
       // bytes the worker and verifier will actually execute, not only git truth.
-      const baseline = await digestExecutionRoot(executionRoot, { limits: this.#digestLimits });
+      const baseline = await digestExecutionRoot(executionRoot, { limits: this.#digestLimits, fileSizeAllowances: await resolveNativeArtifactAllowances(executionRoot) });
       this.#records.set(workspaceId, {
         workspaceId,
         executionRoot,
@@ -338,7 +339,7 @@ export class GitWorktreeWorkspaceProvider implements CrewWorkspaceProvider {
       throw new Error(`workspace ${workspace.workspaceId} execution root does not match provider state`);
     }
     if (!existsSync(record.executionRoot)) throw new Error(`workspace ${workspace.workspaceId} no longer exists`);
-    const identity = await digestExecutionRoot(record.executionRoot, { limits: this.#digestLimits });
+    const identity = await digestExecutionRoot(record.executionRoot, { limits: this.#digestLimits, fileSizeAllowances: await resolveNativeArtifactAllowances(record.executionRoot) });
     if (record.governedPolicy) {
       const policy = record.governedPolicy;
       const head = gitText(record.executionRoot, ["rev-parse", "HEAD"]);

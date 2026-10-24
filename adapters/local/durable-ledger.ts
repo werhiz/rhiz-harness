@@ -103,15 +103,18 @@ function safeError(error: unknown): string {
 }
 
 async function syncDirectory(path: string): Promise<void> {
-  let handle: FileHandle | undefined;
+  const handle = await open(path, fsConstants.O_RDONLY);
+  const failures: unknown[] = [];
   try {
-    handle = await open(path, fsConstants.O_RDONLY);
     await handle.sync();
-  } catch {
-    // Some platforms do not permit directory fsync. The data file itself is still synced.
-  } finally {
-    await handle?.close().catch(() => undefined);
+  } catch (error) {
+    failures.push(error);
   }
+  try { await handle.close(); } catch (error) { failures.push(error); }
+  // A synced file does not establish durability of its directory entry. An
+  // unsupported directory barrier is unproven durability too, never success.
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, "Ledger directory sync failed");
 }
 
 async function writeAll(handle: FileHandle, value: Uint8Array): Promise<void> {
@@ -473,7 +476,16 @@ async function acquireLock(
       } finally {
         await handle.close();
       }
-      await syncDirectory(dirname(lockPath));
+      try {
+        await syncDirectory(dirname(lockPath));
+      } catch (error) {
+        // The lock bytes are complete and owned by this token. Failed
+        // publication must not strand a live-process lock or undo Ledger data.
+        try { await releaseLock(lockPath, token); } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], "Ledger lock publication failed");
+        }
+        throw error;
+      }
       return { recoveredStaleLock };
     } catch (error) {
       if (!isRecord(error) || error.code !== "EEXIST") throw error;
@@ -561,7 +573,8 @@ async function loadRecords(
   } catch (error) {
     if (!isRecord(error) || error.code !== "ENOENT") throw error;
     const handle = await open(filePath, "wx", 0o600);
-    await handle.close();
+    try { await handle.sync(); } finally { await handle.close(); }
+    await syncDirectory(dirname(filePath));
     return { records: [], repairedTailBytes: 0 };
   }
 
