@@ -16,6 +16,7 @@ import { z } from "zod";
 import {
   BenchmarkComparisonSchema,
   compareBenchmarkRuns,
+  serializeMeasurementCoverage,
   type BenchmarkComparison,
   type BenchmarkRun,
 } from "./benchmark.js";
@@ -108,6 +109,7 @@ function summarizeArm(runs: readonly BenchmarkRun[]): ReplayArmSummary {
 }
 
 function controlValue(run: BenchmarkRun, field: string): string | null {
+  if (field === "measurementCoverage") return serializeMeasurementCoverage(run.measurementCoverage);
   const value = (run as Record<string, unknown>)[field];
   if (value === undefined || value === null) return null;
   return typeof value === "string" ? value : JSON.stringify(value);
