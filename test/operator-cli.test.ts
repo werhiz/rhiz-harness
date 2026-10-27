@@ -392,3 +392,30 @@ test("operator CLI: whole immutable review material is delivered and identity-bo
     assert.equal(refused.providerResult.verdict.status, "pass");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("operator CLI refuses a provider pass contradicted by critical findings", () => {
+  const f = fixture();
+  try {
+    const id = "work:operator-severe-review";
+    const w = f.writeWork(id, true);
+    const started = cliRun(f, ["start", "--contract", w.contract, "--verify", w.verify, "--json"]);
+    assert.equal(started.status, 0, started.stderr);
+    const path = f.reviewer("contradictory-review.sh", "pass");
+    const verdict = JSON.stringify({
+      status: "pass", summary: "looks good",
+      findings: [{ severity: "critical", summary: "src/arm.txt:1 silently loses data" }],
+    });
+    writeFileSync(path, `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${verdict}'\n`);
+    chmodSync(path, 0o755);
+    const reviewed = cliRun(f, ["review", id, "--reviewer-command", path, "--json"]);
+    assert.equal(reviewed.status, 1, reviewed.stderr);
+    const result = json(reviewed);
+    assert.equal(result.review.verdict.status, "fail");
+    assert.match(result.review.verdict.summary, /declared pass with blocking findings/);
+    assert.equal(result.review.verdict.findings[0].severity, "critical");
+    assert.notEqual(result.status.nextAction, "accept");
+    assert.equal(json(cliRun(f, ["status", id, "--json"])).works[0].review.latest, "fail");
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
