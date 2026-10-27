@@ -63,7 +63,7 @@ function git(cwd, args) {
 async function regularJson(path) {
   // Open once without following symlinks. Validate and snapshot exactly the bytes
   // read from that descriptor, even if the original pathname is later replaced.
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > 1024 * 1024 || stat.nlink !== 1) {
