@@ -490,3 +490,25 @@ test("distinct tied runs produce the same unverified spend regardless of receipt
   assert.equal(forward.waste.unverifiedCostUsd, reordered.waste.unverifiedCostUsd);
   assert.deepEqual(forward, reordered);
 });
+
+test("threshold checks use exact completion counts instead of rounded rates", () => {
+  const strong = cohortRuns("worker:strong", "model-a", 1, 1, "strong");
+  const weak = cohortRuns("worker:weak", "model-b", 2, 3, "weak");
+  const observation = observeFactory({
+    runs: [...strong, ...weak],
+    events: shipContext([...strong, ...weak]),
+    config: { minimumCohortRuns: 1, minimumCompletionGap: 0.33334 },
+  });
+  // Exact gap 1/3 is below 0.33334; both used to round to 3333 basis points.
+  assert.equal(only(observation.findings, "cohort-gap").length, 0);
+
+  const five = cohortRuns("worker:perfect", "model-a", 5, 5, "five");
+  const four = cohortRuns("worker:near", "model-b", 4, 5, "four");
+  const boundary = observeFactory({
+    runs: [...five, ...four],
+    events: shipContext([...five, ...four]),
+    config: { minimumCompletionGap: 0.2 },
+  });
+  assert.equal(only(boundary.findings, "cohort-gap").length, 1,
+    "an exact one-fifth gap must meet its threshold");
+});
