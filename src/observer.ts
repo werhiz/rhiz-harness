@@ -795,7 +795,8 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
     compareText(a.variantId ?? "", b.variantId ?? "") ||
     compareInstants(a.startedAt, b.startedAt) ||
     compareText(a.workId ?? "", b.workId ?? "") ||
-    compareText(a.attemptIds.join(","), b.attemptIds.join(",")));
+    compareText(a.attemptIds.join(","), b.attemptIds.join(",")) ||
+    compareText(benchmarkRunIdentity(a), benchmarkRunIdentity(b)));
 
   const taskClasses = taskClassByWork(events);
   const cohorts = cohortsOf(runs, taskClasses);
