@@ -74,7 +74,7 @@ test('symlinked inputs and changed base are refused before spawn', () => {
   try {
     const linked = join(f.root, 'linked.json');
     symlinkSync(f.contract, linked);
-    for (const [contract, base] of [[linked, f.base], [f.contract, 'a'.repeat(40)]]) {
+    for (const [contract, base] of ([[linked, f.base], [f.contract, 'a'.repeat(40)]] as [string, string][])) {
       const result = run('start', '--repo', f.repo, '--contract', contract,
         '--verify', f.verify, '--base', base, '--dry-run');
       assert.notEqual(result.status, 0);
