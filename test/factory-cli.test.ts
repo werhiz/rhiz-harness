@@ -205,3 +205,20 @@ test("a bare or misspelled flag is refused instead of silently dropping evidence
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("factory refuses empty and whitespace-only input paths before filesystem access", () => {
+  for (const [command, flag] of [
+    ["observe", "--runs"],
+    ["observe", "--ledger"],
+    ["replay", "--experiment"],
+    ["replay", "--pairs"],
+  ]) {
+    for (const value of ["", "   "]) {
+      const result = factory([command, flag, value]);
+      assert.equal(result.status, 2, `${command} ${flag} ${JSON.stringify(value)}`);
+      assert.match(result.stderr, /needs a non-empty value/);
+      assert.doesNotMatch(result.stderr, /\n\s+at /);
+      assert.equal(result.stdout, "");
+    }
+  }
+});
