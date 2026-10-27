@@ -142,7 +142,7 @@ console.log(JSON.stringify({ delegated }));
         assert.deepEqual(JSON.parse(readFileSync(filepath, 'utf8')),
           mutate ? { changed: key } : originals[key]);
       }
-      const observationPath = result.stderr.match(/bb diagnostic observation: (.+) \\(not a verification or acceptance receipt\\)/)?.[1];
+      const observationPath = result.stderr.match(/bb diagnostic observation: (.+) \(not a verification or acceptance receipt\)/)?.[1];
       assert.ok(observationPath, 'missing diagnostic observation location');
       const observation = JSON.parse(readFileSync(observationPath, 'utf8')) as {
         workId: string;
