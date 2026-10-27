@@ -66,9 +66,17 @@ function toRun(raw) {
 async function readRuns(path) {
   const absolute = resolve(path);
   if ((await stat(absolute)).isDirectory()) {
-    const names = (await readdir(absolute)).filter((name) => name.endsWith(".json")).sort();
+    const names = (await readdir(absolute)).sort();
     if (names.length === 0) throw new UsageError(`no benchmark run files (*.json) in ${absolute}`);
-    return (await Promise.all(names.map((name) => readRuns(join(absolute, name))))).flat();
+    const unsupported = names.filter((name) => !name.endsWith(".json"));
+    if (unsupported.length > 0) {
+      throw new UsageError(`unsupported benchmark run entries in ${absolute}: ${unsupported.join(", ")} (only .json files are read)`);
+    }
+    const perFile = await Promise.all(names.map((name) => readRuns(join(absolute, name))));
+    perFile.forEach((runs, index) => {
+      if (runs.length === 0) throw new UsageError(`--runs ${join(absolute, names[index])} contains no benchmark runs`);
+    });
+    return perFile.flat();
   }
   const raw = JSON.parse(await readFile(absolute, "utf8"));
   return (Array.isArray(raw) ? raw : [raw]).map(toRun);
