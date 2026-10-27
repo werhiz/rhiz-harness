@@ -737,6 +737,13 @@
       "testFile": "dist/test/crew.test.js"
     },
     {
+      "id": "runner/failed-attempt-ends-on-receipt",
+      "why": "Crew durably records a failed attempt, including a worker that changed nothing. Without this stop the runner asserted on it and died with an uncaught exception and no receipt, so the operator saw only a crash (issue #12).",
+      "file": "scripts/run-repository-work.mjs",
+      "remove": "        process.exitCode = 1;\n        break repositoryRun;\n",
+      "testFile": "dist/test/repository-runner-no-candidate.test.js"
+    },
+    {
       "id": "board/claimed-candidate-keeps-authorship-refusal",
       "why": "Once a verification claims a candidate, who wrote it is exactly the question. The no-candidate reason must step aside there, or a candidate with no Guard-allowed write would be reported as an empty attempt instead of unproven authorship.",
       "file": "src/board.ts",

@@ -621,6 +621,64 @@ try {
         effortLevel: mission.workerResult?.runtime?.effortLevel,
       });
     }
+    // Crew already recorded this attempt as failed, including a worker that
+    // finished without producing a candidate. The Ledger holds that outcome
+    // and the operator routes it from there; repeating the same attempt blind
+    // would only spend the budget, so the run ends on its receipt.
+    if (mission.status === "failed" && mission.attemptId && mission.streamId) {
+      const failureEvents = await ledger.replay(mission.streamId);
+      const failed = failureEvents.find(
+        (event) => event.type === "attempt.failed" && event.attemptId === mission.attemptId,
+      );
+      if (failed) {
+        attempts.push({
+          attemptNumber,
+          attemptId: mission.attemptId,
+          candidateHead: null,
+          verificationStatus: null,
+          failedCheckIds: [],
+          failure: failed.payload.reason,
+        });
+        persistedBoard = projectBoard(failureEvents);
+        ledgerHeadDigest = (await ledger.integrity()).headDigest;
+        await emitReceipt({
+          schema: "rhiz/repository-work-run/v1",
+          generatedAt: new Date().toISOString(),
+          outcome: "attempt-failed",
+          repositoryRoot,
+          workId: work.id,
+          baseRevision,
+          remoteName,
+          preparation: preparation === null ? null : { command: preparation.command, args: preparation.args },
+          workerProviderId: mission.workerProviderId ?? null,
+          attempts,
+          attemptBudget,
+          resume: resuming ? { firstAttemptNumber, closedOrphanedAttemptIds, carriedRefusals } : null,
+          ledgerRoot,
+          candidate: null,
+          verification: null,
+          board: {
+            state: persistedBoard.state,
+            violationCount: persistedBoard.violations.length,
+            accepted: false,
+            integration: persistedBoard.integration,
+          },
+          checkpoint: null,
+          ledgerHeadDigest,
+          ...(benchmarkCaseId === null
+            ? {}
+            : {
+                benchmarkRun: benchmarkRunFor({
+                  outcome: "failed",
+                  verified: false,
+                  evidenceRefs: [failed.id],
+                }),
+              }),
+        });
+        process.exitCode = 1;
+        break repositoryRun;
+      }
+    }
     assert.equal(
       mission.status,
       "execution-finished",
