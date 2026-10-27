@@ -8,6 +8,8 @@ bb owns the terminal view, process lifecycle visibility and optional diagnostic 
 
 The wrapper `scripts/bb-supervise.mjs` supports only `start` and `status` through the existing `npm run operator --` entrypoint. It intentionally refuses `resume`, `review`, `accept`, `reject`, `harvest`, unknown flags, unpinned bases, symlinked input files, and oversized inputs. It is not a replacement for OS containment or Guard pre-effect mediation.
 
+For a real `start`, the wrapper reads each JSON input once through a no-symlink file descriptor, validates those exact bytes, and writes a private `0400` snapshot under `<target Git common dir>/rhiz-harness/bb-launch-inputs/launch-*/`. It derives the Work ID and diagnostic digests from that same snapshot content. Only snapshot paths are passed to the existing operator, closing the user-controlled pathname mutation window during its build and startup. The snapshots are retained for audit and must not be deleted during bb cleanup before the governed evidence is safely preserved. A `--dry-run` performs inspection only and does not create snapshots. This controls mutable input-path races, not malicious same-UID tampering or OS-level containment.
+
 ## Install and use on the Mac laptop
 
 Check out `werhiz/rhiz-harness` and use the repository's pinned Node 24.19.0 and npm 11.17.0. Run `npm ci --ignore-scripts --no-audit --no-fund`. Install bb on Apple Silicon macOS, and open a persistent **terminal** in bb for the harness checkout. Use the terminal, not a bb-native SHIP agent.
