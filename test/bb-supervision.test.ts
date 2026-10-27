@@ -163,19 +163,39 @@ console.log(JSON.stringify({ delegated }));
   }
 });
 
-test('FIFO input is refused promptly without blocking either dry-run or launch', () => {
-  const f = fixture();
-  try {
-    const fifo = join(f.root, 'blocked-contract.json');
-    execFileSync('mkfifo', [fifo]);
-    for (const dryRun of [true, false]) {
-      const args = ['start', '--repo', f.repo, '--contract', fifo,
-        '--verify', f.verify, '--base', f.base, ...(dryRun ? ['--dry-run'] : [])];
-      const result = spawnSync(process.execPath, [launcher, ...args],
-        { encoding: 'utf8', timeout: 5000 });
-      assert.equal(result.error, undefined, 'launcher blocked on a FIFO');
-      assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /must be a single-linked regular input file/);
+test('all input classes refuse FIFO paths without blocking or creating launch inputs', () => {
+  for (const key of ['contract', 'verify', 'prepare', 'local-config'] as const) {
+    for (const replaced of [false, true]) {
+      const f = fixture();
+      try {
+        const prepare = join(f.root, 'prepare.json');
+        const local = join(f.root, 'local.json');
+        writeFileSync(prepare, '{"command":"true","args":[]}');
+        writeFileSync(local, '{"backend":"fixture"}');
+        const inputs = { contract: f.contract, verify: f.verify,
+          prepare, 'local-config': local };
+        const target = inputs[key];
+        if (replaced) rmSync(target); // regular pathname replaced with a FIFO
+        const fifo = replaced ? target : join(f.root, 'direct-fifo.json');
+        execFileSync('mkfifo', [fifo]);
+        const args = [
+          'start', '--repo', f.repo,
+          '--contract', key === 'contract' && !replaced ? fifo : f.contract,
+          '--verify', key === 'verify' && !replaced ? fifo : f.verify,
+          '--prepare', key === 'prepare' && !replaced ? fifo : prepare,
+          '--local-config', key === 'local-config' && !replaced ? fifo : local,
+          '--base', f.base,
+        ];
+        for (const dryRun of [true, false]) {
+          const result = spawnSync(process.execPath, [launcher, ...args,
+            ...(dryRun ? ['--dry-run'] : [])], { encoding: 'utf8', timeout: 5000 });
+          assert.equal(result.error, undefined, `${key} FIFO blocked the launcher`);
+          assert.notEqual(result.status, 0, `${key} unexpectedly succeeded`);
+          assert.match(result.stderr, /must be a single-linked regular input file/);
+          assert.equal(existsSync(join(f.repo, '.git', 'rhiz-harness', 'bb-launch-inputs')),
+            false, 'refused input created a launch snapshot');
+        }
+      } finally { rmSync(f.root, { recursive: true, force: true }); }
     }
-  } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
 });
