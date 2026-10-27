@@ -154,3 +154,28 @@ the independent check agent; the 2026-10-01 public-repository decision above
 superseded it. Other repositories need their own review
 before a production deploy or payment audit is retired.
 
+
+
+**Multipart review capacity decision (2026-10-12), owner: #4370 release integrator.**
+The real 22-conflict integration requires more than 1.18 MB of original/main/base
+Source before its projection. The existing 200 KB complete-input refusal caught
+that mismatch without model traffic. Use the same operator-signed local Claude
+subscription for bounded semantic parts and one actual integration review; do
+not use a hosted API, new credential or paid runner. This consumes local
+subscription capacity, not a verified dollar charge. Keep the 200 KB per-input
+ceiling, 64-part maximum, 45-minute total deadline and actual provider-reported
+usage. Every production-sized proof names its specific call/time budget before
+execution and retains partial failures. Review the measured actual proof and
+usage against the exact candidate before landing; until then, the new capability
+has no observed model-success or saving claim. The prior smaller single-input
+proof and public CI success cannot establish this larger semantic admission.
+
+The #4370 complete-review lane observed the 6df3d9b guard job cancel at its
+unchanged 30-minute ceiling (run 38316378225), with four available CPUs and
+three resolved workers; build succeeded and DSH skipped. Physical test grouping
+now routes each declared predicate to its nearest complete owning cases. Every
+original case and assertion remains in the full unit glob; neither concurrency
+nor the workflow ceiling changes. The original stalled local stdin control is
+retained as failure. Local extracted timings are observations, not a claimed
+hosted per-guard timing or identical green baseline. Owner: #4370 release lead;
+review date: 2026-10-12. All exact-head hosted gates remain mandatory.

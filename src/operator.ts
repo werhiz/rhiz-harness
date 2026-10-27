@@ -284,7 +284,7 @@ export function summarizeOperatorWorks(statuses: readonly OperatorWorkStatus[]):
  * candidate first turns every refusal into an error raised before the
  * irreversible append rather than a violation discovered after it.
  */
-async function appendAdmitted(ledger: EventLedger, events: readonly HarnessEvent[], candidates: readonly HarnessEvent[]) {
+async function appendAdmitted(ledger: EventLedger, events: readonly HarnessEvent[], candidates: readonly HarnessEvent[], beforeAppend?: () => void) {
   const before = projectBoard(events);
   let current = before;
   let history = [...events];
@@ -297,7 +297,10 @@ async function appendAdmitted(ledger: EventLedger, events: readonly HarnessEvent
     }
     current = next;
   }
-  for (const candidate of candidates) await ledger.append(candidate);
+  for (const candidate of candidates) {
+    beforeAppend?.();
+    await ledger.append(candidate);
+  }
   return current;
 }
 
@@ -316,6 +319,8 @@ export interface OperatorReviewInput extends OperatorWriteOptions {
   evidence?: readonly EvidenceRef[];
   /** What the reviewing provider reported spending. Omit when it reported nothing. */
   observedUsage?: ObservedUsage;
+  /** Recheck time-sensitive admission after replay and before each durable review event. */
+  beforeAppend?: () => void;
 }
 
 /** Record one complete, independent review lifecycle against the current contract revision. */
@@ -389,7 +394,7 @@ export async function recordOperatorReview(input: OperatorReviewInput): Promise<
       },
     }),
   ];
-  await appendAdmitted(input.ledger, events, candidates);
+  await appendAdmitted(input.ledger, events, candidates, input.beforeAppend);
   return summarizeOperatorWork(await input.ledger.replay(input.streamId));
 }
 

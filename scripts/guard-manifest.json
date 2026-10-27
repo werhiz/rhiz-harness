@@ -636,21 +636,21 @@
       "why": "Remote Work artifacts must retain the full reviewed packet and projected objects, not just strings naming local objects.",
       "file": "scripts/horizon.mjs",
       "remove": "  pushHarnessCheckpoint({ repositoryRoot: repo, ref, head });\n",
-      "testFile": "dist/test/horizon-host-review.test.js"
+      "testFile": "dist/test/horizon-convergence-recovery.test.js"
     },
     {
       "id": "integration/convergence-custody-is-in-root",
       "why": "A linked nested Context directory must not redirect private input custody outside the source repository.",
       "file": "scripts/horizon.mjs",
       "remove": "if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(\"convergence custody ancestor is not an owned directory\");",
-      "testFile": "dist/test/horizon-host-review.test.js"
+      "testFile": "dist/test/horizon-convergence.test.js"
     },
     {
       "id": "integration/convergence-intent-precedes-effect",
       "why": "A killed operator must leave a durable exact effect intent before source mutation and support observation-only recovery.",
       "file": "scripts/horizon.mjs",
       "remove": "    await recordConvergenceArtifact(canonical, workId, \"intent\", intent);\n",
-      "testFile": "dist/test/horizon-host-review.test.js"
+      "testFile": "dist/test/horizon-convergence-recovery.test.js"
     },
     {
       "id": "integration/convergence-producer-does-not-review",
@@ -664,14 +664,14 @@
       "why": "A frozen historical PR comparison base cannot establish current accepted-main authority; the actual repository branch ref must match local integration.",
       "file": "scripts/horizon.mjs",
       "remove": "acceptedMain.object?.sha !== integration || ",
-      "testFile": "dist/test/horizon-host-review.test.js"
+      "testFile": "dist/test/horizon-convergence-forge.test.js"
     },
     {
       "id": "integration/convergence-ready-context-is-resolution-only",
       "why": "A genuine READY review may supply integration context but never skip actual execution or become an ordinary/terminal correction receipt.",
       "file": "scripts/horizon.mjs",
       "remove": ", input.purpose === \"resolve-integration\"",
-      "testFile": "dist/test/horizon-host-review.test.js"
+      "testFile": "dist/test/horizon-convergence-forge.test.js"
     },
     {
       "id": "integration/governed-review-heading-binds-full-head",
@@ -720,14 +720,127 @@
       "why": "A manifest-only model verdict cannot judge referenced source semantics; whole immutable source evidence must reach the actual independent reviewer.",
       "file": "scripts/rhiz-harness.mjs",
       "remove": ", material.text",
-      "testFile": "dist/test/operator-cli.test.js"
+      "testFile": "dist/test/operator-review-material.test.js"
     },
     {
       "id": "operator/review-material-is-durable",
       "why": "A passing review must durably bind the material actually supplied alongside its candidate diff; an opaque pass cannot authorize source convergence.",
       "file": "scripts/rhiz-harness.mjs",
-      "remove": ", ...(material ? [material.evidence] : [])",
-      "testFile": "dist/test/operator-cli.test.js"
+      "remove": ", ...(material ? [material.evidence, completed.evidence, completed.observation] : [])",
+      "testFile": "dist/test/operator-review-material.test.js"
+    },
+    {
+      "id": "operator/review-parts-range-boundary",
+      "why": "Complete multipart evidence and actual independent semantic/integration review are required before one canonical Review can authorize convergence.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "range.start !== offset || ",
+      "testFile": "dist/test/operator-review-coverage.test.js"
+    },
+    {
+      "id": "operator/review-parts-complete-byte-coverage",
+      "why": "Complete multipart evidence and actual independent semantic/integration review are required before one canonical Review can authorize convergence.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "    if (content !== body.content) throw new Error(\"review part coverage differs from complete material\");\n",
+      "testFile": "dist/test/operator-review-coverage.test.js"
+    },
+    {
+      "id": "operator/review-parts-no-trailing-duplicate",
+      "why": "Complete multipart evidence and actual independent semantic/integration review are required before one canonical Review can authorize convergence.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "  if (cursor !== actual.length) throw new Error(\"review part coverage differs from complete material\");\n",
+      "testFile": "dist/test/operator-review-coverage.test.js"
+    },
+    {
+      "id": "operator/review-parts-all-semantic-results-pass",
+      "why": "One shared semantic admission predicate requires every live and retained part/final reviewer decision to pass; missing/malformed statuses refuse, and deleting the predicate must fail actual admission controls.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "  if (result?.verdict?.status !== \"pass\") throw new Error(`independent semantic ${phase} review refused`);\n",
+      "testFile": "dist/test/operator-review-multipart.test.js"
+    },
+    {
+      "id": "operator/review-parts-input-ceiling-cannot-grow",
+      "why": "Caller environment cannot enlarge the actual independent provider input beyond the complete 200 KB inspection bound.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": ", 200_000",
+      "testFile": "dist/test/operator-review-multipart.test.js"
+    },
+    {
+      "id": "operator/review-final-prompt-admitted-before-spend",
+      "why": "A near-limit immutable convergence proposal cannot spend partial model reviews when the final whole-source semantic prompt is provably too large; the full prompt lower bound must fail before any provider call.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "  assertFinalCrossFileBudget(contract, diff, history, material, plan);\n",
+      "testFile": "dist/test/operator-review-multipart.test.js"
+    },
+    {
+      "id": "operator/review-parts-total-deadline",
+      "why": "An actual provider pass followed by slow retained I/O cannot become a canonical pass after the original total deadline.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "  if (!Number.isFinite(deadline) || now >= deadline) throw new Error(\"complete review time budget expired\");\n",
+      "testFile": "dist/test/operator-review-material.test.js"
+    },
+    {
+      "id": "operator/review-append-admission",
+      "why": "A review deadline can expire during asynchronous Ledger replay or between lifecycle appends; an expired result must never become a canonical pass.",
+      "file": "src/operator.ts",
+      "remove": "    beforeAppend?.();\n",
+      "testFile": "dist/test/operator.test.js"
+    },
+    {
+      "id": "operator/review-parts-observation-binds-results",
+      "why": "Fresh-fetch recovery must reject an altered semantic part report even when input identities are unchanged.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "reviewDigest(JSON.stringify(part.result)) !== coverage.partResultDigests[index] || ",
+      "testFile": "dist/test/horizon-convergence-recovery.test.js"
+    },
+    {
+      "id": "integration/convergence-semantic-observation-durable",
+      "why": "Intent-only fresh fetch must reconstruct all actual independent semantic inputs and decisions, not depend on local private logs.",
+      "file": "scripts/horizon.mjs",
+      "remove": ", reviewObservation.head",
+      "testFile": "dist/test/horizon-convergence-recovery.test.js"
+    },
+    {
+      "id": "operator/review-private-custody-precedes-writes",
+      "why": "Whole source prompts must never follow a nested private reviews link outside Git-common custody, even when the later effect gate refuses.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(root) !== root) throw new Error(\"private review custody has a linked or foreign ancestor\");\n",
+      "testFile": "dist/test/operator-review-material.test.js"
+    },
+    {
+      "id": "operator/review-material-cumulative-pre-read",
+      "why": "Bounded complete evidence must reject excess cumulative blob bytes before allocation, not after reading 320 individually allowed objects.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": " || admittedBytes + size > MAX_COMPLETE_REVIEW_BYTES",
+      "testFile": "dist/test/operator-review-multipart.test.js"
+    },
+    {
+      "id": "integration/source-index-read-is-complete",
+      "why": "The real app index is over the default 1 MiB exec buffer; source identity must cover it fully rather than fail/truncate before forge checks.",
+      "file": "scripts/horizon.mjs",
+      "remove": "maxBuffer, ",
+      "testFile": "dist/test/horizon-convergence-material.test.js"
+    },
+    {
+      "id": "operator/review-material-logical-pre-aggregate",
+      "why": "Repeated immutable references and JSON escaping must be bounded before aggregate serialization, including aliases and metadata.",
+      "file": "scripts/rhiz-harness.mjs",
+      "remove": "    if (logicalBytes > MAX_COMPLETE_REVIEW_BYTES) throw new Error(\"logical review material exceeds bounded multipart size\");\n",
+      "testFile": "dist/test/operator-review-multipart.test.js"
+    },
+    {
+      "id": "integration/convergence-retention-exact-private-bytes",
+      "why": "Complete multi-megabyte semantic observations must use owned private exact file bytes, retain their immutable hash and clean temporary custody.",
+      "file": "scripts/horizon.mjs",
+      "remove": "      writeFileSync(filename, stable(content), { mode: 0o600, flag: \"wx\" });\n",
+      "testFile": "dist/test/horizon-retained-observation.test.js"
+    },
+    {
+      "id": "integration/convergence-retention-bounded-git",
+      "why": "A retained Review outcome cannot leave artifact hashing unbounded; transport timeout must preserve Review and refuse before Source effect.",
+      "file": "scripts/horizon.mjs",
+      "remove": "timeout: CONVERGENCE_RETENTION_GIT_TIMEOUT_MS, ",
+      "testFile": "dist/test/horizon-retained-observation.test.js"
+
     },
     {
       "id": "crew/empty-ship-attempt-is-not-finished",
