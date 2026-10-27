@@ -52,6 +52,7 @@ function parseArgs(command, argv) {
     if (name === null || !(name in values)) throw new UsageError(`unknown argument ${arg}\n${usage()}`);
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) throw new UsageError(`--${name} needs a value\n${usage()}`);
+    if (value.trim().length === 0) throw new UsageError(`--${name} needs a non-empty value\n${usage()}`);
     values[name].push(value);
     index += 1;
   }
