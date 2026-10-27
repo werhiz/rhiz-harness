@@ -264,3 +264,35 @@ test("a second attempt that succeeds counts as recovered in status, as the Refin
   assert.equal(result.learning.analysis?.classifications.includes("successful-recovery"), true);
   assert.equal(result.status.metrics.humanDecisions, 2, "stating the Work and accepting it");
 });
+
+test("review refuses a failed attempt with no verified candidate and preserves resume", async () => {
+  const execution = successfulExecution();
+  const failed = [
+    ...execution.slice(0, -1),
+    event("attempt.failed", { reason: "worker crashed", recoverable: true }, {
+      taskId: "task:1", attemptId: "attempt:1", actor: worker,
+    }),
+  ];
+  const ledger = await ledgerWith(failed);
+  const before = summarizeOperatorWork(await ledger.replay(STREAM));
+  assert.equal(before.state, "failed");
+  assert.equal(before.nextAction, "resume");
+  await assert.rejects(
+    recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "fail", summary: "unfinished", now, idFactory }),
+    (error: unknown) => error instanceof OperatorError && /no verified current candidate/.test(error.message),
+  );
+  assert.deepEqual(await ledger.replay(STREAM), failed, "refusal must append no review events");
+  const after = summarizeOperatorWork(await ledger.replay(STREAM));
+  assert.equal(after.state, "failed");
+  assert.equal(after.nextAction, "resume");
+});
+
+test("review refuses a finished but unverified Work and leaves it continuable", async () => {
+  const ledger = await ledgerWith(successfulExecution());
+  const before = await ledger.replay(STREAM);
+  await assert.rejects(
+    recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "pass", summary: "looks okay", now, idFactory }),
+    /no verified current candidate/,
+  );
+  assert.deepEqual(await ledger.replay(STREAM), before);
+});
