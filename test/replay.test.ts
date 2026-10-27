@@ -352,3 +352,24 @@ test("re-running a favourable case cannot outweigh the others", () => {
   assert.equal(padded.refusedPairs.length, 4);
   assert.match(padded.refusedPairs[0]!.reason, /surplus trial/);
 });
+
+test("equivalent measurement coverage with different object key order is the same control", () => {
+  const pairs = fullCorpus();
+  for (const trial of pairs) {
+    const coverage = trial.candidate.measurementCoverage!;
+    // Public callers can supply BenchmarkRun-shaped objects without parsing
+    // them first. Key insertion order must have no semantic effect.
+    trial.candidate = {
+      ...trial.candidate,
+      measurementCoverage: {
+        usage: coverage.usage,
+        humanInterventions: coverage.humanInterventions,
+        wallClock: coverage.wallClock,
+      },
+    };
+  }
+  const result = summarizeReplayExperiment(spec(), pairs);
+  assert.equal(result.verdict, "no-difference");
+  assert.equal(result.refusedPairs.length, 0);
+  assert.equal(result.comparisons.length, pairs.length);
+});

@@ -117,6 +117,16 @@ export function clericalInterventionCount(run: BenchmarkRun): number {
   return run.humanInterventions.filter((intervention) => intervention.clerical).length;
 }
 
+/** Stable, schema-ordered control identity for hand-built as well as parsed runs. */
+export function serializeMeasurementCoverage(coverage: BenchmarkRun["measurementCoverage"]): string | null {
+  if (coverage === undefined) return null;
+  return JSON.stringify({
+    wallClock: coverage.wallClock,
+    humanInterventions: coverage.humanInterventions,
+    usage: coverage.usage,
+  });
+}
+
 export function parseBenchmarkRun(input: unknown): BenchmarkRun {
   return BenchmarkRunSchema.parse(input);
 }
@@ -375,10 +385,6 @@ export function compareBenchmarkRuns(
     }
   }
 
-  const controlValue = (value: unknown): string | null => {
-    if (value === undefined || value === null) return null;
-    return typeof value === "string" ? value : JSON.stringify(value);
-  };
   const controls: Array<
     [BenchmarkControlDimension, string | null, string | null]
   > = [
@@ -414,8 +420,8 @@ export function compareBenchmarkRuns(
     ],
     [
       "measurementCoverage",
-      controlValue(baseline.measurementCoverage),
-      controlValue(candidate.measurementCoverage),
+      serializeMeasurementCoverage(baseline.measurementCoverage),
+      serializeMeasurementCoverage(candidate.measurementCoverage),
     ],
   ];
   const knownControlDimensions = new Set<string>(
