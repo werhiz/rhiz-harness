@@ -222,3 +222,25 @@ test("factory refuses empty and whitespace-only input paths before filesystem ac
     }
   }
 });
+
+test("runs directory reports skipped files and empty JSON members", () => {
+  const root = mkdtempSync(join(tmpdir(), "rhiz-factory-input-proof-"));
+  try {
+    writeFileSync(join(root, "valid.json"), JSON.stringify(benchRun()));
+    writeFileSync(join(root, "receipt.jsonl"), JSON.stringify(benchRun()));
+    const ignored = factory(["observe", "--runs", root]);
+    assert.equal(ignored.status, 2);
+    assert.match(ignored.stderr, /unsupported benchmark run entries/);
+    assert.match(ignored.stderr, /receipt\.jsonl/);
+    assert.equal(ignored.stdout, "");
+
+    rmSync(join(root, "receipt.jsonl"));
+    writeFileSync(join(root, "empty.json"), "[]");
+    const missing = factory(["observe", "--runs", root]);
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /empty\.json contains no benchmark runs/);
+    assert.equal(missing.stdout, "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
