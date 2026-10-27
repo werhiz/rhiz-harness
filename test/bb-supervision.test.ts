@@ -162,3 +162,20 @@ console.log(JSON.stringify({ delegated }));
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   }
 });
+
+test('FIFO input is refused promptly without blocking either dry-run or launch', () => {
+  const f = fixture();
+  try {
+    const fifo = join(f.root, 'blocked-contract.json');
+    execFileSync('mkfifo', [fifo]);
+    for (const dryRun of [true, false]) {
+      const args = ['start', '--repo', f.repo, '--contract', fifo,
+        '--verify', f.verify, '--base', f.base, ...(dryRun ? ['--dry-run'] : [])];
+      const result = spawnSync(process.execPath, [launcher, ...args],
+        { encoding: 'utf8', timeout: 5000 });
+      assert.equal(result.error, undefined, 'launcher blocked on a FIFO');
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /must be a single-linked regular input file/);
+    }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
