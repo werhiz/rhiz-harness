@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -141,7 +142,21 @@ console.log(JSON.stringify({ delegated }));
         assert.deepEqual(JSON.parse(readFileSync(filepath, 'utf8')),
           mutate ? { changed: key } : originals[key]);
       }
-      assert.match(result.stderr, /diagnostic observation:/);
+      const observationPath = result.stderr.match(/bb diagnostic observation: (.+) \\(not a verification or acceptance receipt\\)/)?.[1];
+      assert.ok(observationPath, 'missing diagnostic observation location');
+      const observation = JSON.parse(readFileSync(observationPath, 'utf8')) as {
+        workId: string;
+        inputDigests: Record<string, string>;
+        processExitCode: number;
+        authority: string;
+      };
+      assert.equal(observation.workId, 'work:bb-fixture');
+      assert.equal(observation.authority, 'diagnostic-only');
+      assert.equal(observation.processExitCode, 0);
+      for (const key of Object.keys(sources)) {
+        assert.equal(observation.inputDigests[key],
+          createHash('sha256').update(JSON.stringify(originals[key])).digest('hex'), key);
+      }
       assert.equal(execFileSync('git', ['-C', f.repo, 'status', '--porcelain'],
         { encoding: 'utf8' }).trim(), '');
     } finally { rmSync(f.root, { recursive: true, force: true }); }
