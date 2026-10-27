@@ -2,7 +2,8 @@
 // bb supervises the terminal/process; Rhiz governs Work and its evidence.
 import { spawn, execFileSync } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
-import { readFile, lstat, mkdir, writeFile, rename, rm } from 'node:fs/promises';
+import { open, readFile, lstat, mkdir, mkdtemp, writeFile, rename, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,11 +61,30 @@ function git(cwd, args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 async function regularJson(path) {
-  const stat = await lstat(path);
-  if (!stat.isFile() || stat.size > 1024 * 1024) throw Error(`${basename(path)} must be a regular input file of at most 1 MiB`);
-  const bytes = await readFile(path);
-  JSON.parse(bytes.toString('utf8'));
-  return bytes;
+  // Open once without following symlinks. Validate and snapshot exactly the bytes
+  // read from that descriptor, even if the original pathname is later replaced.
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > 1024 * 1024 || stat.nlink !== 1) {
+      throw Error(`${basename(path)} must be a single-linked regular input file of at most 1 MiB`);
+    }
+    const bytes = await handle.readFile();
+    if (bytes.length > 1024 * 1024) throw Error(`${basename(path)} exceeds the 1 MiB input bound`);
+    JSON.parse(bytes.toString('utf8'));
+    return bytes;
+  } finally { await handle.close(); }
+}
+
+async function privateSnapshotDirectory(commonDir) {
+  const ownerRoot = join(commonDir, 'rhiz-harness', 'bb-launch-inputs');
+  await mkdir(ownerRoot, { recursive: true, mode: 0o700 });
+  const stat = await lstat(ownerRoot);
+  if (!stat.isDirectory() || (stat.mode & 0o077) !== 0 ||
+      (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
+    throw Error('bb launch input root must be a private owner-controlled directory');
+  }
+  return mkdtemp(join(ownerRoot, 'launch-'));
 }
 async function plan(action, opts) {
   const root = git(resolve(opts.repo), ['rev-parse', '--show-toplevel']);
@@ -81,16 +101,39 @@ async function plan(action, opts) {
       if (opts[key] !== undefined) {
         const file = resolve(opts[key]);
         const bytes = await regularJson(file);
-        files[key] = { path: file, sha256: createHash('sha256').update(bytes).digest('hex') };
+        files[key] = { path: file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
       }
     }
-    const contract = JSON.parse((await readFile(files.contract.path)).toString('utf8'));
+    // Derive the identity from the same descriptor-backed bytes we will hand off.
+    const contract = JSON.parse(files.contract.bytes.toString('utf8'));
     if (typeof contract?.id !== 'string' || !contract.id.startsWith('work:')) {
       throw Error('Contract requires a Work id; full schema is validated by operator');
     }
     workId = contract.id;
     inputDigest = Object.fromEntries(Object.entries(files).map(([key, value]) => [key, value.sha256]));
-    for (const key of INPUT_KEYS) if (files[key]) argv.push(`--${key}`, files[key].path);
+    let snapshotDir = null;
+    try {
+      // Dry-run is side-effect free. A real launch delegates *only* private
+      // read-only snapshots, never the original mutable user input paths.
+      if (!opts['dry-run']) {
+        snapshotDir = await privateSnapshotDirectory(commonDir);
+        for (const key of INPUT_KEYS) {
+          if (files[key]) {
+            const pathname = join(snapshotDir, `${key}.json`);
+            await writeFile(pathname, files[key].bytes, { mode: 0o400, flag: 'wx' });
+            const actual = createHash('sha256').update(await readFile(pathname)).digest('hex');
+            if (actual !== files[key].sha256) throw Error('bb snapshot digest mismatch before launch');
+            files[key].delegatedPath = pathname;
+          }
+        }
+      }
+      for (const key of INPUT_KEYS) {
+        if (files[key]) argv.push(`--${key}`, files[key].delegatedPath ?? files[key].path);
+      }
+    } catch (error) {
+      if (snapshotDir !== null) await rm(snapshotDir, { recursive: true, force: true });
+      throw error;
+    }
     argv.push('--base', opts.base);
     if (opts['correlation-id']) argv.push('--correlation-id', opts['correlation-id']);
   } else if (workId) {
