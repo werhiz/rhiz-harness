@@ -212,7 +212,7 @@ test("factory refuses empty and whitespace-only input paths before filesystem ac
     ["observe", "--ledger"],
     ["replay", "--experiment"],
     ["replay", "--pairs"],
-  ]) {
+  ] as const) {
     for (const value of ["", "   "]) {
       const result = factory([command, flag, value]);
       assert.equal(result.status, 2, `${command} ${flag} ${JSON.stringify(value)}`);
