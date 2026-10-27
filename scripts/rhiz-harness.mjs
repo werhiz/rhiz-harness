@@ -416,7 +416,14 @@ function extractVerdict(text) {
   const findings = Array.isArray(verdict.findings)
     ? verdict.findings.filter((item) => severities.has(item?.severity) && typeof item?.summary === "string" && item.summary.trim())
     : [];
-  return { status: verdict.status, summary: verdict.summary.trim(), findings };
+  // A provider's summary status cannot override its own blocking defects.
+  // Fail closed and retain the contradictory report as inspectable evidence.
+  const blocking = findings.some((finding) => finding.severity === "high" || finding.severity === "critical");
+  const status = blocking ? "fail" : verdict.status;
+  const summary = blocking && verdict.status === "pass"
+    ? `Reviewer declared pass with blocking findings: ${verdict.summary.trim()}`
+    : verdict.summary.trim();
+  return { status, summary, findings };
 }
 
 // Only what the provider itself reported. Absent fields stay absent: a review
