@@ -15,6 +15,7 @@ export * from "./guard.js";
 export * from "./horizon.js";
 export * from "./host.js";
 export * from "./http-effects.js";
+export * from "./identifier-order.js";
 export * from "./integration.js";
 export * from "./intent-compiler.js";
 export * from "./ledger.js";
