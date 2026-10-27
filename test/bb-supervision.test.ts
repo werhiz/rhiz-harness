@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,4 +80,70 @@ test('symlinked inputs and changed base are refused before spawn', () => {
       assert.notEqual(result.status, 0);
     }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('delegated snapshots remain bound if original inputs change after planning', () => {
+  for (const mutate of [false, true]) {
+    const f = fixture();
+    try {
+      const prepare = join(f.root, 'prepare.json');
+      const local = join(f.root, 'local.json');
+      const sources: Record<string, string> = { contract: f.contract, verify: f.verify, prepare, 'local-config': local };
+      const originals: Record<string, unknown> = {
+        contract: { id: 'work:bb-fixture' },
+        verify: { checks: ['original'] },
+        prepare: { command: 'true', args: [] },
+        'local-config': { backend: 'fixture' },
+      };
+      for (const [key, filepath] of Object.entries(sources)) writeFileSync(filepath, JSON.stringify(originals[key]));
+      const bin = join(f.root, 'bin');
+      mkdirSync(bin);
+      const npm = join(bin, 'npm');
+      // This executable stands in for npm/operator. It replaces *all* user
+      // input files before reading the paths actually delegated by the wrapper.
+      writeFileSync(npm, `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const sources = JSON.parse(process.env.RHIZ_BB_TEST_SOURCES);
+if (process.env.RHIZ_BB_TEST_MUTATE === 'yes') {
+  for (const [key, path] of Object.entries(sources)) {
+    fs.writeFileSync(path, JSON.stringify({ changed: key }));
+  }
+}
+const delegated = {};
+for (const key of ['contract','verify','prepare','local-config']) {
+  const index = args.indexOf('--' + key);
+  if (index < 0) throw Error('missing delegated ' + key);
+  const path = args[index + 1];
+  delegated[key] = { path, value: JSON.parse(fs.readFileSync(path, 'utf8')) };
+}
+console.log(JSON.stringify({ delegated }));
+`);
+      chmodSync(npm, 0o700);
+      const result = spawnSync(process.execPath, [launcher,
+        'start', '--repo', f.repo, '--contract', f.contract, '--verify', f.verify,
+        '--prepare', prepare, '--local-config', local, '--base', f.base,
+      ], { encoding: 'utf8', env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        RHIZ_BB_TEST_MUTATE: mutate ? 'yes' : 'no',
+        RHIZ_BB_TEST_SOURCES: JSON.stringify(sources),
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as {
+        delegated: Record<string, { path: string; value: unknown }>;
+      };
+      for (const [key, filepath] of Object.entries(sources)) {
+        assert.deepEqual(observed.delegated[key]?.value, originals[key], key);
+        assert.notEqual(observed.delegated[key]?.path, filepath, key);
+        assert.match(observed.delegated[key]?.path ?? '', /bb-launch-inputs\/launch-/);
+        assert.equal(existsSync(observed.delegated[key]!.path), true);
+        assert.deepEqual(JSON.parse(readFileSync(filepath, 'utf8')),
+          mutate ? { changed: key } : originals[key]);
+      }
+      assert.match(result.stderr, /diagnostic observation:/);
+      assert.equal(execFileSync('git', ['-C', f.repo, 'status', '--porcelain'],
+        { encoding: 'utf8' }).trim(), '');
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
 });
