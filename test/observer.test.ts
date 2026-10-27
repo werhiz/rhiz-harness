@@ -475,3 +475,18 @@ test("a completion gap exactly at the threshold counts, whatever the floating-po
     assert.equal(observation.findings.filter((finding) => finding.kind === "cohort-gap").length, 1, `${high}/${total} vs ${low}/${total}`);
   }
 });
+
+test("distinct tied runs produce the same unverified spend regardless of receipt order", () => {
+  // These nonnegative costs straddle the four-place rounding boundary when
+  // added in a different order. Empty attempt lists model unstarted runs;
+  // their distinct full identities must still supply the final sort key.
+  const costs = [9.904449999999644, 2.334129171432251e-13, 1.229357202834412e-13];
+  const runs = costs.map((costUsd) => benchRun({
+    attemptIds: [], verified: false, usage: { costUsd },
+  }));
+  const forward = observeFactory({ runs });
+  const reordered = observeFactory({ runs: [runs[1]!, runs[2]!, runs[0]!] });
+  assert.equal(forward.waste.unverifiedCostReportedRuns, 3);
+  assert.equal(forward.waste.unverifiedCostUsd, reordered.waste.unverifiedCostUsd);
+  assert.deepEqual(forward, reordered);
+});
