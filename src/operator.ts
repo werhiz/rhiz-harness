@@ -327,6 +327,13 @@ export async function recordOperatorReview(input: OperatorReviewInput): Promise<
   if (board.state === "accepted" || board.state === "rejected" || board.state === "cancelled") {
     throw new OperatorError(`Work ${workId} is ${board.state}; a review can no longer change it`);
   }
+  // A failed attempt is still continuable. An arbitrary library review must
+  // not move it into reviewing without the proof the CLI already requires.
+  if (board.integration
+    ? board.integration.headProof === null
+    : latestStatus(board.verifications, board.contractRevision) !== "pass") {
+    throw new OperatorError(`Work ${workId} has no verified current candidate to review`);
+  }
   if (Object.values(board.attempts).some((attempt) => attempt.executionProvenance.some((actor) => actor.id === reviewer.id))) {
     throw new OperatorError(`reviewer ${reviewer.id} executed this Work and cannot review it independently`);
   }
