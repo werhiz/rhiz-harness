@@ -3,6 +3,7 @@ import { acceptanceReadiness, emptyBoard, executionActorIds, projectEvent } from
 import type { EventLedger } from "./ledger.js";
 import type { HarnessEvent, WorkContract } from "./schemas.js";
 import { z } from "zod";
+import { compareIdentifiers } from "./identifier-order.js";
 
 // Advisory triage over observed facts. This never grants Work authority,
 // changes Router evidence, accepts a lesson, or replaces Guard / Verify.
@@ -249,7 +250,7 @@ export class InMemoryRouterWorkerRegistry implements RouterWorkerRegistry {
   }
 
   list(): readonly RouterWorkerDescriptor[] {
-    return [...this.#workers.values()].sort((left, right) => left.workerId.localeCompare(right.workerId));
+    return [...this.#workers.values()].sort((left, right) => compareIdentifiers(left.workerId, right.workerId));
   }
 
   get(workerId: string): RouterWorkerDescriptor | undefined {
@@ -494,7 +495,7 @@ function deriveEvidenceFromEvents(
   }
   return [...buckets.entries()]
     .map(([workerId, bucket]) => evidenceFromBucket(workerId, bucket))
-    .sort((left, right) => left.workerId.localeCompare(right.workerId));
+    .sort((left, right) => compareIdentifiers(left.workerId, right.workerId));
 }
 
 export async function computeRouterEvidence(
@@ -769,7 +770,7 @@ function pickBestConsidered(
     const leftScore = left.score ?? 0;
     const rightScore = right.score ?? 0;
     if (leftScore !== rightScore) return rightScore - leftScore;
-    return left.workerId.localeCompare(right.workerId);
+    return compareIdentifiers(left.workerId, right.workerId);
   });
   const winner = sorted[0]!;
   return {

@@ -12,6 +12,7 @@ import type {
   WorkerStartRequest,
   WorkerStartOptions,
 } from "./host.js";
+import { compareIdentifiers } from "./identifier-order.js";
 import {
   HostCapabilitiesSchema,
   parseWorkerDescriptor,
@@ -172,7 +173,7 @@ export class WorkerCatalog implements WorkerRegistry {
   }
 
   entries(): readonly RegisteredWorker[] {
-    return [...this.#entries.values()].sort((left, right) => left.provider.id.localeCompare(right.provider.id));
+    return [...this.#entries.values()].sort((left, right) => compareIdentifiers(left.provider.id, right.provider.id));
   }
 
   get(id: string): WorkerProvider | undefined {
