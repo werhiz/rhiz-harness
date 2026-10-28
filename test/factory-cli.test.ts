@@ -205,3 +205,42 @@ test("a bare or misspelled flag is refused instead of silently dropping evidence
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("factory refuses empty and whitespace-only input paths before filesystem access", () => {
+  for (const [command, flag] of [
+    ["observe", "--runs"],
+    ["observe", "--ledger"],
+    ["replay", "--experiment"],
+    ["replay", "--pairs"],
+  ] as const) {
+    for (const value of ["", "   "]) {
+      const result = factory([command, flag, value]);
+      assert.equal(result.status, 2, `${command} ${flag} ${JSON.stringify(value)}`);
+      assert.match(result.stderr, /needs a non-empty value/);
+      assert.doesNotMatch(result.stderr, /\n\s+at /);
+      assert.equal(result.stdout, "");
+    }
+  }
+});
+
+test("runs directory reports skipped files and empty JSON members", () => {
+  const root = mkdtempSync(join(tmpdir(), "rhiz-factory-input-proof-"));
+  try {
+    writeFileSync(join(root, "valid.json"), JSON.stringify(benchRun()));
+    writeFileSync(join(root, "receipt.jsonl"), JSON.stringify(benchRun()));
+    const ignored = factory(["observe", "--runs", root]);
+    assert.equal(ignored.status, 2);
+    assert.match(ignored.stderr, /unsupported benchmark run entries/);
+    assert.match(ignored.stderr, /receipt\.jsonl/);
+    assert.equal(ignored.stdout, "");
+
+    rmSync(join(root, "receipt.jsonl"));
+    writeFileSync(join(root, "empty.json"), "[]");
+    const missing = factory(["observe", "--runs", root]);
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /empty\.json contains no benchmark runs/);
+    assert.equal(missing.stdout, "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
