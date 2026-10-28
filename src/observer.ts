@@ -483,15 +483,19 @@ function cohortGapFindings(cohorts: readonly Cohort[], config: ObserverConfig): 
         ? cohort.interventionsPerVerifiedOutcome
         : Infinity;
     const ranked = [...list].sort((a, b) =>
-      (b.verifiedCompletionRate! - a.verifiedCompletionRate!) ||
+      (b.verified / b.runs - a.verified / a.runs) ||
       (interventionKey(a) === interventionKey(b) ? 0 : interventionKey(a) < interventionKey(b) ? -1 : 1) ||
       compareText(cohortName(a), cohortName(b)));
     const best = ranked[0]!;
     const worst = ranked.at(-1)!;
-    const gap = best.verifiedCompletionRate! - worst.verifiedCompletionRate!;
-    // Compare in whole basis points: 1.0 - 0.8 is 0.19999999999999996 in
-    // floating point, and an exact 20-point gap must count as 20 points.
-    if (Math.round(gap * 10_000) < Math.round(config.minimumCompletionGap * 10_000)) continue;
+    // Use exact cohort counts for the decision. Previously four-place rate
+    // rounding admitted gaps slightly below the requested threshold.
+    // The shared denominator also preserves exact fractional boundaries:
+    // 1/5 meets a 0.2 threshold without 1 - 0.8 float cancellation.
+    const gapNumerator = best.verified * worst.runs - worst.verified * best.runs;
+    const gapDenominator = best.runs * worst.runs;
+    const gap = gapNumerator / gapDenominator;
+    if (gap < config.minimumCompletionGap) continue;
     const candidateControls: Record<string, string> = {};
     const permitted: BenchmarkControlDimension[] = [];
     if (best.workerProviderId !== worst.workerProviderId && best.workerProviderId) {
@@ -795,7 +799,8 @@ export function observeFactory(input: ObserveInput): FactoryObservation {
     compareText(a.variantId ?? "", b.variantId ?? "") ||
     compareInstants(a.startedAt, b.startedAt) ||
     compareText(a.workId ?? "", b.workId ?? "") ||
-    compareText(a.attemptIds.join(","), b.attemptIds.join(",")));
+    compareText(a.attemptIds.join(","), b.attemptIds.join(",")) ||
+    compareText(benchmarkRunIdentity(a), benchmarkRunIdentity(b)));
 
   const taskClasses = taskClassByWork(events);
   const cohorts = cohortsOf(runs, taskClasses);
