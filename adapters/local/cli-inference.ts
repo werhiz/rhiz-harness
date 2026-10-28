@@ -22,7 +22,16 @@ export async function fileDigest(path: string): Promise<string> {
 }
 export class CliLocalInference implements LocalInference {
   readonly model: (typeof CLI_MODELS)[number];
-  constructor(readonly config: z.infer<typeof CliWorkerConfigSchema>) { this.model = CliWorkerConfigSchema.parse(config).model; }
+  readonly config: Readonly<Omit<z.infer<typeof CliWorkerConfigSchema>, "permittedPaths">> & { readonly permittedPaths: readonly string[] };
+  constructor(config: z.infer<typeof CliWorkerConfigSchema>) {
+    const parsed = CliWorkerConfigSchema.parse(config);
+    this.config = Object.freeze({ ...parsed, permittedPaths: Object.freeze(parsed.permittedPaths) });
+    this.model = this.config.model;
+    Object.defineProperties(this, {
+      config: { writable: false, configurable: false },
+      model: { writable: false, configurable: false },
+    });
+  }
   async replace(prompt: string, signal: AbortSignal) {
     signal.throwIfAborted();
     const c = CliWorkerConfigSchema.parse(this.config);
