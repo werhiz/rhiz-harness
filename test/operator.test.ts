@@ -114,9 +114,59 @@ test("accepting a recovered Work produces a reviewable recovery proposal, never 
   assert.equal(result.status.metrics.recovered, true);
   assert.equal(result.status.metrics.repairAttempts, 1);
   assert.deepEqual(result.learning.proposals.map((proposal) => proposal.kind), ["recovery-behavior"]);
+  const failure = failedFirst.find((item) => item.type === "attempt.failed")!;
+  assert.ok(result.learning.proposals[0]?.evidenceRefs.some((ref) => ref.ledgerEventId === failure.id),
+    "the recovery proposal retains the failed attempt that explains why recovery was needed");
   const stored = await ledger.replay(STREAM);
   assert.equal(stored.filter((item) => item.type === "refiner.proposed").length, 1);
   assert.equal(stored.some((item) => item.type === "refiner.promoted" || item.type === "refiner.accepted"), false);
+});
+
+test("recovery learning preserves an early failed review after later successful reviews", async () => {
+  const contract = work({ verificationPolicy: { required: true, independentActor: true, reviewRequired: true, falsifiabilityExemptions: [] } });
+  const ledger = await ledgerWith(verifiedWork(contract));
+  await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "fail", summary: "The selected artifact was replaced", now, idFactory });
+  const failedReview = (await ledger.replay(STREAM)).find((item) => item.type === "review.result" && item.payload.status === "fail")!;
+  for (let i = 0; i < 5; i++) {
+    await recordOperatorReview({ ledger, streamId: STREAM, reviewer, status: "pass", summary: "The selected artifact is preserved", now, idFactory });
+  }
+  const refiner = new RefinerBridge({ ledger, now });
+  const result = await acceptOperatorWork({ ledger, streamId: STREAM, actor: human, reason: "The repaired candidate passed", now, idFactory, refiner });
+  assert.equal(result.status.state, "accepted");
+  const proposal = result.learning.proposals[0]!;
+  assert.equal(proposal.kind, "recovery-behavior");
+  const stored = await ledger.replay(STREAM);
+  const created = stored.find((item) => item.type === "work.created")!;
+  const accepted = stored.find((item) => item.type === "work.accepted")!;
+  const latestReview = stored.filter((item) => item.type === "review.result").at(-1)!;
+  const referencedIds = proposal.evidenceRefs.map((ref) => ref.ledgerEventId);
+  for (const source of [created, failedReview, latestReview, accepted]) {
+    assert.ok(referencedIds.includes(source.id), `learning retains ${source.type} ${source.id}`);
+  }
+  assert.equal(new Set(referencedIds).size, referencedIds.length);
+  assert.ok(referencedIds.every((id) => stored.some((item) => item.id === id && !item.type.startsWith("refiner."))));
+  await refiner.consume({ workId: contract.id, events: stored });
+  assert.deepEqual(await ledger.replay(STREAM), stored, "re-reading evidence does not create another lesson or promotion");
+});
+
+test("failed Work proposals retain the denials and blocked attempts used in their classifications", async () => {
+  const contract = work();
+  const execution = successfulExecution(contract);
+  const attempt = { taskId: "task:1", attemptId: "attempt:1", actor: worker };
+  const denial = event("authority.denied", { policy: contract.authority, reason: "Publication is outside this attempt's authority" }, { actor: human });
+  const blocked = event("attempt.blocked", { reason: "Waiting for publication authority" }, attempt);
+  const failed = event("attempt.failed", { reason: "The blocked attempt ended", recoverable: false }, attempt);
+  const ledger = await ledgerWith([...execution.slice(0, execution.findIndex((item) => item.type === "attempt.started") + 1), denial, blocked, failed]);
+  const result = await new RefinerBridge({ ledger, now }).consume({ workId: contract.id, events: await ledger.replay(STREAM) });
+  assert.ok(result.analysis.classifications.includes("authority-error"));
+  assert.ok(result.analysis.classifications.includes("process-stall"));
+  assert.ok(result.proposals.length > 0);
+  for (const proposal of result.proposals) {
+    for (const source of [denial, blocked, failed]) {
+      assert.ok(proposal.evidenceRefs.some((ref) => ref.ledgerEventId === source.id), `proposal retains ${source.type}`);
+    }
+    assert.equal(proposal.status, "proposed");
+  }
 });
 
 test("review refuses a reviewer who executed the Work", async () => {

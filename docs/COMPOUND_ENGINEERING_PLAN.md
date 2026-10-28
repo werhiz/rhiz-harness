@@ -318,6 +318,14 @@ Guard
 
 Refiner proposes. It does not silently rewrite permanent policy.
 
+### Preserve the evidence that explains the lesson
+
+Refiner proposals retain the Work's creation, terminal decision, recent verification/review results and every failed attempt, blocked attempt, authority denial and failed verification/review from that canonical Work stream. Later passing checks must not erase the evidence that explains a recovery. References preserve source order and do not copy raw traces into another store. Existing proposals retain their identity and recorded decisions when Harvest retries; this change does not rewrite previously recorded proposals.
+
+When extending learning, distinguish agent discoveries, human corrections and recurring investigations. Group equivalent evidence across authorized Work only when an implemented consumer can establish its scope and provenance; repeated citations to one event are not independent support. Check whether an existing source pointer, Context selection, tool or Guard repair suffices before proposing another instruction. Feed accepted, rejected and superseded decisions into subsequent proposals. Preserve organization and customer boundaries; generalize only permissioned abstractions.
+
+This direction takes inspiration from AI That Works, [Building a Memory Pipeline](https://www.youtube.com/watch?v=mAKUL12h1n8), and its [publisher transcript](https://github.com/ai-that-works/ai-that-works/blob/main/2026-10-06-building-a-memory-pipeline/transcript.txt). No upstream implementation is copied. The current bridge remains deterministic and per Work. Semantic extraction, cross-Work grouping, automatic memory freshness and model filtering are not implemented by retaining evidence. Evaluate any future classifier against a representative held-out reference set before optimizing cost; preserve valuable corrections and tool evidence. Prove a repair on the failed case and valid neighboring behavior, then measure a later independent Work consuming it. A proposal, promotion and observed improvement remain separate evidence.
+
 ## 13. Phase H: Context
 
 Every ContextPack should have an identity and measurable composition:

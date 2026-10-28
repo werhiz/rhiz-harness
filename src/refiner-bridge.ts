@@ -1,4 +1,4 @@
-import type { ActorRef, HarnessEvent, RefinerProposal, RefinerProposalKind } from "./schemas.js";
+import type { ActorRef, HarnessEvent, RefinerEvidenceRef, RefinerProposal, RefinerProposalKind } from "./schemas.js";
 import type { EventLedger } from "./ledger.js";
 import { createHash } from "node:crypto";
 import { projectBoard } from "./board.js";
@@ -67,6 +67,7 @@ export class RefinerBridge {
       event.type === "work.accepted" || event.type === "work.rejected" || event.type === "work.cancelled" || event.type === "attempt.failed");
     if (!closure) throw new Error("Refiner requires a terminal Work or failed attempt");
     const analysis = analyzeClosedWorkFromEvents(input.workId, sourceEvents, this.#config);
+    const evidenceRefs = proposalEvidenceRefs(sourceEvents, closure.id);
     const proposals: RefinerProposal[] = [];
     for (const kind of new Set(analysis.candidateProposalKinds)) {
       const proposalId = `proposal:${createHash("sha256").update(JSON.stringify([input.workId, closure.id, kind])).digest("hex")}`;
@@ -83,15 +84,7 @@ export class RefinerBridge {
         summary: proposalSummary(kind as RefinerProposalKind, analysis),
         reasoning: `Classified as ${analysis.classifications.join(", ") || "no-classifications"}; ledger span ${analysis.ledgerSpanMs}ms over ${analysis.ledgerEventCount} events.`,
         classification: (analysis.classifications[0] ?? "repeated-mistake") as FailureTaxonomy | SuccessTaxonomy,
-        evidenceRefs: sourceEvents.length === 0
-          ? []
-          : sourceEvents
-              .filter((event) => event.type === "work.created" || event.id === closure.id || event.type === "verification.result" || event.type === "review.result")
-              .slice(-4)
-              .map((event) => ({
-                ledgerEventId: event.id,
-                reasoning: `${event.type} observed at ${event.occurredAt}`,
-              })),
+        evidenceRefs,
         draft: {
           summary: `Auto-drafted from ${analysis.classifications.join(", ") || "no-classifications"}.`,
           rationale: `Outcome: ${analysis.outcome}.`,
@@ -126,6 +119,26 @@ export interface RefinerBridgeOptions {
   config?: RefinerConfig;
   idFactory?: () => string;
   now?: () => string;
+}
+
+function proposalEvidenceRefs(events: readonly HarnessEvent[], closureId: string): RefinerEvidenceRef[] {
+  const recentProofIds = new Set(events
+    .filter((event) => event.type === "work.created" || event.id === closureId || event.type === "verification.result" || event.type === "review.result")
+    .slice(-4)
+    .map((event) => event.id));
+  // Keep the recent proof window without letting later passes erase the
+  // failures or decisions that explain a recovery or proposed repair.
+  return events.filter((event) =>
+    recentProofIds.has(event.id) ||
+    event.type === "work.created" ||
+    event.type === "attempt.failed" ||
+    event.type === "attempt.blocked" ||
+    event.type === "authority.denied" ||
+    ((event.type === "verification.result" || event.type === "review.result") && event.payload.status === "fail"))
+    .map((event) => ({
+      ledgerEventId: event.id,
+      reasoning: `${event.type} observed at ${event.occurredAt}`,
+    }));
 }
 
 function proposalTitle(kind: RefinerProposalKind, analysis: RefinerAnalysis): string {
