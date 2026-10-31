@@ -60,7 +60,8 @@
   "devDependencies": {
     "@types/node": "26.2.0",
     "typescript": "6.0.3",
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "@werhiz/native-review-test-tools": "file:test/fixtures/native-tools"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

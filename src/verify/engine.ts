@@ -20,7 +20,7 @@ import {
 } from "./schema.js";
 import { artifactIdentityEvidence, exactContract, safeError, sameTarget, targetFrom, uniqueEvidence } from "./util.js";
 import { TempDirectoryDerivativeFactory } from "../disposable.js";
-import { digestExecutionRoot } from "../workspace-digest.js";
+import { digestExecutionRoot, type FileSizeAllowance } from "../workspace-digest.js";
 import type { NegativeControlPerturbation, VerificationCheck } from "./schema.js";
 
 
@@ -53,19 +53,21 @@ async function runIsolatedControl(options: {
   check: VerificationCheck;
   perturbation: NegativeControlPerturbation;
   observedAt: string;
+  fileSizeAllowances: readonly FileSizeAllowance[];
 }): Promise<{ result: VerificationCheckResult; controlRoot: string }> {
   // Bound the copy BEFORE making it. digestExecutionRoot enforces entry-count,
   // per-file and total-byte limits and throws rather than truncating, so a tree
   // too large to identify is also a tree too large to duplicate per control.
   // Without this the copy was unbounded: gigabytes per control on any repository
   // with a real node_modules, two lines away from a function that fails closed.
-  const sourceIdentity = await digestExecutionRoot(options.workspace.executionRoot);
+  const sourceIdentity = await digestExecutionRoot(options.workspace.executionRoot, { fileSizeAllowances: options.fileSizeAllowances });
 
   const factory = new TempDirectoryDerivativeFactory();
   const derivative = await factory.createFromRoot({
     sourceRoot: options.workspace.executionRoot,
     expectedDigest: sourceIdentity.digest,
     expectedFileCount: sourceIdentity.scope.fileCount,
+    fileSizeAllowances: sourceIdentity.scope.fileSizeAllowances ?? [],
   });
   const controlRoot = derivative.root;
   let result: VerificationCheckResult | null = null;
@@ -77,6 +79,7 @@ async function runIsolatedControl(options: {
     await derivative.mutate(options.perturbation.path, options.perturbation.content, options.perturbation.description);
 
     const identity = await digestExecutionRoot(controlRoot, {
+      fileSizeAllowances: sourceIdentity.scope.fileSizeAllowances ?? [],
       limits: {
         // The copy cannot legitimately exceed what the source measured.
         maxFiles: Math.max(1, sourceIdentity.scope.fileCount + 1),
@@ -281,6 +284,7 @@ export class VerificationEngine {
             check,
             perturbation,
             observedAt: checkStartedAt,
+            fileSizeAllowances: before.digestScope.fileSizeAllowances ?? [],
           });
           const falsified = underlying.status === "fail";
           result = VerificationCheckResultSchema.parse({
