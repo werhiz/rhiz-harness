@@ -6,8 +6,10 @@ import { z } from "zod";
 import { requireSandbox } from "../../src/sandbox.js";
 import { createDefaultSandboxLauncher } from "./sandbox.js";
 import { LocalReplacementSchema, localEditablePath, type LocalInference } from "./model-worker.js";
+// Pinned GGUF identities this bridge has been proven with; the file digest is still required.
+export const CLI_MODELS = ["qwen2.5-7b-instruct-q4_k_m", "qwen3-8b-q4_k_m"] as const;
 export const CliWorkerConfigSchema = z.object({
-  backend: z.literal("llama-cli"), model: z.literal("qwen2.5-7b-instruct-q4_k_m"),
+  backend: z.literal("llama-cli"), model: z.enum(CLI_MODELS),
   executable: z.string().startsWith("/"), executableDigest: z.string().regex(/^[a-f0-9]{64}$/),
   modelPath: z.string().startsWith("/"), digest: z.string().regex(/^[a-f0-9]{64}$/),
   autonomousPaidBudgetUsd: z.literal(0), cloudFallback: z.literal(false),
@@ -19,8 +21,17 @@ export async function fileDigest(path: string): Promise<string> {
   return hash.digest("hex");
 }
 export class CliLocalInference implements LocalInference {
-  readonly model = "qwen2.5-7b-instruct-q4_k_m";
-  constructor(readonly config: z.infer<typeof CliWorkerConfigSchema>) {}
+  readonly model: (typeof CLI_MODELS)[number];
+  readonly config: Readonly<Omit<z.infer<typeof CliWorkerConfigSchema>, "permittedPaths">> & { readonly permittedPaths: readonly string[] };
+  constructor(config: z.infer<typeof CliWorkerConfigSchema>) {
+    const parsed = CliWorkerConfigSchema.parse(config);
+    this.config = Object.freeze({ ...parsed, permittedPaths: Object.freeze(parsed.permittedPaths) });
+    this.model = this.config.model;
+    Object.defineProperties(this, {
+      config: { writable: false, configurable: false },
+      model: { writable: false, configurable: false },
+    });
+  }
   async replace(prompt: string, signal: AbortSignal) {
     signal.throwIfAborted();
     const c = CliWorkerConfigSchema.parse(this.config);
