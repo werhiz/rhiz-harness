@@ -1,0 +1,9 @@
+{
+  "name": "@werhiz/native-review-test-tools",
+  "version": "0.0.0",
+  "private": true,
+  "optionalDependencies": {
+    "@openai/codex-darwin-arm64": "npm:@openai/codex@0.162.1-darwin-arm64",
+    "@openai/codex-darwin-x64": "npm:@openai/codex@0.162.1-darwin-x64"
+  }
+}

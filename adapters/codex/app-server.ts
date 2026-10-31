@@ -1083,3 +1083,6 @@ export class CodexAppServerHost implements HarnessHost {
   tools(): null { return null; }
   async close(): Promise<void> { await this.#provider.close(); }
 }
+
+export { runNativeCodexReview, parseNativeCodexReview, NativeCodexReviewFailure } from "./native-review.js";
+export type { NativeCodexReviewOptions, NativeCodexReviewResult } from "./native-review.js";

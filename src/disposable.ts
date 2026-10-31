@@ -10,6 +10,7 @@ import {
   DigestScopeSchema,
   digestExecutionRoot,
   type ExecutionRootDigestLimits,
+  type FileSizeAllowance,
 } from "./workspace-digest.js";
 
 /**
@@ -549,6 +550,7 @@ export class TempDirectoryDerivativeFactory implements DisposableWorkspaceFactor
       sourceRoot: candidate.executionRoot,
       expectedDigest: candidate.digest,
       expectedFileCount: candidate.digestScope.fileCount,
+      fileSizeAllowances: candidate.digestScope.fileSizeAllowances ?? [],
     });
   }
 
@@ -568,6 +570,7 @@ export class TempDirectoryDerivativeFactory implements DisposableWorkspaceFactor
     expectedDigest: string;
     /** File count of the source, used to bound the copy before it is made. */
     expectedFileCount: number;
+    fileSizeAllowances?: readonly FileSizeAllowance[];
   }): Promise<DisposableDerivative> {
     // `resolve` before the absolute-path check, not instead of it. A
     // `CrewWorkspace.executionRoot` is only constrained to be text, so a
@@ -615,6 +618,7 @@ export class TempDirectoryDerivativeFactory implements DisposableWorkspaceFactor
       });
 
       const identity = await digestExecutionRoot(root, {
+        fileSizeAllowances: options.fileSizeAllowances ?? [],
         limits: {
           ...this.#digestLimits,
           // The copy cannot legitimately exceed what the pin measured.

@@ -6,6 +6,14 @@ import { z } from "zod";
 
 const text = z.string().trim().min(1);
 
+export const FileSizeAllowanceSchema = z.object({
+  policy: text.max(200),
+  path: text.max(4096).refine((value) => !value.startsWith("/") && !value.includes("\\") && value.split("/").every((part) => part !== "" && part !== "." && part !== ".."), "allowance path must be relative POSIX"),
+  maxFileBytes: z.number().int().min(1).max(512 * 1024 * 1024),
+  evidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+}).strict();
+export type FileSizeAllowance = z.infer<typeof FileSizeAllowanceSchema>;
+
 /**
  * Why this module exists.
  *
@@ -51,6 +59,8 @@ export const DigestScopeSchema = z.object({
   fileCount: z.number().int().nonnegative(),
   totalBytes: z.number().int().nonnegative(),
   symlinkCount: z.number().int().nonnegative(),
+  /** Only applied, fully hashed oversized pinned native artifacts are named. */
+  fileSizeAllowances: z.array(FileSizeAllowanceSchema).max(32).optional(),
 }).strict();
 export type DigestScope = z.infer<typeof DigestScopeSchema>;
 
@@ -138,16 +148,23 @@ export async function digestExecutionRoot(
   options: {
     exclusions?: readonly string[];
     limits?: Partial<ExecutionRootDigestLimits>;
+    /** Trusted, bounded path policies; concrete adapters own artifact recognition. */
+    fileSizeAllowances?: readonly FileSizeAllowance[];
   } = {},
 ): Promise<ExecutionRootDigest> {
   const exclusions = [...(options.exclusions ?? DEFAULT_EXECUTION_ROOT_EXCLUSIONS)].sort();
   const excluded = new Set(exclusions);
   const limits: ExecutionRootDigestLimits = { ...DEFAULT_EXECUTION_ROOT_LIMITS, ...options.limits };
 
+  const declared = z.array(FileSizeAllowanceSchema).max(32).parse(options.fileSizeAllowances ?? []);
+  const allowedByPath = new Map(declared.map((entry) => [entry.path, entry]));
+  if (allowedByPath.size !== declared.length) throw new TypeError("duplicate file size allowance path");
+
   const manifest = new Map<string, string>();
   let fileCount = 0;
   let symlinkCount = 0;
   let totalBytes = 0;
+  const fileSizeAllowances: NonNullable<DigestScope["fileSizeAllowances"]> = [];
 
   // Iterative walk with an explicit stack. Directory entries are sorted so the
   // aggregate digest is deterministic across filesystems that enumerate in
@@ -214,7 +231,12 @@ export async function digestExecutionRoot(
           `execution root ${executionRoot} exceeds the ${limits.maxFiles} entry digest limit`,
         );
       }
-      const hashed = await hashFileStream(absolutePath, limits.maxFileBytes);
+      const allowance = options.limits?.maxFileBytes === undefined && stats.size > limits.maxFileBytes
+        ? allowedByPath.get(relativePath) : undefined;
+      const fileLimit = allowance?.maxFileBytes ?? limits.maxFileBytes;
+      if (stats.size > fileLimit) throw new WorkspaceDigestLimitError(`file ${absolutePath} exceeds the ${fileLimit} byte per-file digest limit`);
+      const hashed = await hashFileStream(absolutePath, fileLimit);
+      if (allowance) fileSizeAllowances.push(allowance);
       totalBytes += hashed.bytes;
       if (totalBytes > limits.maxTotalBytes) {
         throw new WorkspaceDigestLimitError(
@@ -232,6 +254,7 @@ export async function digestExecutionRoot(
     fileCount,
     totalBytes,
     symlinkCount,
+    ...(fileSizeAllowances.length ? { fileSizeAllowances } : {}),
   });
 
   // The aggregate binds the scope as well as the contents, so a digest computed
