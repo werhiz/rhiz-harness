@@ -97,7 +97,7 @@ function projectFollowThrough(assignment: FollowThroughAssignment, events: reado
         action = "resolve"; reason = "Independent verification or review failed; an explicit repair decision is required";
       } else if (status.nextAction === "review") {
         action = "review"; reason = status.nextActionReason;
-      } else if (candidateUnproduced(board) !== null) {
+      } else if (attempts.some(attempt => attempt.contractRevision === board.contractRevision) && candidateUnproduced(board) !== null) {
         action = "resolve"; reason = status.nextActionReason;
       } else if (attempts.some(attempt => attempt.state === "finished" && attempt.contractRevision === board.contractRevision)) {
         action = "verify"; reason = "Worker execution finished; verification or an explicit repair decision is required";

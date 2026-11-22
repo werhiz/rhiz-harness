@@ -103,22 +103,36 @@ test("an attempt Crew recorded as failed for producing nothing reports that fail
   assert.match(status.nextActionReason, /attempt:1 failed: worker finished without changing its workspace/);
 });
 
-test("follow-through routes empty finished and failed attempts to repair with the recorded blocker", async () => {
-  const contract = work();
+async function inspectHistory(history: HarnessEvent[], contract = work()) {
+  const ledger = new InMemoryEventLedger();
+  for (const item of history) await ledger.append(item);
   const assignment = FollowThroughAssignmentSchema.parse({
     ownerRef: "account:fixture", sourceRef: "request:fixture", dueAt: contract.createdAt,
     priority: 1, baseRevision: "base", mission: { work: contract, workspace: { strategy: "fresh", mode: "isolated-write" } },
   });
-  const finished = workerChangedNothing(contract);
+  const [item] = await inspectFollowThrough(ledger, [assignment], contract.createdAt);
+  return item!;
+}
+
+test("follow-through routes empty finished and failed attempts to repair with the recorded blocker", async () => {
+  const finished = workerChangedNothing();
   const failed = event("attempt.failed", { reason: workerWords, recoverable: false },
     { taskId: "task:1", attemptId: "attempt:1", actor: worker });
   for (const history of [finished, [...finished.slice(0, -1), failed]]) {
-    const ledger = new InMemoryEventLedger();
-    for (const item of history) await ledger.append(item);
-    const [item] = await inspectFollowThrough(ledger, [assignment], contract.createdAt);
-    assert.equal(item?.action, "resolve");
+    const item = await inspectHistory(history);
+    assert.equal(item.action, "resolve");
     assert.ok(item.reason.includes(workerWords), item.reason);
   }
+});
+
+test("amending empty Work keeps the continuation decision on the revised contract", async () => {
+  const changes = { objective: "Implement the revised bounded change" };
+  const item = await inspectHistory([
+    ...workerChangedNothing(),
+    event("work.amended", { changes, revision: 2, reason: "Owner revised the objective" }),
+  ], work(changes));
+  assert.equal(item.action, "resolve");
+  assert.match(item.reason, /Amended Work requires an explicit continuation decision/);
 });
 
 // The authorship refusal itself must not weaken. Each of these is a Work where
