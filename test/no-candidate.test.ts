@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { acceptanceReadiness, authorshipUnproven, projectBoard } from "../src/board.js";
+import { FollowThroughAssignmentSchema, inspectFollowThrough } from "../src/follow-through.js";
+import { InMemoryEventLedger } from "../src/ledger.js";
 import { summarizeOperatorWork } from "../src/operator.js";
 import type { HarnessEvent } from "../src/schemas.js";
 import { event, guardedWrite, passingVerificationSequence, successfulExecution, work, worker } from "./helpers.js";
@@ -99,6 +101,24 @@ test("an attempt Crew recorded as failed for producing nothing reports that fail
   const status = summarizeOperatorWork(failed);
   assert.equal(status.nextAction, "resume");
   assert.match(status.nextActionReason, /attempt:1 failed: worker finished without changing its workspace/);
+});
+
+test("follow-through routes empty finished and failed attempts to repair with the recorded blocker", async () => {
+  const contract = work();
+  const assignment = FollowThroughAssignmentSchema.parse({
+    ownerRef: "account:fixture", sourceRef: "request:fixture", dueAt: contract.createdAt,
+    priority: 1, baseRevision: "base", mission: { work: contract, workspace: { strategy: "fresh", mode: "isolated-write" } },
+  });
+  const finished = workerChangedNothing(contract);
+  const failed = event("attempt.failed", { reason: workerWords, recoverable: false },
+    { taskId: "task:1", attemptId: "attempt:1", actor: worker });
+  for (const history of [finished, [...finished.slice(0, -1), failed]]) {
+    const ledger = new InMemoryEventLedger();
+    for (const item of history) await ledger.append(item);
+    const [item] = await inspectFollowThrough(ledger, [assignment], contract.createdAt);
+    assert.equal(item?.action, "resolve");
+    assert.ok(item.reason.includes(workerWords), item.reason);
+  }
 });
 
 // The authorship refusal itself must not weaken. Each of these is a Work where
