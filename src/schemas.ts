@@ -656,6 +656,7 @@ const RouterDecisionPayloadSchema = z.object({
   decisionId: id,
   policy: z.enum(["cheapest-capable", "fastest-capable", "highest-confidence", "balanced"]),
   selectedWorkerId: id.nullable(),
+  reason: z.string().trim().min(1).max(1000).optional(),
   consideredCount: z.number().int().nonnegative(),
   evidenceHash: id,
   expectedCostUsd: z.number().nonnegative(),

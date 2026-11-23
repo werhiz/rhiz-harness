@@ -106,6 +106,13 @@ export const RouterEvidenceSchema = z.object({
   successCount: z.number().int().nonnegative(),
   failedCount: z.number().int().nonnegative(),
   successRate: z.number().min(0).max(1).nullable(),
+  // Only a same-type projection can supply comparable Work-level costs.
+  outcomeCosts: z.object({
+    workType: z.enum(["SCOUT", "SHIP", "REVIEW"]),
+    acceptedWorks: z.number().int().nonnegative(),
+    pricedAttempts: z.number().int().nonnegative(),
+    costPerAcceptedWorkUsd: z.number().nonnegative().nullable(),
+  }).strict().optional(),
   medianCostUsd: z.number().nonnegative().nullable(),
   p95CostUsd: z.number().nonnegative().nullable(),
   medianDurationMs: z.number().int().nonnegative().nullable(),
@@ -203,6 +210,7 @@ export const RouterDecisionPayloadSchema = z.object({
   decisionId: id,
   policy: z.enum(["cheapest-capable", "fastest-capable", "highest-confidence", "balanced"]),
   selectedWorkerId: id.nullable(),
+  reason: z.string().trim().min(1).max(1000).optional(),
   consideredCount: z.number().int().nonnegative(),
   evidenceHash: id,
   expectedCostUsd: z.number().nonnegative(),
@@ -306,6 +314,8 @@ interface WorkerOutcomeBucket {
   failures: number;
   durations: number[];
   costs: number[];
+  acceptedWorks: Set<string>;
+  sharedWork: boolean;
   confidenceSignals: number[];
   lastSeenAt: string | null;
 }
@@ -316,6 +326,8 @@ const emptyBucket = (): WorkerOutcomeBucket => ({
   failures: 0,
   durations: [],
   costs: [],
+  acceptedWorks: new Set(),
+  sharedWork: false,
   confidenceSignals: [],
   lastSeenAt: null,
 });
@@ -349,13 +361,21 @@ function observeTime(bucket: WorkerOutcomeBucket, occurredAt: string): void {
   }
 }
 
-function evidenceFromBucket(workerId: string, bucket: WorkerOutcomeBucket): RouterEvidence {
+function evidenceFromBucket(workerId: string, bucket: WorkerOutcomeBucket, workType?: WorkContract["type"]): RouterEvidence {
   const successRate = bucket.attempts === 0 ? null : bucket.successes / bucket.attempts;
   const confidence = bucket.confidenceSignals.length === 0
     ? null
     : bucket.confidenceSignals.reduce((sum, value) => sum + value, 0) / bucket.confidenceSignals.length;
+  const spend = bucket.costs.reduce((sum, cost) => sum + cost, 0);
+  const acceptedWorks = bucket.acceptedWorks.size;
+  const comparable = !bucket.sharedWork && acceptedWorks > 0
+    && bucket.costs.length === bucket.attempts && Number.isFinite(spend);
   return {
     workerId,
+    ...(workType === undefined ? {} : { outcomeCosts: {
+      workType, acceptedWorks, pricedAttempts: bucket.costs.length,
+      costPerAcceptedWorkUsd: comparable ? spend / acceptedWorks : null,
+    } }),
     attemptCount: bucket.attempts,
     successCount: bucket.successes,
     failedCount: bucket.failures,
@@ -391,6 +411,7 @@ async function collectEvents(
 function deriveEvidenceFromEvents(
   events: readonly HarnessEvent[],
   workerIds: readonly string[] | undefined,
+  workType?: WorkContract["type"],
 ): readonly RouterEvidence[] {
   const buckets = new Map<string, WorkerOutcomeBucket>();
   const allowed = workerIds === undefined ? null : new Set(workerIds);
@@ -435,6 +456,7 @@ function deriveEvidenceFromEvents(
     // Board alone decides acceptance. Learning additionally requires actual
     // independent verification, even if a Work policy permits self-checks or
     // acceptance without verification.
+    if (workType !== undefined && board.contract?.type !== workType) continue;
     const readiness = acceptanceReadiness(board);
     const proof = board.verifications.find((item) => item.eventId === readiness.verificationEventId);
     const executors = executionActorIds(board);
@@ -473,6 +495,8 @@ function deriveEvidenceFromEvents(
         if (allowed !== null && !allowed.has(workerId)) continue;
         const bucket = buckets.get(workerId) ?? emptyBucket();
         bucket.attempts += 1;
+        if (executors.size > 1) bucket.sharedWork = true;
+        if (success && executors.size === 1) bucket.acceptedWorks.add(start.workId);
         if (success) bucket.successes += 1;
         if (failure) bucket.failures += 1;
         if (success || failure) bucket.confidenceSignals.push(success ? 1 : 0);
@@ -494,25 +518,27 @@ function deriveEvidenceFromEvents(
     }
   }
   return [...buckets.entries()]
-    .map(([workerId, bucket]) => evidenceFromBucket(workerId, bucket))
+    .map(([workerId, bucket]) => evidenceFromBucket(workerId, bucket, workType))
     .sort((left, right) => compareIdentifiers(left.workerId, right.workerId));
 }
 
 export async function computeRouterEvidence(
   ledger: EventLedger,
   options: RouterRouteOptionsInput = {},
+  workType?: WorkContract["type"],
 ): Promise<readonly RouterEvidence[]> {
   const parsed = RouterRouteOptionsSchema.parse(options);
   if (parsed.streamIds.length === 0) return [];
   const events = await collectEvents(ledger, parsed.streamIds, parsed.maxEventsPerStream);
-  return deriveEvidenceFromEvents(events, undefined);
+  return deriveEvidenceFromEvents(events, undefined, workType);
 }
 
 export function computeRouterEvidenceFromEvents(
   events: readonly HarnessEvent[],
   workerIds?: readonly string[],
+  workType?: WorkContract["type"],
 ): readonly RouterEvidence[] {
-  return deriveEvidenceFromEvents(events, workerIds);
+  return deriveEvidenceFromEvents(events, workerIds, workType);
 }
 
 function isWorkerSupported(descriptor: RouterWorkerDescriptor, contract: WorkContract): boolean {
@@ -544,7 +570,8 @@ interface ScoreBundle {
 }
 
 interface ScoreContext {
-  registry: RouterWorkerRegistry;
+  outcomeCosts: ReadonlyMap<string, number> | null;
+  maxBalancedCost: number;
   preferred: readonly string[];
   contract: WorkContract;
   options: RouterRouteOptions;
@@ -599,9 +626,9 @@ function scoreWorker(
     case "balanced": {
       const successRate = evidence?.successRate ?? 0.5;
       const confidence = evidence?.confidence ?? 0;
-      const maxCost = matchedDescriptors.reduce((max, current) => Math.max(max, current.costPer1kTokensUsd), 0);
+      const cost = context.outcomeCosts?.get(descriptor.workerId) ?? descriptor.costPer1kTokensUsd;
       const maxLatency = matchedDescriptors.reduce((max, current) => Math.max(max, current.avgLatencyMs), 0);
-      const costScore = normalizeInverse(descriptor.costPer1kTokensUsd, maxCost);
+      const costScore = normalizeInverse(cost, context.maxBalancedCost);
       const latencyScore = normalizeInverse(descriptor.avgLatencyMs, maxLatency);
       const weights = policy.weights;
       score = (
@@ -635,11 +662,30 @@ function pickMatchedDescriptors(registry: RouterWorkerRegistry, contract: WorkCo
   });
 }
 
+// Use one cost basis across the entire eligible pool. A cheap estimate and a
+// fully measured outcome price are different units and cannot be ranked together.
+function comparableOutcomeCosts(
+  matched: readonly RouterWorkerDescriptor[],
+  evidence: ReadonlyMap<string, RouterEvidence>,
+  workType: WorkContract["type"],
+): Map<string, number> | null {
+  const costs = new Map<string, number>();
+  for (const descriptor of matched) {
+    const history = evidence.get(descriptor.workerId);
+    const sample = history?.outcomeCosts;
+    if (!sample || sample.workType !== workType || sample.acceptedWorks < 3
+      || sample.pricedAttempts !== history?.attemptCount || sample.costPerAcceptedWorkUsd === null) return null;
+    costs.set(descriptor.workerId, sample.costPerAcceptedWorkUsd);
+  }
+  return costs;
+}
+
 export interface RouterRouteInput {
   contract: WorkContract;
   policy?: RouterPolicyInput | RouterPolicy;
   options?: RouterRouteOptionsInput;
   evidence?: readonly RouterEvidence[];
+  evidenceEvents?: readonly HarnessEvent[];
 }
 
 export async function routeWorker(
@@ -654,11 +700,14 @@ export async function routeWorker(
     : RouterPolicySchema.parse(undefined);
   const options = RouterRouteOptionsSchema.parse(input.options ?? {});
 
+  const evidenceWorkType = policy.kind === "balanced" ? contract.type : undefined;
   let evidenceList: readonly RouterEvidence[];
   if (input.evidence !== undefined) {
     evidenceList = input.evidence;
+  } else if (input.evidenceEvents !== undefined) {
+    evidenceList = computeRouterEvidenceFromEvents(input.evidenceEvents, undefined, evidenceWorkType);
   } else if (ledger !== null) {
-    evidenceList = await computeRouterEvidence(ledger, options);
+    evidenceList = await computeRouterEvidence(ledger, options, evidenceWorkType);
   } else {
     evidenceList = [];
   }
@@ -668,7 +717,10 @@ export async function routeWorker(
 
   const preferred = contract.workerPolicy.preferredProviders;
   const matchedDescriptors = pickMatchedDescriptors(registry, contract, options);
-  const context: ScoreContext = { registry, preferred, contract, options, matched: matchedDescriptors };
+  const outcomeCosts = policy.kind === "balanced" ? comparableOutcomeCosts(matchedDescriptors, evidenceMap, contract.type) : null;
+  const maxBalancedCost = matchedDescriptors.reduce((max, item) =>
+    Math.max(max, outcomeCosts?.get(item.workerId) ?? item.costPer1kTokensUsd), 0);
+  const context: ScoreContext = { preferred, contract, options, matched: matchedDescriptors, outcomeCosts, maxBalancedCost };
   const scored: RouterConsidered[] = [];
   for (const descriptor of registry.list()) {
     const evidence = evidenceMap.get(descriptor.workerId) ?? null;
@@ -732,8 +784,7 @@ export async function routeWorker(
     });
   }
 
-  const best = pickBestConsidered(matchedScored, policy);
-  const selected = best.considered;
+  const selected = pickBestConsidered(matchedScored);
   const expectedTokens = options.expectedTokens;
   const expectedCostUsd = Number(((selected.descriptor.costPer1kTokensUsd * expectedTokens) / 1000).toFixed(6));
   const expectedDurationMs = selected.descriptor.avgLatencyMs;
@@ -741,7 +792,7 @@ export async function routeWorker(
   const rationale: RouterDecisionRationale = {
     kind: "selected",
     workerId: selected.workerId,
-    reason: buildSelectedReason(selected, policy, contract),
+    reason: explainSelection(selected, policy, outcomeCosts),
     score: selected.score ?? 0,
     policyKind: policy.kind,
   };
@@ -764,22 +815,17 @@ export async function routeWorker(
 
 function pickBestConsidered(
   matched: readonly RouterConsidered[],
-  policy: RouterPolicy,
-): { considered: RouterConsidered; reason: string } {
+): RouterConsidered {
   const sorted = [...matched].sort((left, right) => {
     const leftScore = left.score ?? 0;
     const rightScore = right.score ?? 0;
     if (leftScore !== rightScore) return rightScore - leftScore;
     return compareIdentifiers(left.workerId, right.workerId);
   });
-  const winner = sorted[0]!;
-  return {
-    considered: winner,
-    reason: explainSelection(winner, policy),
-  };
+  return sorted[0]!;
 }
 
-function explainSelection(considered: RouterConsidered, policy: RouterPolicy): string {
+function explainSelection(considered: RouterConsidered, policy: RouterPolicy, outcomeCosts: ReadonlyMap<string, number> | null): string {
   const descriptor = considered.descriptor;
   const evidence = considered.evidence;
   switch (policy.kind) {
@@ -795,18 +841,12 @@ function explainSelection(considered: RouterConsidered, policy: RouterPolicy): s
       const attemptCount = evidence?.attemptCount ?? 0;
       return `${descriptor.workerId} selected: highest confidence (${confidence.toFixed(3)}) over ${attemptCount} attempts`;
     }
-    case "balanced":
-      return `${descriptor.workerId} selected: balanced score ${(considered.score ?? 0).toFixed(4)} across success rate, cost, duration, and confidence`;
+    case "balanced": {
+      const cost = outcomeCosts?.get(descriptor.workerId);
+      const basis = cost === undefined ? "catalog token rates" : `measured provider spend of $${cost.toFixed(4)} per independently accepted Work`;
+      return `${descriptor.workerId} selected: balanced score ${(considered.score ?? 0).toFixed(4)} using ${basis}`;
+    }
   }
-}
-
-function buildSelectedReason(
-  considered: RouterConsidered,
-  policy: RouterPolicy,
-  contract: WorkContract,
-): string {
-  void contract;
-  return explainSelection(considered, policy);
 }
 
 function hashRouterDecisionInputs(
@@ -903,6 +943,7 @@ export function routerDecisionToEvent(decision: RouterDecision, eventInput: {
       decisionId: decision.id,
       policy: decision.policy.kind,
       selectedWorkerId: decision.selected?.workerId ?? null,
+      reason: decision.rationale.reason,
       consideredCount: decision.considered.length,
       evidenceHash: decision.evidenceHash,
       expectedCostUsd: decision.expectedCostUsd,

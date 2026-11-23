@@ -225,6 +225,14 @@ test("operator CLI: start, status, review, accept, and the Router learns from th
 
     // 6. a second Work in the same repository sees the first Work's accepted Ledger.
     const second = f.writeWork("work:operator-two", false);
+    const catalog = join(f.root, "workers.json");
+    writeFileSync(catalog, JSON.stringify([{ workerId: credited.workerId, role: "shipper", model: "test",
+      displayName: "Test worker", supportedWorkTypes: ["SHIP"], maxContextTokens: 8000, costPer1kTokensUsd: 0.01, avgLatencyMs: 1 }]));
+    const preview = cliRun(f, ["route", "--contract", second.contract, "--workers", catalog, "--json"]);
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.equal(json(preview).selected.evidence.outcomeCosts.acceptedWorks, 1);
+    assert.equal(json(cliRun(f, ["status", "--json"])).works.length, 1);
+
     const startedTwo = cliRun(f, ["start", "--contract", second.contract, "--verify", second.verify, "--json"]);
     assert.equal(startedTwo.status, 0, `second start failed:\n${startedTwo.stderr}`);
     const twoJson = json(startedTwo);

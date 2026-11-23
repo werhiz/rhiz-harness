@@ -347,6 +347,65 @@ test("negative source-clock duration is omitted", () => {
   assert.equal(evidence[0]?.p95DurationMs, null);
 });
 
+function pricedWork(workerId: string, workId: string, costUsd: number, retryCostUsd?: number) {
+  const execution = successfulExecution();
+  const usage = (cost: number) => ({ source: "provider-reported" as const, costUsd: cost });
+  const events = [
+    execution[0]!,
+    ...(retryCostUsd === undefined ? [] : [
+      event("task.created", { objective: "Earlier attempt" }, { taskId: "task:failed" }),
+      event("attempt.started", { worker: workerActor, contractRevision: 1 }, { taskId: "task:failed", attemptId: "attempt:failed" }),
+      event("attempt.failed", { reason: "failed check", recoverable: true, observedUsage: usage(retryCostUsd) },
+        { taskId: "task:failed", attemptId: "attempt:failed" }),
+    ]),
+    ...execution.slice(1).map(item => item.type === "attempt.finished"
+      ? { ...item, payload: { ...item.payload, observedUsage: usage(costUsd) } } : item),
+    ...passingVerificationSequence(),
+    event("work.accepted", { reason: "Verified", contractRevision: 1 }),
+  ];
+  // Rebind the shared Board fixture's actor, Work and stream references together.
+  const ids = new Map([["work:1", workId], ["stream:work:1", `stream:${workId}`], [workerActor.id, workerId]]);
+  return events.map(item => parseHarnessEvent(JSON.parse(JSON.stringify(item), (_key, value) => ids.get(value) ?? value)));
+}
+
+test("balanced route prices completed Work including failed attempts and compares like units", async () => {
+  const registry = new InMemoryRouterWorkerRegistry([
+    descriptor({ workerId: "agent:a", costPer1kTokensUsd: 0.001 }),
+    descriptor({ workerId: "agent:b", costPer1kTokensUsd: 0.01 }),
+  ]);
+  const evidenceEvents = [0, 1, 2].flatMap(i => [
+    ...pricedWork("agent:a", `work:a-${i}`, 0.125, 0.875),
+    ...pricedWork("agent:b", `work:b-${i}`, 0.25, 0),
+  ]);
+  const input = { contract: work(), evidenceEvents };
+  const decision = await routeWorker(registry, null, input);
+  assert.equal(decision.selected?.workerId, "agent:b");
+  assert.match(decision.rationale.reason, /measured provider spend/);
+  assert.deepEqual(decision.considered.map(row => row.evidence?.outcomeCosts), [
+    { workType: "SHIP", acceptedWorks: 3, pricedAttempts: 6, costPerAcceptedWorkUsd: 1 },
+    { workType: "SHIP", acceptedWorks: 3, pricedAttempts: 6, costPerAcceptedWorkUsd: 0.25 },
+  ]);
+  assert.equal((await routeWorker(registry, null, { ...input, evidenceEvents: [...evidenceEvents, ...evidenceEvents] })).evidenceHash, decision.evidenceHash);
+  const receipt = parseHarnessEvent(routerDecisionToEvent(decision, {
+    id: "event:route", streamId: "stream:route", actor: { id: "service:router", kind: "service" },
+  }));
+  assert.ok(receipt.type === "router.decision-made");
+  assert.equal(receipt.payload.reason, decision.rationale.reason);
+  const otherType = await routeWorker(registry, null, { ...input, contract: work({ type: "SCOUT", writeScope: [] }) });
+  assert.ok(otherType.considered.every(row => row.evidence === null));
+  assert.match(otherType.rationale.reason, /catalog token rates/);
+
+  for (const incomplete of [
+    evidenceEvents.filter(e => e.workId !== "work:b-2"),
+    evidenceEvents.map(e => e.workId === "work:b-2" && e.type === "attempt.failed"
+      ? { ...e, payload: { ...e.payload, observedUsage: { source: "provider-reported" as const, complete: false, costUsd: 0 } } } : e),
+  ]) {
+    const result = await routeWorker(registry, null, { ...input, evidenceEvents: incomplete });
+    assert.equal(result.selected?.workerId, "agent:a");
+    assert.match(result.rationale.reason, /catalog token rates/);
+  }
+});
+
 test("routeWorker with cheapest-capable picks the lowest-cost worker among matched candidates", async () => {
   const registry = new InMemoryRouterWorkerRegistry([cheaper(), faster(), balanced()]);
   const contract = work();

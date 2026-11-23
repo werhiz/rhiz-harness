@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { harnessGitRefSegment, validateGovernedConvergencePolicy } from "../dist/adapters/git/index.js";
 import { DurableEventLedger } from "../dist/adapters/local/durable-ledger.js";
 import { readVerifierRefusals } from "../dist/adapters/local/verifier-refusals.js";
-import { readRepositoryWorkLedgers } from "../dist/adapters/local/work-ledgers.js";
+import { readRepositoryWorkEvents, readRepositoryWorkLedgers } from "../dist/adapters/local/work-ledgers.js";
 import {
   acceptOperatorWork,
   recordOperatorReview,
@@ -23,6 +23,7 @@ import {
   summarizeOperatorWork,
   summarizeOperatorWorks,
 } from "../dist/src/operator.js";
+import { InMemoryRouterWorkerRegistry, routeWorker } from "../dist/src/router.js";
 import { RefinerBridge } from "../dist/src/refiner-bridge.js";
 import { streamIdForWork } from "../dist/src/refiner.js";
 import { parseWorkContract } from "../dist/src/schemas.js";
@@ -38,6 +39,7 @@ function usage() {
     "",
     "  start  --contract <work.json> --verify <plan.json> [--prepare <prepare.json>] [--base <rev>] [--local-config <local.json>]",
     "         run SHIP Work in an isolated worktree until it is verified or its budget is spent",
+    "  route --contract <work.json> --workers <catalog.json>   preview worker selection using repository history",
     "  status [work]                 what every Work is doing and what it needs next",
     "  resume [work]                 continue non-terminal Work in its existing Ledger",
     "  review [work] [--reviewer claude|command] [--reviewer-command <path>] [--model <id>]",
@@ -594,6 +596,20 @@ async function harvest(repo, query) {
   return 0;
 }
 
+async function previewRoute(repo, values) {
+  if (!values.contract || !values.workers) throw new Error("route requires --contract and --workers");
+  const contract = parseWorkContract(await readJson(resolve(values.contract)));
+  const workers = await readJson(resolve(values.workers));
+  if (!Array.isArray(workers) || !workers.length) throw new Error("--workers must contain a nonempty array of Router worker descriptors");
+  const registry = new InMemoryRouterWorkerRegistry(workers);
+  const { events, unreadable } = await readRepositoryWorkEvents(repo.commonDir);
+  if (unreadable.length) throw new Error(`incomplete routing history: ${unreadable.map(item => item.directory).join(", ")}`);
+  const evidenceEvents = events.filter(item => item.workId !== contract.id);
+  const decision = await routeWorker(registry, null, { contract, evidenceEvents });
+  process.stdout.write(values.json ? JSON.stringify(decision, null, 2) + "\n" : decision.rationale.reason + "\n");
+  return decision.selected ? 0 : 2;
+}
+
 async function main() {
   const { command, work, values } = parseArgs(process.argv.slice(2));
   if (!command || command === "help" || command === "--help" || command === "-h" || values.help) {
@@ -602,6 +618,7 @@ async function main() {
   }
   const repo = repository(values);
   switch (command) {
+    case "route": return previewRoute(repo, values);
     case "start": return start(repo, values);
     case "status": return status(repo, work, values);
     case "resume": return resume(repo, work, values);

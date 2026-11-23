@@ -59,6 +59,7 @@ Operate the same Work from start to accepted outcome with the operator loop
 ([ADR 0026](docs/decisions/0026-operator-loop-and-acceptance-driven-learning.md)):
 
 ```bash
+npm run operator -- route  --repo <repo> --contract work.json --workers workers.json --json
 npm run operator -- start  --repo <repo> --contract work.json --verify verification.json
 npm run operator -- status --repo <repo>             # state, next action, interventions per accepted outcome
 npm run operator -- resume --repo <repo> [work]      # continue non-terminal Work in its own Ledger
@@ -67,6 +68,18 @@ npm run operator -- accept --repo <repo> [work] --reason "why this outcome is ac
 npm run operator -- reject --repo <repo> [work] --reason "why it failed" --correction correction.json
 npm run operator -- harvest --repo <repo> [work]     # retry interrupted Harvest without duplicate proposals
 ```
+
+`route` previews the native Router's recommendation for a supplied catalog. It reads
+the repository's Work ledgers without starting a worker. Each entry in `workers.json`
+uses the executor's stable ID and a Router descriptor, for example:
+
+```json
+[{"workerId":"agent:example","role":"shipper","model":"example","displayName":"Example","supportedWorkTypes":["SHIP"],"maxContextTokens":32000,"costPer1kTokensUsd":0.002,"avgLatencyMs":1200}]
+```
+
+The JSON result includes all candidates, their evidence, and the reason for
+selection. Live execution uses the providers registered by the host and the Work's
+explicit preferences. The repository runner pins its configured execution provider.
 
 `accept` is the human Board decision. It hands the closed Work to the Refiner and to Router
 evidence, so the next Work in the repository is routed on accepted outcomes. It does not merge.
