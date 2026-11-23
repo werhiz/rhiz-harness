@@ -136,6 +136,21 @@ to the admitted terminal `attempt.finished.occurredAt` or
 omitted. `lastSeenAt` is the latest `occurredAt` among admitted attempt events
 and a terminal Board acceptance or rejection relevant to that outcome.
 
+### Observed cost in balanced routing
+
+For a new balanced route the Ledger projection uses the same Work type as the
+contract. Once every eligible worker has three distinct, independently verified
+and Board-accepted Work items of that type, the cost term can use provider-reported
+attempt spend divided by distinct accepted Work. Every attempt must have complete
+dollar coverage and every Work must have a single executor. The numerator includes
+failed and superseded attempts. An accepted Work counts once even with several
+successful tasks. The three-Work floor is a cold-start heuristic.
+
+When any candidate lacks comparable evidence, all candidates use descriptor token
+rates. A measured zero is valid. The decision rationale records the basis, and
+the per-attempt estimate remains separate. Review, infrastructure and CI costs are
+outside this worker-execution metric.
+
 ### Determinism
 
 The router is a pure function with respect to `(registry, ledger, contract,

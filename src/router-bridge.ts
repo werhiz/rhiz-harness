@@ -1,7 +1,6 @@
 import type { ActorRef, HarnessEvent } from "./schemas.js";
 import type { EventLedger } from "./ledger.js";
 import {
-  computeRouterEvidenceFromEvents,
   routeWorker,
   routerDecisionToEvent,
   type RouterDecision,
@@ -105,16 +104,14 @@ export class RouterBridge {
     // Without an evidence source the Router reads only the streams it is
     // named, and this bridge names none, so selection would never see a past
     // outcome. Accepted history from other Work arrives through this seam.
-    const evidence = this.#evidenceEvents === undefined
-      ? undefined
-      : computeRouterEvidenceFromEvents(await this.#evidenceEvents());
+    const evidenceEvents = await this.#evidenceEvents?.();
     const decision = await routeWorker(
       this.#registry,
       this.#ledger,
       {
         contract: input.work,
         ...(this.#policy === undefined ? {} : { policy: this.#policy }),
-        ...(evidence === undefined ? {} : { evidence }),
+        ...(evidenceEvents === undefined ? {} : { evidenceEvents }),
       },
       this.#now,
     );
