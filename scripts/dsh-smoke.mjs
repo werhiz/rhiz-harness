@@ -167,7 +167,7 @@ try {
   } else {
     await ledger.append(event(
       "attempt.failed",
-      { reason: result.summary, recoverable: true },
+      { reason: result.summary.slice(0, 2000), recoverable: true },
       { taskId, attemptId, actor: workerActor },
     ));
   }
