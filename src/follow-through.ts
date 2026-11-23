@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { projectBoard } from "./board.js";
+import { candidateUnproduced, projectBoard } from "./board.js";
 import { CrewMissionSchema, CrewSupervisor, type CrewRunHandle, type CrewSupervisorOptions } from "./crew.js";
 import type { EventLedger } from "./ledger.js";
 import { summarizeOperatorWork } from "./operator.js";
@@ -97,6 +97,8 @@ function projectFollowThrough(assignment: FollowThroughAssignment, events: reado
         action = "resolve"; reason = "Independent verification or review failed; an explicit repair decision is required";
       } else if (status.nextAction === "review") {
         action = "review"; reason = status.nextActionReason;
+      } else if (attempts.some(attempt => attempt.contractRevision === board.contractRevision) && candidateUnproduced(board) !== null) {
+        action = "resolve"; reason = status.nextActionReason;
       } else if (attempts.some(attempt => attempt.state === "finished" && attempt.contractRevision === board.contractRevision)) {
         action = "verify"; reason = "Worker execution finished; verification or an explicit repair decision is required";
       } else if (attempts.length >= board.contract.workerPolicy.maxAttempts) {

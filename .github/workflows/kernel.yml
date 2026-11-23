@@ -101,26 +101,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .tmp/dsh-deps
-          printf '%s\n' '{"private":true,"type":"module"}' > .tmp/dsh-deps/package.json
-          npm install \
-            --prefix .tmp/dsh-deps \
-            --package-lock=false \
-            --save-exact \
-            --omit=optional \
-            --ignore-scripts \
-            --no-audit \
-            --no-fund \
-            @deepseek-ai/cordis@4.0.5 \
-            @deepseek-ai/dsh-sdk-client@0.1.0-rc.8 \
-            @deepseek-ai/dsh-sdk-jsonrpc-demo@0.1.0-rc.8 \
-            @deepseek-ai/dsh-sdk-jsonrpc-server@0.1.0-rc.8 \
-            @deepseek-ai/dsh-agent-spine-demo@0.1.0-rc.8 \
-            @deepseek-ai/dsh-session-persistence-jsonl@0.1.0-rc.8 \
-            @deepseek-ai/dsh-llm-replay@0.1.0-rc.8 \
-            @deepseek-ai/dsh-subagent@0.1.0-rc.8 \
-            @deepseek-ai/dsh-subprocess@0.1.0-rc.8 \
-            @deepseek-ai/dsh-subagent-codex@0.1.0-rc.8 \
-            @deepseek-ai/dsh-subagent-claude-code@0.1.0-rc.8
+          cp test/fixtures/dsh-keyless/runtime/package*.json .tmp/dsh-deps/
+          npm ci --prefix .tmp/dsh-deps --strict-peer-deps --omit=optional --ignore-scripts --no-audit --no-fund
           rm -rf node_modules/@deepseek-ai
           ln -s "$PWD/.tmp/dsh-deps/node_modules/@deepseek-ai" node_modules/@deepseek-ai
 
