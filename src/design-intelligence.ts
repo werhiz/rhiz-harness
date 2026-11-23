@@ -767,8 +767,8 @@ async function replayAbstractionLifecycle(
       "DESIGN_ABSTRACTION_INVALID",
     );
   }
-  assertReplaySafeRefinerProposal(proposal);
   assertProposalEvidence(proposal, events, proposedIndex);
+  assertReplaySafeRefinerProposal(proposal);
   const proposedProvenance = await appendProvenance(ledger, proposedEvent.id);
 
   const parsedAbstraction = DesignAbstractionSchema.safeParse(

@@ -3,15 +3,13 @@ import type { EventLedger } from "./ledger.js";
 import { createHash } from "node:crypto";
 import { projectBoard } from "./board.js";
 import {
-  analyzeClosedWorkFromEvents,
+  analyzeWorkForProposals,
   buildProposedEvent,
   makeRefinerProposal,
   streamIdForWork,
   DEFAULT_REFINER_CONFIG,
   type RefinerAnalysis,
   type RefinerConfig,
-  type FailureTaxonomy,
-  type SuccessTaxonomy,
 } from "./refiner.js";
 
 /**
@@ -66,10 +64,10 @@ export class RefinerBridge {
     const closure = [...sourceEvents].reverse().find((event) =>
       event.type === "work.accepted" || event.type === "work.rejected" || event.type === "work.cancelled" || event.type === "attempt.failed");
     if (!closure) throw new Error("Refiner requires a terminal Work or failed attempt");
-    const analysis = analyzeClosedWorkFromEvents(input.workId, sourceEvents, this.#config);
+    const { analysis, causesByKind } = analyzeWorkForProposals(input.workId, sourceEvents);
     const evidenceRefs = proposalEvidenceRefs(sourceEvents, closure.id);
     const proposals: RefinerProposal[] = [];
-    for (const kind of new Set(analysis.candidateProposalKinds)) {
+    for (const [kind, causes] of causesByKind) {
       const proposalId = `proposal:${createHash("sha256").update(JSON.stringify([input.workId, closure.id, kind])).digest("hex")}`;
       const existing = events.find((event) => event.type === "refiner.proposed" && event.payload.proposal.id === proposalId);
       if (existing?.type === "refiner.proposed") {
@@ -79,14 +77,14 @@ export class RefinerBridge {
       const proposal = makeRefinerProposal({
         id: proposalId,
         workId: input.workId,
-        kind: kind as RefinerProposalKind,
-        title: proposalTitle(kind as RefinerProposalKind, analysis),
-        summary: proposalSummary(kind as RefinerProposalKind, analysis),
-        reasoning: `Classified as ${analysis.classifications.join(", ") || "no-classifications"}; ledger span ${analysis.ledgerSpanMs}ms over ${analysis.ledgerEventCount} events.`,
-        classification: (analysis.classifications[0] ?? "repeated-mistake") as FailureTaxonomy | SuccessTaxonomy,
+        kind,
+        title: proposalTitle(kind, analysis),
+        summary: `Refiner proposes a ${kind} based on ${causes.join(", ")}.`,
+        reasoning: `Classified as ${causes.join(", ")}; ledger span ${analysis.ledgerSpanMs}ms over ${analysis.ledgerEventCount} events.`,
+        classification: causes[0],
         evidenceRefs,
         draft: {
-          summary: `Auto-drafted from ${analysis.classifications.join(", ") || "no-classifications"}.`,
+          summary: `Auto-drafted from ${causes.join(", ")}.`,
           rationale: `Outcome: ${analysis.outcome}.`,
           reversibleUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
           ...(closure.type === "work.rejected" && closure.payload.correction
@@ -143,11 +141,4 @@ function proposalEvidenceRefs(events: readonly HarnessEvent[], closureId: string
 
 function proposalTitle(kind: RefinerProposalKind, analysis: RefinerAnalysis): string {
   return `${kind} candidate from ${analysis.outcome} run (${analysis.ledgerEventCount} events)`;
-}
-
-function proposalSummary(kind: RefinerProposalKind, analysis: RefinerAnalysis): string {
-  const classifications = analysis.classifications.length > 0
-    ? analysis.classifications.join(", ")
-    : "no-classifications";
-  return `Refiner proposes a ${kind} based on ${classifications}.`;
 }
