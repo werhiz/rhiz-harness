@@ -218,9 +218,10 @@ export function runProposalGuards(proposal: RefinerProposal, config: RefinerConf
       RefinerGuard.proposalNotWorkerSelfCertification,
     );
   }
-  if (proposal.evidenceRefs.length < config.minEvidenceCount) {
+  const distinctEvents = new Set(proposal.evidenceRefs.map((ref) => ref.ledgerEventId)).size;
+  if (distinctEvents < config.minEvidenceCount) {
     throw new RefinerGuardViolationError(
-      `proposal ${proposal.id} has ${proposal.evidenceRefs.length} evidence refs; required >= ${config.minEvidenceCount}`,
+      `proposal ${proposal.id} cites ${distinctEvents} distinct ledger events; required >= ${config.minEvidenceCount}`,
       RefinerGuard.proposalHasEvidence,
     );
   }
@@ -336,6 +337,15 @@ export function analyzeClosedWorkFromEvents(
   events: readonly HarnessEvent[],
   _config: RefinerConfig = DEFAULT_REFINER_CONFIG,
 ): RefinerAnalysis & { record: WorkRecord } {
+  return analyzeWorkForProposals(workId, events).analysis;
+}
+
+type Classification = FailureTaxonomy | SuccessTaxonomy;
+
+export function analyzeWorkForProposals(workId: string, events: readonly HarnessEvent[]): {
+  analysis: RefinerAnalysis & { record: WorkRecord };
+  causesByKind: Map<RefinerProposalKind, [Classification, ...Classification[]]>;
+} {
   const workEvents = events.filter((event) => event.workId === workId);
   const accepted = workEvents.find((event) => event.type === "work.accepted");
   const rejected = workEvents.find((event) => event.type === "work.rejected");
@@ -375,41 +385,39 @@ export function analyzeClosedWorkFromEvents(
     }
   }
 
-  const candidateProposalKinds: string[] = [];
-  if (rejected?.payload.correction) {
-    candidateProposalKinds.push("lesson-fixture", "test");
-  }
-  if (classifications.includes("repeated-mistake")) {
-    candidateProposalKinds.push("rule", "test");
-  }
-  if (classifications.includes("verification-gap")) {
-    candidateProposalKinds.push("verifier", "test");
-  }
-  if (classifications.includes("authority-error")) {
-    candidateProposalKinds.push("guard-tuning", "rule");
-  }
-  if (classifications.includes("process-stall")) {
-    candidateProposalKinds.push("recovery-behavior", "worker-profile");
-  }
-  if (classifications.includes("runtime-failure")) {
-    candidateProposalKinds.push("worker-profile", "recovery-behavior");
-  }
-  if (classifications.includes("successful-recovery")) {
-    candidateProposalKinds.push("recovery-behavior");
-  }
-  if (classifications.includes("low-context-success") || classifications.includes("strong-context-selection")) {
-    candidateProposalKinds.push("context-strategy");
+  const causesByKind = new Map<RefinerProposalKind, [Classification, ...Classification[]]>();
+  function suggest(cause: Classification, ...kinds: RefinerProposalKind[]) {
+    if (!classifications.includes(cause)) return;
+    for (const kind of kinds) {
+      const causes = causesByKind.get(kind);
+      if (!causes) causesByKind.set(kind, [cause]);
+      else if (!causes.includes(cause)) causes.push(cause);
+    }
   }
 
-  const spanMs = computeLedgerSpanMs(workEvents);
+  // Keep one proposal per kind. An explicit correction takes precedence for
+  // the lesson and test it requested, while other matching causes stay visible.
+  if (rejected?.payload.correction) suggest(rejected.payload.correction.cause, "lesson-fixture", "test");
+  suggest("repeated-mistake", "rule", "test");
+  suggest("verification-gap", "verifier", "test");
+  suggest("authority-error", "guard-tuning", "rule");
+  suggest("process-stall", "recovery-behavior", "worker-profile");
+  suggest("runtime-failure", "worker-profile", "recovery-behavior");
+  suggest("successful-recovery", "recovery-behavior");
+  suggest("low-context-success", "context-strategy");
+  suggest("strong-context-selection", "context-strategy");
+
   return {
-    workId,
-    outcome,
-    classifications: [...new Set(classifications)],
-    candidateProposalKinds: [...new Set(candidateProposalKinds)],
-    ledgerEventCount: workEvents.length,
-    ledgerSpanMs: spanMs,
-    record: deriveWorkRecord(workEvents),
+    analysis: {
+      workId,
+      outcome,
+      classifications: [...new Set(classifications)],
+      candidateProposalKinds: [...causesByKind.keys()],
+      ledgerEventCount: workEvents.length,
+      ledgerSpanMs: computeLedgerSpanMs(workEvents),
+      record: deriveWorkRecord(workEvents),
+    },
+    causesByKind,
   };
 }
 

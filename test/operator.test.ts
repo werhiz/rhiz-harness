@@ -160,7 +160,15 @@ test("failed Work proposals retain the denials and blocked attempts used in thei
   const result = await new RefinerBridge({ ledger, now }).consume({ workId: contract.id, events: await ledger.replay(STREAM) });
   assert.ok(result.analysis.classifications.includes("authority-error"));
   assert.ok(result.analysis.classifications.includes("process-stall"));
-  assert.ok(result.proposals.length > 0);
+  assert.deepEqual(result.proposals.map(({ kind, classification }) => [kind, classification]), [
+    ["guard-tuning", "authority-error"],
+    ["rule", "authority-error"],
+    ["recovery-behavior", "process-stall"],
+    ["worker-profile", "process-stall"],
+  ]);
+  const workerProfile = result.proposals.find((proposal) => proposal.kind === "worker-profile")!;
+  assert.match(workerProfile.reasoning, /runtime-failure/);
+  assert.doesNotMatch(workerProfile.reasoning, /authority-error/);
   for (const proposal of result.proposals) {
     for (const source of [denial, blocked, failed]) {
       assert.ok(proposal.evidenceRefs.some((ref) => ref.ledgerEventId === source.id), `proposal retains ${source.type}`);

@@ -189,6 +189,15 @@ test("RefinerProposalSchema rejects unknown kind", () => {
   assert.throws(() => RefinerProposalSchema.parse(input));
 });
 
+test("the evidence threshold counts different ledger events even when the explanations differ", () => {
+  const input = proposalInput();
+  input.evidenceRefs = [evidence("event:1"), evidence("event:1", "another observation")];
+  assert.throws(() => makeRefinerProposal(input), (error: unknown) =>
+    error instanceof RefinerGuardViolationError && error.guard === RefinerGuard.proposalHasEvidence);
+  input.evidenceRefs.push(evidence("event:2"));
+  assert.equal(makeRefinerProposal(input).evidenceRefs.length, 3);
+});
+
 test("RefinerDraftSchema rejects unparsable reversibleUntil", () => {
   assert.throws(() => RefinerDraftSchema.parse({
     summary: "x",
